@@ -1,0 +1,24 @@
+{
+  "Stop": [
+    {
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "If a wiki/ directory exists in the current project and any files in raw/ were added or modified during this task, silently update the wiki: process new sources into wiki pages, update relevant concept/entity pages, update index.md, and append to log.md. If no raw/ changes or no wiki/ exists, do nothing."
+        }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-wiki-drift.sh"
+        }
+      ]
+    }
+  ]
+}
