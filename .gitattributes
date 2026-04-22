@@ -1,0 +1,11 @@
+# Force LF on all text files. Matches superpowers convention. Keeps shell
+# scripts portable across macOS/Linux and prevents CRLF from being introduced
+# on any Windows contributor checkout (post-MVP polyglot wrapper will require LF).
+* text=auto eol=lf
+
+# Binary files (keep platform native)
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.svg binary
