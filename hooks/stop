@@ -1,0 +1,26 @@
+#!/bin/bash
+# Stop hook for karpathy-wiki.
+#
+# v1: stub — just log that session stopped, don't do sweep yet.
+# Post-MVP: spawn cheap-model subagent to scan the session transcript for
+# missed captures. The exact transcript-file env var name varies by Claude
+# Code version (could be CLAUDE_TRANSCRIPT, CLAUDE_SESSION_TRANSCRIPT, etc.);
+# resolve at implementation time by reading Claude Code docs / running a
+# `env | grep CLAUDE` check inside a live hook invocation.
+
+set -uo pipefail  # not -e — stop must never abort with a partial log
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${HOOK_DIR}/.." && pwd)"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/wiki-lib.sh"
+
+wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
+[[ -n "${wiki}" ]] || exit 0
+
+log_info "stop: session ended, wiki=${wiki}"
+
+# Post-MVP: spawn cheap-model sweep of "${CLAUDE_TRANSCRIPT:-}" if set.
+# For v1, we rely on in-session capture only.
+
+exit 0
