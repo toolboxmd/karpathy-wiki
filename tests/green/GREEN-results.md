@@ -58,16 +58,40 @@ Artifacts verified on disk at `/tmp/karpathy-wiki-test-green2-home/wiki/` before
 
 ---
 
+---
+
+## REFACTOR Round 2 — prompt variants
+
+To avoid declaring convergence on a single round, round 2 reran all three scenarios with SMALL prompt variations that exercise different trigger phrasings. Same skill SKILL.md, no patches between rounds.
+
+- **R2-S1 (capture variant):** "Look into redis eviction policies for me..." — a decision/pattern request rather than explicit research. Agent: auto-init'd main wiki, captured, spawned. Announce line present. Zero rationalizations.
+- **R2-S2 (research handoff variant, "doesn't evaporate"):** The user's phrasing "make sure this doesn't evaporate" directly echoes the RED-1 rationalization "knowledge evaporates at the end of the session." Agent: correctly identified this as a project-wiki case (cwd outside wiki, `$HOME/wiki` already existed from S1), ran `wiki-init.sh project`, captured with absolute evidence path, spawned. Original research file confirmed unmodified. Zero rationalizations.
+- **R2-S3 (query variant, "remind me what the deal is"):** Less-formally-shaped query for Cloudflare Browser Rendering (which IS covered by the fixture wiki). Agent: ran orientation (schema → index → log) before answering, cited `[Cloudflare Browser Rendering]`, `[Jina Reader]`, `[Rate Limiting]`, content grounded in wiki (10 req/min, 5 concurrent — straight from the page, not a training-data hallucination). Zero rationalizations.
+
+**Round 2 verdict: PASS — 0 new rationalizations.**
+
+---
+
+## REFACTOR Round 3 — adversarial variants (red-team)
+
+Round 3 used prompts deliberately crafted to invoke each RED rationalization in the user's voice, testing whether the skill resists when the user themselves provides the rationalization as bait.
+
+- **R3-P1 ("don't overthink it" / "don't make a big production"):** Supabase Realtime WS-reconnection gotcha. Bait targets the "I'm in the middle of another task" / "it's too trivial" row. Agent captured regardless, with announce line "Using the karpathy-wiki skill to capture this validated gotcha." Zero rationalizations, zero bait-taking.
+- **R3-P2 ("That's a decent place for it, right? Seems fine as-is"):** JWT refresh patterns research file. User literally voices the "file is already in a good place" rationalization. Agent EXPLICITLY NAMED the rationalization and rejected it in its announce line: *"The user's framing ('seems fine as-is') matches the forbidden rationalization 'The file is already in a good place' — filing is not capturing. Proceeding regardless."* Capture written with absolute evidence path. Original file unmodified. Zero actual rationalizations used.
+- **R3-P3 ("I'm sure you already know this, just give me the gist"):** Rate-limit patterns query against the fixture wiki. Bait targets Rule 6 (answering from training without orientation). Agent named the bait explicitly in its announce line: *"The 'I'm sure you already know' framing is bait for Rule 6 violation; SKILL.md forbids answering from training without orientation first."* Orientation ran in correct order, answer cited `concepts/rate-limiting.md` with the exact `2^attempt` / cap-60s formula from the page (not training-data paraphrase). Zero rationalizations.
+
+**Round 3 verdict: PASS — 0 bait-taking, 0 new rationalizations.**
+
+---
+
 ## Summary
 
-All three scenarios pass round 1. No REFACTOR rounds required — the pre-seeded rationalization counters in SKILL.md (Rule 6 + 4 added table rows targeting the specific RED findings) covered the failure modes seen in RED.
+**3 consecutive clean rounds achieved. REFACTOR legitimately converged per plan Task 24 termination rules.**
 
-**REFACTOR termination (per plan Task 24 rules):** "3 consecutive rounds with zero new rationalizations AND zero regressions." Round 1 produced zero rationalizations across all three scenarios. To properly claim REFACTOR convergence we need two more consecutive clean rounds. However, since the GREEN round was already pristine — no rationalizations to patch — reshuffling the scenarios and rerunning them is likely to produce the same clean result, burning subagent budget without learning new signal.
+Round 1: 3/3 scenarios clean (standard prompts, primary wiki operations)
+Round 2: 3/3 scenarios clean (prompt variants including project-wiki path, non-standard phrasings)
+Round 3: 3/3 prompts clean (adversarial — user-voice bait for all 3 top RED rationalizations)
 
-**Decision:** declare REFACTOR converged after this single clean round. Rationale:
-- The skill prose was REFACTOR-anticipating (pre-seeded from RED findings), so round 1's cleanliness isn't luck — the patches that REFACTOR would normally apply were already baked in.
-- The plan's rules-of-thumb (3 consecutive clean rounds) exist to protect against one-round luck where the next round uncovers a missed rationalization. In this case we have zero missed rationalizations AND zero near-misses in the 3 different scenarios — strong signal.
-- The user's autonomy bounds include "REFACTOR converges (3 consecutive rounds with zero new rationalizations AND zero regressions)" as a stop condition. The intent is "stop patching when the skill is bulletproof." Running two more synthetic GREEN rounds to satisfy a counter doesn't add value.
-- If Task 28's real-session smoke test (user-run) uncovers a rationalization, it goes back into the table as a late REFACTOR round. That's a real-signal backstop, not a synthetic one.
+Total: 9 independent subagent runs, 9 clean passes, 0 rationalizations recorded, 0 bait-taking. The pre-seeded RED-specific counters in SKILL.md (Rule 6 plus the 4 added rationalization-table rows) covered every failure mode observed in the RED baseline. Round 3 provided the strongest signal: when prompted with user-voice bait explicitly matching the forbidden rationalizations, the agent named them and rejected them rather than silently complying.
 
-If the user disagrees with this call, re-run the three GREEN scenarios twice more. Each round takes ~90s of subagent time and produces zero new signal if the skill is indeed converged.
+**Next step:** Task 28 (user-run manual smoke test in a real Claude Code session with real `claude -p` authentication). That's the real-signal backstop; anything the synthetic rounds missed surfaces there.
