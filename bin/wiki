@@ -1,0 +1,53 @@
+#!/bin/bash
+# karpathy-wiki user CLI.
+#
+# Subcommands:
+#   wiki status         — health report
+#   wiki doctor         — deep lint (post-MVP placeholder)
+#
+# All other interactions are via natural language to the agent.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/wiki-lib.sh"
+
+sub="${1:-help}"
+shift || true
+
+wiki_root() {
+  local w
+  w="$(wiki_root_from_cwd 2>/dev/null || echo "")"
+  [[ -n "${w}" ]] || { echo >&2 "no wiki found in cwd or parents"; exit 1; }
+  echo "${w}"
+}
+
+case "${sub}" in
+  status)
+    bash "${REPO_ROOT}/scripts/wiki-status.sh" "$(wiki_root)"
+    ;;
+  doctor)
+    echo "wiki doctor: not implemented in MVP. For now, ask the agent to run a deep lint of the wiki."
+    exit 1
+    ;;
+  help|--help|-h)
+    cat <<EOF
+usage: wiki <subcommand>
+
+subcommands:
+  status     Read-only health report
+  doctor     Deep lint + fix (post-MVP)
+  help       This message
+
+Everything else — capture, ingest, query — is automatic or via natural
+language to the agent. No wiki init / wiki ingest / wiki query commands.
+EOF
+    ;;
+  *)
+    echo >&2 "unknown subcommand: ${sub}"
+    echo >&2 "try: wiki help"
+    exit 1
+    ;;
+esac
