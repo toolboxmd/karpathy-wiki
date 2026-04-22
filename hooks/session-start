@@ -1,0 +1,114 @@
+#!/bin/bash
+# SessionStart hook for karpathy-wiki.
+#
+# Responsibilities:
+#   1. Detect if cwd (or a parent) contains a wiki; exit 0 silently if not.
+#   2. Run drift check on raw/ — if new/modified sources, create captures.
+#   3. Drain pending captures: spawn one detached ingester per capture.
+#   4. Reclaim stale .processing files.
+#   5. Emit ZERO model-visible context (stdout stays empty or '{}').
+#
+# Per superpowers-style-guide.md, we write to files (.ingest.log), never echo.
+
+# NOTE: no `set -e` — we want best-effort execution; a failing drift-check
+# should not prevent drain. Use `set -uo pipefail` for safer var handling.
+set -uo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${HOOK_DIR}/.." && pwd)"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/wiki-lib.sh"
+
+# Locate wiki from cwd.
+wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
+[[ -n "${wiki}" ]] || exit 0  # No wiki; nothing to do.
+
+log_info "session-start: wiki=${wiki}"
+
+# ---------------------------------------------------------------------------
+# Drift check — detect new/modified files in raw/ and create drift captures.
+# ---------------------------------------------------------------------------
+# Wrapped in a function so we can use `local` for variables.
+_drift_scan() {
+  local drift_out
+  drift_out="$(python3 "${REPO_ROOT}/scripts/wiki-manifest.py" diff "${wiki}" 2>/dev/null || echo "CLEAN")"
+  [[ "${drift_out}" == "CLEAN" ]] && return 0
+
+  log_info "session-start: drift detected"
+  local line src capture_name capture_path
+  while IFS= read -r line; do
+    case "${line}" in
+      NEW:*|MODIFIED:*)
+        src="$(echo "${line}" | awk '{print $2}')"
+        capture_name="$(date +%Y-%m-%dT%H-%M)-drift-$(slugify "${src}").md"
+        capture_path="${wiki}/.wiki-pending/${capture_name}"
+        # Idempotency: skip if a drift capture for this src already exists.
+        if [[ -f "${capture_path}" ]]; then
+          continue
+        fi
+        cat > "${capture_path}" <<EOF
+---
+title: "Drift: ${src}"
+evidence: "${wiki}/${src}"
+evidence_type: "file"
+suggested_action: "update"
+suggested_pages: []
+captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+captured_by: "session-start-drift"
+origin: null
+---
+
+Raw source \`${src}\` changed since last manifest. Treat as new source.
+EOF
+        log_info "session-start: drift capture created: ${capture_name}"
+        ;;
+    esac
+  done <<< "${drift_out}"
+}
+_drift_scan || log_warn "session-start: drift scan failed (non-fatal)"
+
+# ---------------------------------------------------------------------------
+# Drain pending captures — spawn a detached ingester per capture.
+# ---------------------------------------------------------------------------
+_drain_pending() {
+  local count=0
+  local f
+  for f in "${wiki}/.wiki-pending"/*.md; do
+    [[ -f "${f}" ]] || continue
+    [[ "${f}" == *.processing ]] && continue
+    count=$((count + 1))
+  done
+  [[ "${count}" -eq 0 ]] && return 0
+
+  log_info "session-start: draining ${count} pending captures"
+  for f in "${wiki}/.wiki-pending"/*.md; do
+    [[ -f "${f}" ]] || continue
+    [[ "${f}" == *.processing ]] && continue
+    bash "${REPO_ROOT}/scripts/wiki-spawn-ingester.sh" "${wiki}" "${f}" &
+    disown 2>/dev/null || true
+  done
+}
+_drain_pending || log_warn "session-start: drain failed (non-fatal)"
+
+# ---------------------------------------------------------------------------
+# Reclaim stale .processing files (> 10 min): rename back to .md so next
+# opportunity can pick them up.
+# ---------------------------------------------------------------------------
+_reclaim_stale() {
+  local proc mtime now age
+  while IFS= read -r proc; do
+    [[ -z "${proc}" ]] && continue
+    mtime="$(stat -f %m "${proc}" 2>/dev/null || stat -c %Y "${proc}" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    age=$((now - mtime))
+    if [[ "${age}" -gt 600 ]]; then
+      log_warn "session-start: reclaiming stale processing: $(basename "${proc}")"
+      mv "${proc}" "${proc%.processing}" || true
+    fi
+  done < <(find "${wiki}/.wiki-pending" -maxdepth 1 -name "*.md.processing" -type f 2>/dev/null)
+}
+_reclaim_stale || log_warn "session-start: stale reclaim failed (non-fatal)"
+
+# Emit empty context per superpowers style guide (issue #1220 cost lesson).
+# Exit 0. Do NOT echo anything.
+exit 0

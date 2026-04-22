@@ -12,6 +12,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/wiki-lib.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/wiki-capture.sh"
 
 wiki="$1"
 capture="$2"
@@ -25,6 +27,20 @@ if [[ ! -f "${capture}" ]]; then
   exit 0
 fi
 
+# Claim the capture (rename to .processing) before spawning.
+# This marks the file as "in progress" so no other worker picks it up.
+# If capture is already .processing (handed in directly), skip claiming.
+if [[ "${capture}" == *.processing ]]; then
+  processing="${capture}"
+else
+  processing="${capture}.processing"
+  if ! ln "${capture}" "${processing}" 2>/dev/null; then
+    log_warn "spawn: capture already claimed, skipping: ${capture}"
+    exit 0
+  fi
+  unlink "${capture}" 2>/dev/null || true
+fi
+
 # Read platform.headless_command from config.
 headless_cmd="$(wiki_config_get "${wiki}" platform.headless_command 2>/dev/null || echo "")"
 if [[ -z "${headless_cmd}" ]]; then
@@ -34,7 +50,7 @@ fi
 
 # Build the ingest prompt.
 # The skill prose defines what this prompt means operationally.
-prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${capture}. Follow the karpathy-wiki skill's INGEST operation exactly."
+prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${processing}. Follow the karpathy-wiki skill's INGEST operation exactly."
 
 # Explicit env passthrough (Anthropic API keys, etc.).
 # Headless workers don't inherit interactive-session env by default on some platforms.
@@ -43,7 +59,7 @@ env_passthrough=(
   "PATH=${PATH}"
   "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
   "WIKI_ROOT=${wiki}"
-  "WIKI_CAPTURE=${capture}"
+  "WIKI_CAPTURE=${processing}"
 )
 
 # Detach via setsid (Linux) or nohup (macOS/BSD fallback).
@@ -60,7 +76,7 @@ else
     >> "${logfile}" 2>&1 < /dev/null &
 fi
 
-log_info "spawned ingester: capture=$(basename "${capture}") pid=$!"
+log_info "spawned ingester: capture=$(basename "${processing}") pid=$!"
 # Disown so the spawner can exit cleanly.
 disown 2>/dev/null || true
 exit 0
