@@ -1,12 +1,52 @@
 # Karpathy Wiki
 
-Two Claude Code skills for building persistent, compounding knowledge bases — based on [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+A Claude Code skill for auto-maintained LLM wikis — based on [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 Instead of re-deriving answers from raw documents every time (RAG), the LLM incrementally builds and maintains a wiki — a structured, interlinked collection of markdown files. The wiki compounds with every source you add and every question you ask.
 
+## What it does
+
+As you work with Claude Code, any durable knowledge — research findings, resolved confusions, validated patterns, gotchas, architectural decisions — gets written as a small capture file and processed by a detached background worker into a persistent wiki. The wiki is git-versioned. Your flow is never interrupted.
+
+Two user commands:
+
+- `wiki status` — health report
+- `wiki doctor` — deep lint (post-MVP)
+
+Everything else is automatic. One skill handles both a main knowledge base (`~/wiki/`) and per-project wikis (`<project>/wiki/`), with the same conventions.
+
+## Install
+
+```bash
+git clone https://github.com/toolboxmd/karpathy-wiki ~/dev/karpathy-wiki
+ln -s ~/dev/karpathy-wiki ~/.claude/plugins/karpathy-wiki
+ln -s ~/dev/karpathy-wiki/skills/karpathy-wiki ~/.claude/skills/karpathy-wiki
+ln -s ~/dev/karpathy-wiki/bin/wiki ~/.local/bin/wiki   # or anywhere on PATH
+```
+
+That's it. Hooks are auto-discovered from `hooks/hooks.json` inside the plugin — no manual `settings.json` surgery required.
+
+## How it works
+
+A single skill (`skills/karpathy-wiki/SKILL.md`) defines triggers, orientation protocol, and iron laws. Two hooks live at repo level:
+
+- `hooks/session-start` — drains pending captures on session start (drift detection in `raw/`, stale-lock reclaim, detached ingester spawn)
+- `hooks/stop` — session-end stub (transcript sweep is post-MVP)
+
+Captures land as tiny markdown files in `<wiki>/.wiki-pending/`. The spawner atomically claims each capture (exclusive hard-link rename) and launches a detached `claude -p` ingester that reads the capture, does the orientation protocol, edits wiki pages under per-page locks, and auto-commits.
+
+Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-wiki-v2-design.md). Implementation plan: [`docs/planning/2026-04-22-karpathy-wiki-v2.md`](docs/planning/2026-04-22-karpathy-wiki-v2.md).
+
 ## Status
 
-v2 rewrite in progress on branch `v2-rewrite`. See [`docs/planning/2026-04-22-karpathy-wiki-v2.md`](docs/planning/2026-04-22-karpathy-wiki-v2.md) for the implementation plan. The v1 skills have been removed from this branch.
+v0.1.0 — MVP. Claude Code only. Cross-platform support (Codex, OpenCode, Cursor, Hermes, Gemini) planned.
+
+## Tests
+
+```bash
+bash tests/run-all.sh
+bash tests/self-review.sh
+```
 
 ## Credits
 
@@ -15,3 +55,7 @@ Based on Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf55
 The v2 SKILL.md is written in the style of, and uses techniques from, [obra/superpowers-skills](https://github.com/obra/superpowers-skills) (the `writing-skills`, `test-driven-development`, and `subagent-driven-development` skills in particular).
 
 Built by [toolbox.md](https://toolbox.md).
+
+## License
+
+MIT
