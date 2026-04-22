@@ -1331,13 +1331,19 @@ wiki_lock_acquire() {
     rm -f "${lockfile}"
   fi
 
-  # Atomic create-exclusive.
+  # Atomic create-exclusive. `set -o noclobber` makes `>` refuse to overwrite
+  # an existing file — that is the exclusivity guarantee. Brace groups do NOT
+  # scope shell options, so noclobber persists after this block; that is
+  # intentional (we want subsequent plain `>` in this function to honor it).
+  # The write below uses `>|` which is bash's explicit "force-override
+  # noclobber for this one redirect" — required because the lockfile now
+  # exists (we just created it) and plain `>` would be refused.
   if { set -o noclobber; > "${lockfile}"; } 2>/dev/null; then
     local pid="$$"
     local ts
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '{"pid":%d,"started_at":"%s","capture_id":"%s"}\n' \
-      "${pid}" "${ts}" "${capture_id}" > "${lockfile}"
+      "${pid}" "${ts}" "${capture_id}" >| "${lockfile}"
     log_info "acquired lock: ${page} (capture=${capture_id})"
     return 0
   fi
