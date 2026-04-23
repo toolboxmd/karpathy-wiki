@@ -1,6 +1,15 @@
 ---
 name: karpathy-wiki
-description: Use when a session produces durable knowledge a future-you would search for — a research finding, resolved confusion, validated pattern, gotcha, or documented decision; when a research subagent returns a file; when the user pastes a URL or document to study; when `raw/` has unprocessed files; when the user says "add to wiki" / "remember this" / "wiki it" / "save this"; when the user asks "what do we know about X", "how do we handle Y", "what did we decide about Z", "have we seen this before". Do NOT use for routine lookups, obvious code edits, questions clearly outside the wiki's scope, or time-sensitive data that should be fetched fresh.
+description: |
+  Load at the start of EVERY conversation. Entry is non-negotiable — once loaded, the skill's rules apply for the whole session.
+
+  TRIGGER when (immediate capture): any research agent or research subagent completes or returns a file; new factual information is found (web search result, docs, external fact surfaced in conversation); session resolves a confusion; a gotcha, quirk, or non-obvious behavior is observed; a pattern is validated (approaches compared, one picked with reasons); an architectural decision is made with rationale; user pastes a URL or document to study; `raw/` has unprocessed files; user says "add to wiki" / "remember this" / "wiki it" / "save this"; two claims contradict each other.
+
+  TRIGGER when (orientation + citation): the user asks "what do we know about X" / "how do we handle Y" / "what did we decide about Z" / "have we seen this before", or any question the wiki might cover.
+
+  SKIP: routine file edits, syntax lookups, one-off debugging with trivial root causes, time-sensitive data that must be fetched fresh, or questions clearly outside any wiki's scope.
+
+  Do NOT skip based on tone or shape — "this looks like casual chat", "there's no code here", "this isn't a wiki context" are forbidden rationalizations. If new factual info appeared, capture. Tone is not the trigger.
 metadata:
   hermes:
     config:
@@ -15,6 +24,16 @@ Auto-capture and auto-ingest durable knowledge into a git-versioned LLM wiki. Ba
 
 **Announce at start:** "Using the karpathy-wiki skill to [capture this / ingest pending captures / answer from wiki]."
 
+## YOU DO NOT HAVE A CHOICE
+
+Load this skill on every conversation. Entry is non-negotiable. Entry is CHEAP — it just means you have these rules loaded; it does NOT mean you run the orientation protocol every turn.
+
+- **Entry** happens once per session, automatic.
+- **Orientation protocol** (read schema.md → index.md → last 10 of log.md) runs ONLY when you are about to (a) write a capture to `.wiki-pending/`, or (b) answer a question the wiki might cover.
+- **Capture** is a few-hundred-byte file + a detached spawn. It takes milliseconds. Always do it when a trigger fires.
+
+If new factual information surfaces in a conversation — even one that "looks casual" — you capture. The conversation about medical parasites is just as wiki-worthy as the conversation about API rate limits. Tone is not the trigger.
+
 ## Iron laws
 
 ```
@@ -23,6 +42,10 @@ NO WIKI WRITE IN THE FOREGROUND
 
 ```
 NO PAGE EDIT WITHOUT READING THE PAGE FIRST
+```
+
+```
+NO SKIPPING A CAPTURE BECAUSE "IT DOESN'T LOOK WIKI-SHAPED"
 ```
 
 Every wiki-worthy moment becomes a small capture file. Each capture spawns a detached headless ingester that writes pages and commits. The user continues working — ingest never blocks.
@@ -205,6 +228,9 @@ When you're about to skip a capture, check these red flags:
 | "I don't have a memory tool available" | This skill IS the memory tool. Its presence is the trigger. |
 | "The file is already in a good place" (filing ≠ capturing) | Location isn't organization. Capture extracts concepts, not just files. |
 | "I'll answer from training data; the question doesn't look wiki-shaped" | Run orientation first. The wiki's scope is whatever has been captured — you can't know without checking. |
+| "This doesn't look wiki-shaped / there's no code here / this isn't a wiki context" | Tone is not the trigger. If new factual info appeared — medical facts, historical facts, library docs, anything durable — capture. The parasite-research conversation is exactly as wiki-worthy as the API-rate-limit conversation. |
+| "The user asked a casual question, research was just informational" | A research subagent returning a file with findings is itself a TRIGGER line in the description. It does not matter whether the user framed it casually. |
+| "The skill's description is soft / passive, so I can skip" | The description now says "Load at the start of EVERY conversation. Entry is non-negotiable." Not loading the skill is not an option. |
 
 All of these are violations of the Iron Law.
 
