@@ -69,6 +69,23 @@ echo "${out}" | grep -q "type must be one of" \
   && say_pass "stderr: bad type mentions 'type must be one of'" \
   || say_fail "stderr: expected 'type must be one of', got: ${out}"
 
+# -- Phase B: quality block --
+expect_exit 0 "good-with-quality passes" -- python3 "${TOOL}" "${FIX}/good-with-quality.md"
+expect_exit 1 "quality-missing fails" -- python3 "${TOOL}" "${FIX}/quality-missing.md"
+expect_exit 1 "quality-score-out-of-range fails" -- python3 "${TOOL}" "${FIX}/quality-score-out-of-range.md"
+expect_exit 1 "quality-overall-mismatch fails" -- python3 "${TOOL}" "${FIX}/quality-overall-mismatch.md"
+expect_exit 1 "quality-bad-rated-by fails" -- python3 "${TOOL}" "${FIX}/quality-bad-rated-by.md"
+
+out="$(python3 "${TOOL}" "${FIX}/quality-missing.md" 2>&1 >/dev/null || true)"
+echo "${out}" | grep -q "missing required field: quality" \
+  && say_pass "stderr: quality-missing mentions missing quality" \
+  || say_fail "stderr: expected 'missing required field: quality', got: ${out}"
+
+out="$(python3 "${TOOL}" "${FIX}/quality-overall-mismatch.md" 2>&1 >/dev/null || true)"
+echo "${out}" | grep -q "quality.overall" \
+  && say_pass "stderr: overall-mismatch mentions quality.overall" \
+  || say_fail "stderr: expected 'quality.overall' in stderr, got: ${out}"
+
 echo
 echo "passed: ${pass_count}"
 echo "failed: ${fail_count}"

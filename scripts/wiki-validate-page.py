@@ -86,71 +86,96 @@ def _parse_scalar(s: str) -> Any:
 
 
 def _parse_yaml(fm: str) -> dict[str, Any]:
-    """Minimal YAML parser covering the subset wiki pages use:
+    """Minimal YAML parser covering the subset wiki pages use.
 
+    Supports:
       key: scalar
       key: [a, b, c]
       key:
         - item
         - item
       key:
-        - nested: value        # -> nested mapping in list (we flag this)
-      key: "quoted"
+        - nested: value
+      key:
+        subkey: scalar
+        subkey2: scalar
 
-    Raises ValueError for truly malformed input.
+    Indentation rule for nested map: two-space child indent.
     """
     result: dict[str, Any] = {}
     lines = fm.splitlines()
     i = 0
-    current_key: Optional[str] = None
-    current_list: Optional[list] = None
-    while i < len(lines):
+    n = len(lines)
+    while i < n:
         line = lines[i].rstrip()
         if line == "" or line.startswith("#"):
             i += 1
             continue
-        # List continuation of current key
-        if current_key is not None and line.startswith("  -"):
-            item_text = line[3:].lstrip()
-            if ":" in item_text and not (
-                item_text.startswith('"') or item_text.startswith("'")
-            ):
-                # Nested mapping: "- foo: bar" -- preserve as dict so the
-                # validator can flag it.
-                k, _, v = item_text.partition(":")
-                current_list.append({k.strip(): _parse_scalar(v.strip())})
-            else:
-                current_list.append(_parse_scalar(item_text))
-            i += 1
-            continue
-        else:
-            current_key = None
-            current_list = None
-        # Top-level key
         if ":" not in line:
             raise ValueError(f"malformed line (no colon): {line!r}")
         key, _, rest = line.partition(":")
         key = key.strip()
         rest = rest.strip()
         if rest == "":
-            # Block list follows
-            result[key] = []
-            current_key = key
-            current_list = result[key]
-            i += 1
+            # Peek next non-blank line to decide list vs nested map.
+            j = i + 1
+            while j < n and (lines[j].strip() == "" or lines[j].lstrip().startswith("#")):
+                j += 1
+            if j >= n:
+                result[key] = []
+                i += 1
+                continue
+            peek = lines[j]
+            if peek.lstrip().startswith("- "):
+                # Block list
+                items: list[Any] = []
+                k = j
+                while k < n:
+                    pl = lines[k].rstrip()
+                    if pl == "":
+                        k += 1; continue
+                    s = pl.lstrip()
+                    if not s.startswith("- "):
+                        break
+                    indent = len(pl) - len(s)
+                    if indent < 2:
+                        break
+                    content = s[2:]
+                    if ":" in content and not (content.startswith('"') or content.startswith("'")):
+                        ck, _, cv = content.partition(":")
+                        items.append({ck.strip(): _parse_scalar(cv.strip())})
+                    else:
+                        items.append(_parse_scalar(content))
+                    k += 1
+                result[key] = items
+                i = k
+                continue
+            # Nested map
+            sub: dict[str, Any] = {}
+            k = j
+            while k < n:
+                pl = lines[k].rstrip()
+                if pl == "":
+                    k += 1; continue
+                s = pl.lstrip()
+                indent = len(pl) - len(s)
+                if indent < 2:
+                    break
+                if ":" not in s:
+                    raise ValueError(f"malformed nested line: {pl!r}")
+                sk, _, sv = s.partition(":")
+                sub[sk.strip()] = _parse_scalar(sv.strip())
+                k += 1
+            result[key] = sub
+            i = k
             continue
         if rest.startswith("["):
-            # Inline list
             if not rest.endswith("]"):
                 raise ValueError(f"unterminated inline list for {key}")
             inner = rest[1:-1].strip()
-            if inner == "":
-                result[key] = []
-            else:
-                result[key] = [_parse_scalar(p.strip()) for p in inner.split(",")]
+            result[key] = [] if inner == "" else [_parse_scalar(p.strip()) for p in inner.split(",")]
             i += 1
             continue
-        # Scalar value
         result[key] = _parse_scalar(rest)
         i += 1
     return result
@@ -240,6 +265,59 @@ def validate(page_path: Path, wiki_root: Optional[Path]) -> list[str]:
                 elif not isinstance(s, str):
                     violations.append(
                         f"{page_path}: sources entries must be strings, got {s!r}"
+                    )
+
+    # Phase B: quality block
+    VALID_RATED_BY = {"ingester", "doctor", "human"}
+    QUALITY_SCORE_FIELDS = ("accuracy", "completeness", "signal", "interlinking")
+    if "quality" not in data:
+        violations.append(f"{page_path}: missing required field: quality")
+    else:
+        q = data["quality"]
+        if not isinstance(q, dict):
+            violations.append(f"{page_path}: quality must be a nested mapping")
+        else:
+            for field in QUALITY_SCORE_FIELDS:
+                if field not in q:
+                    violations.append(f"{page_path}: missing quality.{field}")
+                else:
+                    v = q[field]
+                    if not isinstance(v, int) or not (1 <= v <= 5):
+                        violations.append(
+                            f"{page_path}: quality.{field} must be int 1..5, got {v!r}"
+                        )
+            if "overall" not in q:
+                violations.append(f"{page_path}: missing quality.overall")
+            else:
+                try:
+                    scores = [q[f] for f in QUALITY_SCORE_FIELDS if isinstance(q.get(f), int)]
+                    if len(scores) == 4:
+                        expected = round(sum(scores) / 4, 2)
+                        actual = float(q["overall"])
+                        if abs(expected - actual) > 1e-6:
+                            violations.append(
+                                f"{page_path}: quality.overall must be mean of four "
+                                f"scores rounded to 2 decimals. expected={expected}, "
+                                f"got={actual}"
+                            )
+                except (TypeError, ValueError):
+                    violations.append(f"{page_path}: quality.overall not numeric")
+            if "rated_at" not in q:
+                violations.append(f"{page_path}: missing quality.rated_at")
+            else:
+                v = q["rated_at"]
+                if not isinstance(v, str) or not ISO_UTC_RE.match(v):
+                    violations.append(
+                        f"{page_path}: quality.rated_at must be ISO-8601 UTC, got {v!r}"
+                    )
+            if "rated_by" not in q:
+                violations.append(f"{page_path}: missing quality.rated_by")
+            else:
+                v = q["rated_by"]
+                if v not in VALID_RATED_BY:
+                    violations.append(
+                        f"{page_path}: quality.rated_by must be one of "
+                        f"{sorted(VALID_RATED_BY)}, got {v!r}"
                     )
 
     # Wiki-root-mode additional checks

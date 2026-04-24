@@ -178,10 +178,28 @@ When spawned, the ingester has a single job: process one already-claimed capture
    b. Read current page content (read-before-write).
    c. Merge new material. Do NOT replace existing claims — add dated findings, use `contradictions:` frontmatter if they disagree.
    d. Release lock (`wiki_lock_release`).
-7. **Update `index.md`** (locked).
+6.5. **Self-rate every page you just touched.** For each page, use the cheap model to score on four dimensions (1-5 each), compute `overall` as `round(mean, 2)`, and write the following into the page's frontmatter (creating the `quality:` block if missing, preserving `rated_by: human` if the page already has it):
+   ```yaml
+   quality:
+     accuracy: <1-5>       # does the page match the evidence?
+     completeness: <1-5>    # does the page cover the subject adequately?
+     signal: <1-5>          # is the content high-signal vs filler?
+     interlinking: <1-5>    # are cross-links to related pages present and correct?
+     overall: <float>
+     rated_at: "<ISO-8601 UTC now>"
+     rated_by: ingester
+   ```
+   Rating criteria in one line each:
+   - accuracy: does every claim map to evidence in `sources:`?
+   - completeness: would a future-you searching for this topic find enough to act?
+   - signal: dense knowledge vs restatement?
+   - interlinking: does it link to every related page the wiki contains?
+   **Never clobber `rated_by: human`.** If the existing page has `quality.rated_by == "human"`, skip this step for that page entirely.
+7. **Update `index.md`** (locked). When rendering a page entry, append its overall rating: `- [Title](path/page.md) — (q: 4.25) short description`.
+7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the current `index.md` content to the cheap model with this prompt: "Identify any existing wiki page in index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
 8. **Append to `log.md`**.
 9. **If this wiki is a project wiki** and the capture is general-interest:
-   write a new capture in the main wiki's `.wiki-pending/` with `origin: <project wiki path>`.
+   write a new capture in the main wiki's `.wiki-pending/` with `propagated_from: <project wiki path>`.
 10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`.
 11. **Call auto-commit** (from skill's base dir): `bash scripts/wiki-commit.sh "${WIKI_ROOT}" "ingest: <capture title>"`
 12. **Exit.**
@@ -204,7 +222,7 @@ The validator checks:
 - Dates are full ISO-8601 UTC (`2026-04-24T13:00:00Z`, not `2026-04-24`).
 - `sources:` is a flat list of strings (no nested mappings).
 - For `type: source` pages: a matching raw file exists at `raw/<basename>.*`.
-- In Phase B (post this task), also: every `quality.*` field is present and in range.
+- Every `quality.*` field is present and in range.
 
 If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails.
 
@@ -219,6 +237,26 @@ Additionally: after running the validator, also run `wiki-lint-tags.py` (Phase B
 - **Restructure a top-level category** when it contains 500+ pages.
 
 When a threshold is reached, propose the restructure via a `schema-proposal` capture in `.wiki-pending/schema-proposals/`. Do NOT restructure during the current ingest.
+
+### Quality ratings — what the 4 dimensions mean
+
+Every non-meta page (concept, entity, source, query) carries a `quality:` block in frontmatter. The block is maintained by the ingester at every ingest (step 6.5), re-rated by `wiki doctor` with a smarter model (post-MVP), and never clobbered once a human has rated.
+
+The four dimensions (1 = terrible, 5 = excellent):
+
+- **accuracy** — how confident we are that every claim is faithful to the cited sources. Low if the page asserts things beyond what `sources:` justifies.
+- **completeness** — does the page answer what a future-you will ask? Low if the page is a thin summary of a rich source.
+- **signal** — ratio of durable knowledge to restatement/filler. Low if the page is mostly boilerplate or speculation.
+- **interlinking** — does the page link to every other wiki page it should link to? Low on islands.
+
+`overall` is `round(mean(accuracy, completeness, signal, interlinking), 2)`.
+
+`rated_by` values and semantics:
+- `ingester` — set by the ingest background worker (cheap model). This is the default.
+- `doctor` — set by `wiki doctor` (smartest model). Overwrites `ingester`, never `human`.
+- `human` — set by the user editing the page directly. **Ingesters and doctor must never overwrite this.** Detect by `rated_by: human` in the current page's frontmatter; skip self-rating entirely for that page.
+
+Surfaced in `index.md` per-page ( e.g. `- [Title](concepts/x.md) — (q: 3.25) description`) and in `wiki status` as a rollup ("N pages below 3.5 — run `wiki doctor`").
 
 ## Query — how the agent uses the wiki
 
@@ -270,6 +308,9 @@ When you're about to skip a capture, check these red flags:
 | "This doesn't look wiki-shaped / there's no code here / this isn't a wiki context" | Tone is not the trigger. If new factual info appeared — medical facts, historical facts, library docs, anything durable — capture. The parasite-research conversation is exactly as wiki-worthy as the API-rate-limit conversation. |
 | "The user asked a casual question, research was just informational" | A research subagent returning a file with findings is itself a TRIGGER line in the description. It does not matter whether the user framed it casually. |
 | "The skill's description is soft / passive, so I can skip" | The description now says "Load at the start of EVERY conversation. Entry is non-negotiable." Not loading the skill is not an option. |
+| "The self-rating step is subjective, I'll skip it" | Ratings are mandatory. `ingester` is the default `rated_by`; leave rating accurate but lowball over missing. Every non-meta page needs a quality block — the validator will flag missing blocks. |
+| "I'll give everything 5s to be safe" | 5 is exceptional. Lowballing a page to 3 flags it for `wiki doctor` review later, which is the right outcome. False 5s silently bake errors — the exact failure mode we're guarding against. |
+| "I'll rewrite a human-rated page's quality because I just touched it" | Forbidden. `rated_by: human` is sacred. Touch only the body; leave the quality block alone. |
 
 All of these are violations of the Iron Law.
 
