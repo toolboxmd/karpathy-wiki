@@ -39,6 +39,11 @@ from typing import Any, Optional
 
 VALID_TYPES = {"concept", "entity", "source", "query"}
 ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+# A YAML block-list item is treated as a one-key nested mapping only if
+# its pre-colon token looks like a YAML identifier. Without this guard,
+# list items like `- https://foo/bar` would be mis-parsed as
+# {"https": "//foo/bar"}.
+_NESTED_MAP_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)")
 REQUIRED_FIELDS_BASE = ("title", "type", "tags", "sources", "created", "updated")
 
 
@@ -141,7 +146,12 @@ def _parse_yaml(fm: str) -> dict[str, Any]:
                     if indent < 2:
                         break
                     content = s[2:]
-                    if ":" in content and not (content.startswith('"') or content.startswith("'")):
+                    # Treat as a nested one-key mapping ONLY if the pre-colon
+                    # token looks like a YAML identifier (letters/digits/_/-).
+                    # Protects against URLs and other colon-bearing strings
+                    # being mis-parsed — e.g. "https://foo" must stay a
+                    # string, not become {"https": "//foo"}.
+                    if _NESTED_MAP_RE.match(content):
                         ck, _, cv = content.partition(":")
                         items.append({ck.strip(): _parse_scalar(cv.strip())})
                     else:

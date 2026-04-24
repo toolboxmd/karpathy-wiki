@@ -86,6 +86,18 @@ echo "${out}" | grep -q "quality.overall" \
   && say_pass "stderr: overall-mismatch mentions quality.overall" \
   || say_fail "stderr: expected 'quality.overall' in stderr, got: ${out}"
 
+# -- YAML parser: URL in sources list must NOT be mis-parsed as a nested mapping --
+# Regression test for the "https://..." parser bug.
+# The ":" inside "https://" must not cause the item to be treated as {key: value}.
+expect_exit 0 "sources-with-url passes (URL is a string, not a nested mapping)" -- python3 "${TOOL}" "${FIX}/sources-with-url.md"
+
+out="$(python3 "${TOOL}" "${FIX}/sources-with-url.md" 2>&1 >/dev/null || true)"
+if echo "${out}" | grep -q "nested mapping"; then
+  say_fail "URL source was mis-parsed as nested mapping; got: ${out}"
+else
+  say_pass "stderr: URL source did NOT trigger 'nested mapping' violation"
+fi
+
 echo
 echo "passed: ${pass_count}"
 echo "failed: ${fail_count}"
