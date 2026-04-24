@@ -80,14 +80,23 @@ if [[ "${normalize_failed}" -eq 1 ]]; then
   exit 1
 fi
 
-# 3. Rebuild manifest to populate sha256 for all raw files
+# 3. Backfill quality: blocks on every page missing one (Phase B requirement)
+if [[ -f "${SCRIPT_DIR}/wiki-backfill-quality.py" ]]; then
+  python3 "${SCRIPT_DIR}/wiki-backfill-quality.py" --wiki-root "${wiki}" || {
+    echo >&2 "quality backfill failed"
+    restore_backup
+    exit 1
+  }
+fi
+
+# 4. Rebuild manifest to populate sha256 for all raw files
 python3 "${SCRIPT_DIR}/wiki-manifest.py" build "${wiki}" || {
   echo >&2 "manifest build failed"
   restore_backup
   exit 1
 }
 
-# 4. Validate every page
+# 5. Validate every page
 violations_found=0
 while IFS= read -r page; do
   if ! python3 "${SCRIPT_DIR}/wiki-validate-page.py" --wiki-root "${wiki}" "${page}" 2>&1; then
@@ -101,7 +110,7 @@ if [[ "${violations_found}" -eq 1 ]]; then
   exit 1
 fi
 
-# 5. Optionally commit
+# 6. Optionally commit
 if [[ "${yes_mode}" -eq 1 ]]; then
   (cd "${wiki}" && git add -A && git commit -m "chore: v2-hardening schema migration" >/dev/null)
   echo "committed."
