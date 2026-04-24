@@ -343,7 +343,7 @@ EOF
    - **When ambiguous, propagate** with a short pointer page — lower risk than missing knowledge.
 
    Main wiki ingestion is otherwise identical to project wiki ingestion.
-10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`.
+10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`. The helper strips the `.processing` suffix on rename, so archived basenames end in `.md`. Audit Finding 03 surfaced 4 legacy archive files still carrying `.md.processing` from older code paths; Phase D of v2.2 backfilled them.
 11. **Call auto-commit** (from skill's base dir): `bash scripts/wiki-commit.sh "${WIKI_ROOT}" "ingest: <capture title>"`
 12. **Exit.**
 
