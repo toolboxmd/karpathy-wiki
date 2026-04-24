@@ -313,6 +313,29 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
    **Never clobber `rated_by: human`.** If the existing page has `quality.rated_by == "human"`, skip this step for that page entirely.
 7. **Update `index.md`** (locked). When rendering a page entry, append its overall rating: `- [Title](path/page.md) — (q: 4.25) short description`.
 7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the current `index.md` content to the cheap model with this prompt: "Identify any existing wiki page in index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
+7.6. **Index size threshold check.** After updating `index.md` in step 7, measure its byte size:
+   ```bash
+   size="$(wc -c < "${WIKI_ROOT}/index.md")"
+   ```
+   If `size > 8192` AND no `*-index-split.md` capture exists in `.wiki-pending/schema-proposals/` with mtime within the last 24 hours, write a new schema-proposal capture (do NOT block ingest, do NOT split inline):
+   ```bash
+   if [[ ${size} -gt 8192 ]]; then
+     recent="$(find "${WIKI_ROOT}/.wiki-pending/schema-proposals" -name '*-index-split.md' -mtime -1 2>/dev/null | head -1)"
+     if [[ -z "${recent}" ]]; then
+       ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+       cat > "${WIKI_ROOT}/.wiki-pending/schema-proposals/${ts}-index-split.md" <<EOF
+   ---
+   title: "Schema proposal: split index.md (size threshold exceeded)"
+   captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   trigger: "index.md size = ${size} bytes (threshold 8192 bytes)"
+   ---
+
+   index.md exceeded the orientation-degradation threshold. Recommended atom-ization: split into per-category sub-indexes (index/concepts.md, index/entities.md, index/queries.md, index/ideas.md), with index.md becoming a 5-line MOC pointing at each. Rationale: per-category matches existing wiki structure; agents reading index.md get cheap orientation and can drill down.
+   EOF
+     fi
+   fi
+   ```
+   Audit Finding 01 surfaced index.md at 25 KB / 76 entries / ~12,500 tokens; over 3x the 8 KB ceiling and ~12x the Chroma Context Rot inflection point. The thresholds existed in prose but had no firing mechanism; this step closes the loop.
 8. **Append to `log.md`**.
 9. **If this wiki is a project wiki, decide propagation.** A project wiki evaluates whether each capture is general-interest (useful across projects) or project-specific, using these criteria:
    - **Propagate** if the capture describes a tool, concept, pattern, or principle applicable outside this project. Write a new capture in the main wiki's `.wiki-pending/` with `propagated_from: <project wiki path>`.
