@@ -191,11 +191,20 @@ def _parse_yaml(fm: str) -> dict[str, Any]:
 
 
 _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+_FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 
 def _extract_body_links(body: str) -> list[str]:
-    """Return every (relative or absolute) URL target of a markdown link."""
-    return _LINK_RE.findall(body)
+    """Return every (relative or absolute) URL target of a markdown link.
+
+    Skips links that appear inside fenced code blocks (```...```) or inline
+    code spans (`...`). Markdown link syntax inside code is illustrative,
+    not a real link.
+    """
+    stripped = _FENCED_CODE_RE.sub("", body)
+    stripped = _INLINE_CODE_RE.sub("", stripped)
+    return _LINK_RE.findall(stripped)
 
 
 def _is_external(link: str) -> bool:
