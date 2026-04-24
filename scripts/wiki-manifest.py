@@ -214,13 +214,47 @@ def cmd_migrate(wiki_root: Path) -> int:
     return 0
 
 
+def cmd_validate(wiki_root: Path) -> int:
+    """Verify every manifest entry has a non-empty `origin` matching either
+    the literal "conversation" or an absolute filesystem path. Empty,
+    evidence-type-as-origin ("file"/"mixed"/"conversation" used wrongly),
+    and relative-path origins are violations.
+    """
+    manifest_path = wiki_root / ".manifest.json"
+    if not manifest_path.is_file():
+        print(f"no manifest at {manifest_path}", file=sys.stderr)
+        return 1
+    manifest = _load_json(manifest_path)
+    bad: list[str] = []
+    for k, v in manifest.items():
+        if not isinstance(v, dict):
+            bad.append(f"{k}: entry is not an object")
+            continue
+        o = v.get("origin", "")
+        if not isinstance(o, str):
+            bad.append(f"{k}: origin must be a string, got {type(o).__name__}")
+            continue
+        if o == "":
+            bad.append(f"{k}: empty origin")
+        elif o in ("file", "mixed"):
+            bad.append(f"{k}: origin is literal evidence_type {o!r}")
+        elif o != "conversation" and not o.startswith("/"):
+            bad.append(
+                f"{k}: origin must be 'conversation' or an absolute path, "
+                f"got {o!r}"
+            )
+    for line in bad:
+        print(line, file=sys.stderr)
+    return 0 if not bad else 1
+
+
 def main() -> int:
     if sys.version_info < (3, 11):
         print("python 3.11+ required", file=sys.stderr)
         return 1
 
     if len(sys.argv) != 3:
-        print("usage: wiki-manifest.py {build|diff|migrate} <wiki_root>",
+        print("usage: wiki-manifest.py {build|diff|migrate|validate} <wiki_root>",
               file=sys.stderr)
         return 1
 
@@ -236,6 +270,8 @@ def main() -> int:
         return cmd_diff(wiki_root)
     if cmd == "migrate":
         return cmd_migrate(wiki_root)
+    if cmd == "validate":
+        return cmd_validate(wiki_root)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 1
 
