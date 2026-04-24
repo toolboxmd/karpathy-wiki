@@ -22,6 +22,7 @@ test_status_on_empty_wiki() {
   echo "${output}" | grep -q "total pages:" || { echo "FAIL: total pages missing"; teardown; exit 1; }
   echo "${output}" | grep -q "pages below 3.5 quality:" || { echo "FAIL: quality line missing"; teardown; exit 1; }
   echo "${output}" | grep -q "tag synonyms flagged:" || { echo "FAIL: synonyms line missing"; teardown; exit 1; }
+  echo "${output}" | grep -q "^index.md:" || { echo "FAIL: status output missing index.md field"; teardown; exit 1; }
   echo "PASS: test_status_on_empty_wiki"
   teardown
 }

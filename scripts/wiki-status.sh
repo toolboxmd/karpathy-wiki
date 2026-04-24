@@ -58,6 +58,20 @@ if [[ -x "${SCRIPT_DIR}/wiki-lint-tags.py" ]]; then
   [[ -z "${synonym_count}" ]] && synonym_count=0
 fi
 
+# Index size (Finding 01 -- surface warning when over 8 KB threshold)
+index_size=0
+index_warn=""
+if [[ -f "${wiki}/index.md" ]]; then
+  index_size="$(wc -c < "${wiki}/index.md" | tr -d ' ')"
+  if [[ "${index_size}" -gt 8192 ]]; then
+    index_kb=$(( (index_size + 512) / 1024 ))
+    index_warn=" -- over 8 KB threshold; consider atom-ization"
+    index_size="${index_kb} KB"
+  else
+    index_size="${index_size} bytes"
+  fi
+fi
+
 cat <<EOF
 wiki: ${wiki}
 role: ${role}
@@ -70,4 +84,5 @@ drift: ${drift}
 git: ${git_status}
 pages below 3.5 quality: ${below_35}
 tag synonyms flagged: ${synonym_count}
+index.md: ${index_size}${index_warn}
 EOF
