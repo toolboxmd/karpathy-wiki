@@ -109,7 +109,7 @@ Deletions:
 
 Net delta: **+44 lines**.
 
-Projected final line count: **415 + 44 = 459 lines**. Budget headroom: **41 lines** below the 500-line limit.
+Projected final line count: **415 + 55 = ~470 lines** (revised after per-step recount; initial estimate of ~459 undercounted the stalled-capture subsection by ~6 lines and step 4's extension by ~3 lines). Budget headroom: **~30 lines** below the 500-line limit.
 
 **If the implementer's actual edit overshoots this estimate and exceeds 500 lines**, the required compression is: split the `### Quality ratings — what the 4 dimensions mean` subsection into a new file `skills/karpathy-wiki/references/quality-ratings.md` and leave a short pointer in SKILL.md. This frees ~20 lines. Do NOT compress any of the new prose added by this patch — every sentence in the new prose is load-bearing.
 
@@ -206,7 +206,7 @@ A capture is definitively stalled when:
 
 1. `<capture>.md.processing` exists in `.wiki-pending/`, AND
 2. The file's mtime is older than 10 minutes, AND
-3. No `log.md` line matches the capture basename with an `ingest | <capture-title>` or `reject | <capture-basename>` entry.
+3. No `log.md` line within the last N turns references this capture, by EITHER its basename OR the title from its frontmatter. Search for both: the `reject | <basename>` / `skip | <basename>` / `stalled | <basename>` / `overwrite | <basename>` forms use basename; the `ingest | <title>` form uses the title. If either form matches, the capture is NOT stalled — it completed or was deliberately rejected. Only the absence of both forms flags a stall.
 
 All three conditions together — NEVER act on mtime alone; a legitimate in-flight ingester on a large page may legitimately take several minutes.
 
@@ -383,7 +383,7 @@ When you're about to skip a capture, check these red flags:
 | "The user will remember this / it's obvious from context" | The user won't; context evaporates. That's the whole point of the wiki. |
 | "It's too trivial for the wiki" | If it meets the trigger criteria, capture it. Lint filters noise later. |
 | "I'll capture it later / I'm mid-task" | Later means never. Capture is milliseconds. Do it now. |
-| "I responded to the user already, I'll capture separately" | Turn isn't done until the capture is written. Reply-first-capture-later is fine; reply-first-never-capture is the failure mode from 2026-04-22. Run the `ls .wiki-pending/` check before you emit the stop sentinel. |
+| "I responded to the user already, I'll capture separately" | Turn isn't done until the capture is written. Reply-first-capture-later is fine; reply-first-never-capture is the failure mode this skill was hardened against. Run the `ls .wiki-pending/` check before you emit the stop sentinel. |
 | "It's already covered" | Orientation protocol tells you if it is. Did you check? |
 | "The user didn't ask me to save this" | Capture triggers fire automatically — no explicit user request required. |
 | "I don't have a memory tool available" | This skill IS the memory tool. Its presence is the trigger. |
@@ -414,7 +414,7 @@ Run:
 wc -l /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/skills/karpathy-wiki/SKILL.md
 ```
 
-Expected: line count **less than 500**. Based on the line-budget accounting above, projected count is ~459 lines. If actual exceeds 500, the required compression is: move `### Quality ratings — what the 4 dimensions mean` (currently lines 316-334 in the original file, ~19 lines) into a new file `skills/karpathy-wiki/references/quality-ratings.md` and leave this 2-line pointer in its place:
+Expected: line count **less than 500**. Based on the revised line-budget accounting above, projected count is ~470 lines. If actual exceeds 500, the required compression is: move `### Quality ratings — what the 4 dimensions mean` (currently lines 316-334 in the original file, ~19 lines) into a new file `skills/karpathy-wiki/references/quality-ratings.md` and leave this 2-line pointer in its place:
 
 ```markdown
 ### Quality ratings — what the 4 dimensions mean
@@ -448,13 +448,13 @@ Run:
 ```bash
 wc -l /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/skills/karpathy-wiki/SKILL.md
 grep -c "^## \|^### " /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/skills/karpathy-wiki/SKILL.md
-grep -n "Turn closure\|stalled-capture\|sha256 short-circuit\|title-scope check\|overwrite-detection\|index-size ceiling\|stalled | \|\\.wiki-pending" /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/skills/karpathy-wiki/SKILL.md
+grep -n "Turn closure\|stalled-capture\|sha256 short-circuit\|title-scope check\|overwrite-detection\|index-size ceiling\|stalled | \|\\.wiki-pending\|Durability test\|cite the exact SKILL.md line" /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/skills/karpathy-wiki/SKILL.md
 ```
 
 Expected:
 - Line count under 500 and above 440.
 - Section-heading count: original had 23 headings (all `##` + `###`); after this patch: original 23 minus 1 deleted (`## What changes between main and project wikis`) plus 2 new (`### Turn closure — before you stop` and `### If an ingester died mid-run (stalled-capture recovery)`) = **24 headings**. If the count differs, recount and verify no heading was accidentally added or removed.
-- The grep for new keywords should return matches for: `Turn closure`, `stalled-capture recovery`, `sha256 short-circuit`, `title-scope check`, `overwrite-detection recovery`, `index-size ceiling` (or `Split or atom-ize`), `stalled | ` (the log.md entry format), and `.wiki-pending/` (multiple). Every one of these confirms a step-specific edit landed.
+- The grep for new keywords should return matches for: `Turn closure` (step 2), `stalled-capture recovery` (step 3), `sha256 short-circuit` / `title-scope check` / `overwrite-detection recovery` (step 4), `index-size ceiling` or `Split or atom-ize` (step 6), `stalled | ` (the log.md entry format, step 3), `.wiki-pending/` (multiple), `Durability test` (step 1), and `cite the exact SKILL.md line` (step 7). Every one of these confirms a step-specific edit landed. If any keyword returns zero matches, the corresponding step was silently skipped — investigate and re-run that step.
 
 - [ ] **Step 12: Commit**
 
@@ -533,7 +533,7 @@ bash /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/tests/run-all.sh
 
 Expected output:
 
-1. `wc -l` prints a single integer strictly less than 500 (projected ~459).
+1. `wc -l` prints a single integer strictly less than 500 (projected ~470).
 2. `self-review.sh` prints 9 PASS lines and exits 0.
 3. `run-all.sh` prints `passed: 17` and `failed: 0` and exits 0.
 
