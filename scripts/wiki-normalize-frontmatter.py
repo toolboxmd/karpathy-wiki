@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 VALID_TYPES = {"concepts": "concept", "entities": "entity",
-               "sources": "source", "queries": "query"}
+               "sources": "concept", "queries": "query"}
 SHORT_DATE_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})$')
 
 

@@ -9,7 +9,7 @@ Checks performed in every mode:
   - Page has YAML frontmatter.
   - Required fields present: title, type, tags, sources, created, updated.
     (Phase B extends this with quality.* fields via a future patch.)
-  - `type` is one of: concept, entity, query. (`source` removed in v2.2 — `sources/` category was deleted.)
+  - `type` is one of: concept, entity, query (source removed in v2.2; sources/ category was deleted).
   - `created` and `updated` are full ISO-8601 UTC strings
     (e.g. 2026-04-24T13:00:00Z).
   - `tags` is a flat list.

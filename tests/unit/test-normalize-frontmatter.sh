@@ -55,7 +55,7 @@ EOF
   teardown
 }
 
-test_adds_type_source_for_sources_path() {
+test_adds_type_concept_for_sources_path() {
   setup
   mkdir -p "${TESTDIR}/wiki/sources"
   cat > "${TESTDIR}/wiki/sources/x.md" <<'EOF'
@@ -71,10 +71,10 @@ updated: "2026-04-24T12:00:00Z"
 body
 EOF
   python3 "${TOOL}" --wiki-root "${TESTDIR}/wiki" "${TESTDIR}/wiki/sources/x.md"
-  grep -q '^type: source$' "${TESTDIR}/wiki/sources/x.md" || {
-    echo "FAIL: type: source not added"; cat "${TESTDIR}/wiki/sources/x.md"; teardown; exit 1
+  grep -q '^type: concept$' "${TESTDIR}/wiki/sources/x.md" || {
+    echo "FAIL: type: concept not added"; cat "${TESTDIR}/wiki/sources/x.md"; teardown; exit 1
   }
-  echo "PASS: test_adds_type_source_for_sources_path"
+  echo "PASS: test_adds_type_concept_for_sources_path"
   teardown
 }
 
@@ -199,7 +199,7 @@ EOF
   python3 "${TOOL}" --wiki-root "${TESTDIR}/wiki" "${TESTDIR}/wiki/sources/legacy.md"
   local out
   out="$(cat "${TESTDIR}/wiki/sources/legacy.md")"
-  echo "${out}" | grep -q "^type: source$" || {
+  echo "${out}" | grep -q "^type: concept$" || {
     echo "FAIL: type missing"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
   }
   echo "${out}" | grep -q "^sources:$" || {
@@ -232,7 +232,7 @@ EOF
 
 test_adds_type_concept_for_concepts_path
 test_adds_type_entity_for_entities_path
-test_adds_type_source_for_sources_path
+test_adds_type_concept_for_sources_path
 test_expands_short_date_to_iso_utc
 test_adds_updated_when_missing
 test_flattens_nested_sources
