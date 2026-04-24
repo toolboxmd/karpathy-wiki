@@ -68,13 +68,15 @@ On the first wiki-worthy moment in any directory:
 2. Otherwise, if `$HOME/wiki/.wiki-config` exists → cwd is outside a wiki; create a project wiki at `./wiki/` linked to `$HOME/wiki/`.
 3. Otherwise → create the main wiki at `$HOME/wiki/`.
 
-Run the init script (script paths below resolve via `$CLAUDE_PLUGIN_ROOT`, which Claude Code sets to the plugin's root directory):
+Run the init script. All script paths below are **relative to this skill's base directory** (shown at the top of the skill as `Base directory for this skill: ...`). `cd` into that directory before invoking any script, or prefix each script with the absolute base path.
 
 ```bash
+cd "<skill-base-directory>"  # from the "Base directory for this skill" preamble
+
 # For main wiki:
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-init.sh" main "$HOME/wiki"
+bash scripts/wiki-init.sh main "$HOME/wiki"
 # For project wiki:
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-init.sh" project "./wiki" "$HOME/wiki"
+bash scripts/wiki-init.sh project "./wiki" "$HOME/wiki"
 ```
 
 No prompts. No confirmations. Initialization is automatic and idempotent.
@@ -130,10 +132,10 @@ detail for the ingester to write a page without re-reading the transcript>
 
 ### After writing a capture
 
-Immediately spawn a detached ingester:
+Immediately spawn a detached ingester (from the skill's base directory):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-spawn-ingester.sh" "<wiki_root>" "<capture_path>"
+bash scripts/wiki-spawn-ingester.sh "<wiki_root>" "<capture_path>"
 ```
 
 This returns in milliseconds. The spawner atomically claims the capture (renames `.md` → `.md.processing`) and then launches `claude -p` detached. You continue the user's task.
@@ -161,7 +163,7 @@ When spawned, the ingester has a single job: process one already-claimed capture
 9. **If this wiki is a project wiki** and the capture is general-interest:
    write a new capture in the main wiki's `.wiki-pending/` with `origin: <project wiki path>`.
 10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`.
-11. **Call auto-commit**: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-commit.sh" "${WIKI_ROOT}" "ingest: <capture title>"`
+11. **Call auto-commit** (from skill's base dir): `bash scripts/wiki-commit.sh "${WIKI_ROOT}" "ingest: <capture title>"`
 12. **Exit.**
 
 ### Tier-1 lint at ingest (inline)
