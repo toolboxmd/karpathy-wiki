@@ -29,10 +29,10 @@ Auto-capture and auto-ingest durable knowledge into a git-versioned LLM wiki. Ba
 Load this skill on every conversation. Entry is non-negotiable. Entry is CHEAP — it just means you have these rules loaded; it does NOT mean you run the orientation protocol every turn.
 
 - **Entry** happens once per session, automatic.
-- **Orientation protocol** (read schema.md → index.md → last 10 of log.md) runs ONLY when you are about to (a) write a capture to `.wiki-pending/`, or (b) answer a question the wiki might cover.
-- **Capture** is a few-hundred-byte file + a detached spawn. It takes milliseconds. Always do it when a trigger fires.
+- **Orientation protocol** runs ONLY when you are about to (a) write a capture, or (b) answer a wiki-covered question. Full spec below.
+- **Capture** is a few-hundred-byte file + a detached spawn. Milliseconds. Always do it when a trigger fires.
 
-If new factual information surfaces in a conversation — even one that "looks casual" — you capture. The conversation about medical parasites is just as wiki-worthy as the conversation about API rate limits. Tone is not the trigger.
+If new factual information surfaces in a conversation — even one that "looks casual" — you capture. A chat like "wait, what's actually the difference between USB 3.0, 3.1, and 3.2?" producing a clear versioning-rename mapping is just as wiki-worthy as a research report on API rate limits. Tone is not the trigger; durable knowledge is.
 
 ## Iron laws
 
@@ -48,7 +48,7 @@ NO PAGE EDIT WITHOUT READING THE PAGE FIRST
 NO SKIPPING A CAPTURE BECAUSE "IT DOESN'T LOOK WIKI-SHAPED"
 ```
 
-Every wiki-worthy moment becomes a small capture file. Each capture spawns a detached headless ingester that writes pages and commits. The user continues working — ingest never blocks.
+Every wiki-worthy moment becomes a capture file that a detached ingester turns into wiki pages.
 
 ## When a wiki exists (orientation protocol)
 
@@ -82,8 +82,6 @@ bash scripts/wiki-init.sh project "./wiki" "$HOME/wiki"
 No prompts. No confirmations. Initialization is automatic and idempotent.
 
 ## Capture — what, when, how
-
-A **capture** is a tiny markdown file noting that something happened which the wiki should absorb.
 
 ### What counts as wiki-worthy (trigger criteria)
 
@@ -157,19 +155,14 @@ The ingester enforces these floors. A capture under the floor is rejected and dr
 **For `conversation` captures, you MUST NOT include:**
 
 - Pleasantries, meta-commentary, "let me check", "good question".
-- Wrong turns and their correction — keep the resolution, drop the detour.
+- Process over output: wrong turns, reasoning trail, "I thought X but then realized Y". Keep the resolution; drop the detour.
 - The user's questions verbatim — they're context, not content. If a question led to a durable answer, capture the ANSWER.
-- Your own reasoning trail ("I thought X but then realized Y") — capture the final Y, not the deliberation.
-- Ingestion logistics (orientation protocol results, decisions about `suggested_pages`) — those are your job to figure out IN the frontmatter, not to narrate in the body.
-
-**Violating the letter of these rules is violating the spirit.** "I wrote a short body because the conversation was short" is not a defense — if the conversation produced durable knowledge, the body must carry it; if it didn't, you shouldn't be writing a capture at all. "The ingester can figure it out from context" is wrong: the ingester has no context. It has what you wrote.
+- Ingestion logistics (orientation protocol results, decisions about `suggested_pages`) — those belong in the frontmatter, not the body.
 
 ### Red flags — STOP and expand the body
 
 - Capture body under the floor for its evidence_type.
-- Body reads like an abstract ("Research on X covering A, B, C") instead of stating A, B, C.
-- Numbers in the conversation are rounded away or dropped ("roughly 20 req/min" when the conversation said exactly 20).
-- URLs, commit hashes, version strings omitted because they "looked like details."
+- Numbers rounded away or dropped ("roughly 20 req/min" when the source said exactly 20).
 - A "see conversation for full context" or "the user can fill in specifics" phrase appears anywhere.
 
 **All of these mean: expand the body before spawning the ingester.**
@@ -204,7 +197,7 @@ When you see this:
 
 ## Ingest — what the headless ingester does
 
-When spawned, the ingester has a single job: process one already-claimed capture into wiki pages. The spawner hands the ingester the path to a `.processing` file (already claimed), and passes `WIKI_ROOT` and `WIKI_CAPTURE` env vars.
+The ingester's job: process one already-claimed capture into wiki pages. It runs with `WIKI_ROOT` and `WIKI_CAPTURE` env vars pointing at the `.md.processing` file.
 
 ### Ingester steps
 
@@ -366,25 +359,21 @@ When you're about to skip a capture, check these red flags:
 
 | Rationalization | Reality |
 |---|---|
-| "The user will remember this" | The user will not remember. That's the whole point. |
-| "It's too trivial for the wiki" | If it meets the trigger criteria, capture it. Lint will filter noise later. |
-| "I'll capture it later" | Later means never. Capture now. |
-| "I'm in the middle of another task" | Capture is milliseconds. Do it. |
+| "The user will remember this / it's obvious from context" | The user won't; context evaporates. That's the whole point of the wiki. |
+| "It's too trivial for the wiki" | If it meets the trigger criteria, capture it. Lint filters noise later. |
+| "I'll capture it later / I'm mid-task" | Later means never. Capture is milliseconds. Do it now. |
 | "It's already covered" | Orientation protocol tells you if it is. Did you check? |
-| "This is obvious from context" | Context evaporates. The wiki preserves it. |
 | "The user didn't ask me to save this" | Capture triggers fire automatically — no explicit user request required. |
 | "I don't have a memory tool available" | This skill IS the memory tool. Its presence is the trigger. |
 | "The file is already in a good place" (filing ≠ capturing) | Location isn't organization. Capture extracts concepts, not just files. |
 | "I'll answer from training data; the question doesn't look wiki-shaped" | Run orientation first. The wiki's scope is whatever has been captured — you can't know without checking. |
-| "This doesn't look wiki-shaped / there's no code here / this isn't a wiki context" | Tone is not the trigger. If new factual info appeared — medical facts, historical facts, library docs, anything durable — capture. The parasite-research conversation is exactly as wiki-worthy as the API-rate-limit conversation. |
-| "The user asked a casual question, research was just informational" | A research subagent returning a file with findings is itself a TRIGGER line in the description. It does not matter whether the user framed it casually. |
-| "The skill's description is soft / passive, so I can skip" | The description now says "Load at the start of EVERY conversation. Entry is non-negotiable." Not loading the skill is not an option. |
-| "The self-rating step is subjective, I'll skip it" | Ratings are mandatory. `ingester` is the default `rated_by`; leave rating accurate but lowball over missing. Every non-meta page needs a quality block — the validator will flag missing blocks. |
-| "I'll give everything 5s to be safe" | 5 is exceptional. Lowballing a page to 3 flags it for `wiki doctor` review later, which is the right outcome. False 5s silently bake errors — the exact failure mode we're guarding against. |
+| "This doesn't look wiki-shaped / there's no code here / this isn't a wiki context" | Tone is not the trigger. If new factual info appeared — a USB version mapping, a library quirk, a historical date, anything durable — capture. A casual "what's the difference between USB 3.0, 3.1, 3.2" exchange is as wiki-worthy as a full research report on API rate limits. |
+| "The user asked a casual question, research was just informational" | A research subagent returning a file with findings is itself a TRIGGER line in the description. User framing doesn't override that. |
+| "The self-rating step is subjective, I'll skip it" | Ratings are mandatory. Lowball over missing; the validator flags missing blocks. |
+| "I'll give everything 5s to be safe" | 5 is exceptional. Lowballing a page to 3 flags it for `wiki doctor` later, which is the right outcome. False 5s silently bake errors. |
 | "I'll rewrite a human-rated page's quality because I just touched it" | Forbidden. `rated_by: human` is sacred. Touch only the body; leave the quality block alone. |
-| "My conversation capture can be short; the ingester can figure it out" | The ingester cannot figure it out. It has no transcript access, no session memory, no context except what you put in the capture body. Write it all. |
-| "The conversation was short, so the capture can be short" | The body size floor is about information density, not conversation length. A 3-turn conversation that produced 5 durable claims still needs ≥ 1500 bytes of claim-preserving body. |
-| "I'll skip this needs_more_detail rejection; the user just asked something else" | Forbidden. Expanding a rejected capture takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
+| "My conversation capture can be short — short chat, or the ingester figures it out" | The ingester has no transcript access. Whatever you omit is gone. Body-size floor is about information density, not conversation length. |
+| "I'll skip this `needs_more_detail` rejection; the user just asked something else" | Forbidden. Expanding takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
 
 All of these are violations of the Iron Law.
 
