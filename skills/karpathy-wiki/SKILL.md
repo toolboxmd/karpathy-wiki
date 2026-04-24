@@ -24,6 +24,17 @@ Auto-capture and auto-ingest durable knowledge into a git-versioned LLM wiki. Ba
 
 **Announce at start:** "Using the karpathy-wiki skill to [capture this / ingest pending captures / answer from wiki]."
 
+**User-facing output contract.** The announce line is the ONLY wiki-mechanics text the user sees. Everything after it is the user's actual answer — the research, the explanation, the result they asked for. Do NOT narrate:
+
+- Orientation steps ("let me orient", "reading schema.md", "checking the index")
+- Capture authoring ("writing the capture now", "4,971 bytes — above the 1,500 floor")
+- Spawn mechanics ("capture is claimed", "ingester is running detached", "now spawn")
+- Timestamps you shell out to get
+- Decisions about page structure ("now I'll create concepts/foo.md")
+- State-machine narration ("now close this task", "next step")
+
+Do all of the above silently. The user does not need to know the wiki machinery ran; they need the answer. A clean turn looks like: **[announce line] → [the answer]**. Nothing in between.
+
 ## YOU DO NOT HAVE A CHOICE
 
 Load this skill on every conversation. Entry is non-negotiable. Entry is CHEAP — it just means you have these rules loaded; it does NOT mean you run the orientation protocol every turn.
@@ -374,6 +385,7 @@ When you're about to skip a capture, check these red flags:
 | "I'll rewrite a human-rated page's quality because I just touched it" | Forbidden. `rated_by: human` is sacred. Touch only the body; leave the quality block alone. |
 | "My conversation capture can be short — short chat, or the ingester figures it out" | The ingester has no transcript access. Whatever you omit is gone. Body-size floor is about information density, not conversation length. |
 | "I'll skip this `needs_more_detail` rejection; the user just asked something else" | Forbidden. Expanding takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
+| "I'm being transparent about my process" (narrating the capture/spawn/orientation steps) | Transparency about process IS noise. The user wanted the answer, not a tour of the wiki mechanics. Capture, spawn, orient — silently. Speak only the announce line and the answer. |
 
 All of these are violations of the Iron Law.
 
