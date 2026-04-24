@@ -79,10 +79,10 @@ def _load_synonym_pairs(wiki: Path) -> list[tuple[str, str]]:
     text = schema.read_text()
     in_section = False
     for line in text.splitlines():
-        if line.strip().startswith("## Tag Synonyms"):
+        if line.strip().startswith("## Tag Synonyms") or line.strip().startswith("### Tag Synonyms"):
             in_section = True
             continue
-        if in_section and line.startswith("## "):
+        if in_section and (line.startswith("## ") or line.startswith("### ")):
             break
         if in_section:
             m = re.match(r"^\s*-\s*(\S+)\s*==\s*(\S+)\s*$", line)
