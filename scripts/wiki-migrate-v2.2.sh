@@ -156,7 +156,7 @@ migrate_archive_processing_suffix() {
     if (( DRY_RUN )); then
       say "would-rename ${rel} -> .md"
     else
-      mv -- "${f}" "${new}"
+      mv -n -- "${f}" "${new}"
     fi
   done < <(find "${wiki}/.wiki-pending/archive" -type f -name "*.processing" 2>/dev/null)
 }
