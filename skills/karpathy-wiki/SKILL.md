@@ -338,10 +338,9 @@ done
 The validator checks:
 - Every markdown link in the page resolves to an existing file.
 - Required frontmatter fields (`title`, `type`, `tags`, `sources`, `created`, `updated`) present.
-- `type` is one of `concept, entity, source, query`.
+- `type` is one of `concept, entity, query`.
 - Dates are full ISO-8601 UTC (`2026-04-24T13:00:00Z`, not `2026-04-24`).
 - `sources:` is a flat list of strings (no nested mappings).
-- For `type: source` pages: a matching raw file exists at `raw/<basename>.*`.
 - Every `quality.*` field is present and in range.
 
 If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails.
@@ -361,7 +360,7 @@ When a threshold is reached, propose the restructure via a `schema-proposal` cap
 
 ### Quality ratings — what the 4 dimensions mean
 
-Every non-meta page (concept, entity, source, query) carries a `quality:` block in frontmatter. The block is maintained by the ingester at every ingest (step 6.5), re-rated by `wiki doctor` with a smarter model (post-MVP), and never clobbered once a human has rated.
+Every non-meta page (concept, entity, query) carries a `quality:` block in frontmatter. The block is maintained by the ingester at every ingest (step 6.5), re-rated by `wiki doctor` with a smarter model (post-MVP), and never clobbered once a human has rated.
 
 The four dimensions (1 = terrible, 5 = excellent):
 
