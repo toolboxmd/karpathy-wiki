@@ -2,9 +2,10 @@
 """Hash manifest for raw/ files — v2-hardened schema.
 
 Usage:
-    wiki-manifest.py build   <wiki_root>
-    wiki-manifest.py diff    <wiki_root>
-    wiki-manifest.py migrate <wiki_root>
+    wiki-manifest.py build    <wiki_root>
+    wiki-manifest.py diff     <wiki_root>
+    wiki-manifest.py migrate  <wiki_root>
+    wiki-manifest.py validate <wiki_root>
 
 Canonical schema for <wiki_root>/.manifest.json (one per wiki):
 
