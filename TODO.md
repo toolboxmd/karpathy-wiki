@@ -37,6 +37,65 @@ fill every field, link into the referencing plan/commit/concept page.
 
 ---
 
+## `wiki-migrate-v2.2.sh`: regex misses inline-list `sources:` frontmatter
+
+```yaml
+status: open
+priority: p3
+effort: low
+labels: [post-mvp, migration-script, known-imperfection]
+revisit_when:
+  "Any future v2.2-style migration is planned, OR a wiki-doctor pass needs
+  to rewrite frontmatter sources entries en masse."
+refs:
+  - scripts/wiki-migrate-v2.2.sh (`migrate_rewrite_frontmatter_sources`,
+    line ~67, regex `^(  - )sources/`)
+  - docs/superpowers/plans/2026-04-24-karpathy-wiki-v2.2.md (Task 60)
+```
+
+The migration script's frontmatter regex `^(  - )sources/` only matches the
+block-list form (each item on its own line with `  - ` prefix), not the
+inline-list form (`sources: ["sources/x"]` on one line). During Task 61's
+live run against `~/wiki/`, the script silently missed
+`concepts/micro-editor-over-nano.md` because that page used inline-list
+form; the implementer manually rewrote it after the page validator caught
+the dangling reference. No data loss, but the script is incomplete. Sharpen
+to handle both forms (probably by switching from grep+sed to a YAML-aware
+Python rewrite) before any v2.2-style migration reruns.
+
+---
+
+## Subagent reformatting hazard: TODO.md autoformatted on Task 62 commit
+
+```yaml
+status: open
+priority: p3
+effort: low
+labels: [process, subagent-discipline, known-imperfection]
+revisit_when:
+  "If subagent commits keep accumulating off-scope reformatting noise, OR a
+  pre-commit hook is added that enforces wrap-width."
+refs:
+  - commit a832fa5 (Task 62 -- 230-line diff for what should have been a
+    section move + 2 frontmatter edits)
+  - docs/superpowers/plans/2026-04-24-karpathy-wiki-v2.2.md (Task 62 spec)
+```
+
+The Task 62 implementer subagent reflowed the entire TODO.md to ~80-char
+wrap as part of its section-move commit (171 insertions, 59 deletions for
+substantively a 1-section move + 2 frontmatter line edits). The task brief
+said "do not touch any other file"; technically respected (only TODO.md
+changed) but spiritually violated (reformatted untouched lines). The reflow
+is harmless and arguably an improvement to file readability, but creates
+diff noise that obscures real changes in `git log -p`.
+
+Two paths to address: (a) `git revert a832fa5 && redo` for a minimal-diff
+version, or (b) accept the reformat and add an explicit "do not reformat
+unrelated lines" clause to future implementer prompts. Recommend (b) plus
+a shared subagent prompt template that includes the no-reformat clause.
+
+---
+
 ## Stop-hook gate for turn-closure enforcement
 
 ```yaml
