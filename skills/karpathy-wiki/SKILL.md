@@ -126,14 +126,53 @@ captured_by: "in-session-agent"
 propagated_from: null  # set to originating wiki path if propagated from satellite
 ---
 
-<one paragraph summary. if evidence_type=conversation, include enough
-detail for the ingester to write a page without re-reading the transcript>
+<capture body — see "Capture body sufficiency" below for what MUST and MUST NOT go here>
 ```
 
 **Field contract:**
 - `evidence`: the literal string `conversation` (when the capture came from in-session discussion with no file on disk) OR an absolute filesystem path to the source file. NEVER `file`, `mixed`, or a wiki-relative path.
 - `evidence_type`: one of `file`, `conversation`, `mixed`. This is a TYPE descriptor only. The ingester does not record this in the manifest; it records `evidence` (as `origin`).
 - `propagated_from` (previously `origin`): renamed to prevent confusion with the manifest's `origin` field. Value: absolute path to a project wiki root, or `null`.
+
+### Capture body sufficiency — YOU MUST WRITE ENOUGH
+
+The ingester is a detached `claude -p` process with no access to this conversation's transcript. **Whatever you do not put in the capture body, the ingester cannot know.** A thin capture produces a thin wiki page — the main cause of low-quality wiki entries is the main agent under-writing the capture body.
+
+**Size floors, measured in bytes of the capture body (excluding YAML frontmatter):**
+
+- `evidence_type: file` — ≥ 200 bytes. The raw file does the heavy lifting; the body is a pointer-with-intent. A good file-type body names WHY this raw matters, WHAT categories/tags the ingester should pick, WHICH existing pages are likely relevant, and any cross-wiki links the ingester would miss. Even "this is about X, likely updates page Y" is acceptable here.
+- `evidence_type: mixed` — ≥ 1000 bytes. Mixed means "the conversation added material the raw doesn't cover." You owe that delta IN FULL. Don't lean on the raw; the whole point of `mixed` is that the raw is incomplete.
+- `evidence_type: conversation` — ≥ 1500 bytes. There is NO raw file. The body IS the evidence. Everything durable from the conversation must be here.
+
+The ingester enforces these floors. A capture under the floor is rejected and dropped back to `.wiki-pending/` with `needs-more-detail: true`. You will see it on the next turn and must expand it.
+
+**For `conversation` captures specifically, you MUST include:**
+
+- Every durable CLAIM the conversation produced — a fact, a number, a version, a commit, a percentage, a decision with rationale. If the claim would survive the session, it goes in.
+- Every CONCRETE DETAIL the ingester cannot guess — exact URLs, package names, error messages, command snippets, code examples (keep them short; 5-15 lines is usually enough), numeric thresholds, version ranges.
+- Every DECISION made WITH its rationale — "we chose X because Y failed on Z" is a complete unit. `"we chose X"` alone is not.
+- Every CONTRADICTION, GOTCHA, OR CAVEAT observed during the conversation — these are often the highest-value knowledge and are the first thing a summarization reflex strips.
+- The SOURCES cited by you or by the user — doc URLs, arxiv IDs, GitHub repos with star counts as-of the session, upstream announcements.
+
+**For `conversation` captures, you MUST NOT include:**
+
+- Pleasantries, meta-commentary, "let me check", "good question".
+- Wrong turns and their correction — keep the resolution, drop the detour.
+- The user's questions verbatim — they're context, not content. If a question led to a durable answer, capture the ANSWER.
+- Your own reasoning trail ("I thought X but then realized Y") — capture the final Y, not the deliberation.
+- Ingestion logistics (orientation protocol results, decisions about `suggested_pages`) — those are your job to figure out IN the frontmatter, not to narrate in the body.
+
+**Violating the letter of these rules is violating the spirit.** "I wrote a short body because the conversation was short" is not a defense — if the conversation produced durable knowledge, the body must carry it; if it didn't, you shouldn't be writing a capture at all. "The ingester can figure it out from context" is wrong: the ingester has no context. It has what you wrote.
+
+### Red flags — STOP and expand the body
+
+- Capture body under the floor for its evidence_type.
+- Body reads like an abstract ("Research on X covering A, B, C") instead of stating A, B, C.
+- Numbers in the conversation are rounded away or dropped ("roughly 20 req/min" when the conversation said exactly 20).
+- URLs, commit hashes, version strings omitted because they "looked like details."
+- A "see conversation for full context" or "the user can fill in specifics" phrase appears anywhere.
+
+**All of these mean: expand the body before spawning the ingester.**
 
 ### After writing a capture
 
@@ -147,6 +186,22 @@ This returns in milliseconds. The spawner atomically claims the capture (renames
 
 **Never wait for the ingester. Never read the capture back. Move on.**
 
+### If the ingester rejects a capture (`needs_more_detail: true`)
+
+On a later turn, you may notice a capture in `.wiki-pending/` whose frontmatter has `needs_more_detail: true`. That means an earlier ingester found the body too thin for its evidence_type and sent it back.
+
+When you see this:
+
+1. **Read the rejection reason** (`needs_more_detail_reason` in the frontmatter). It tells you how many bytes the body was and the floor for its type.
+2. **Expand the body in place.** Remove the `needs_more_detail` and `needs_more_detail_reason` lines from the frontmatter. Add the missing durable claims, concrete details, decisions-with-rationale, and sources — following the "Capture body sufficiency" rules above.
+3. **Re-spawn the ingester** on the expanded capture:
+   ```bash
+   bash scripts/wiki-spawn-ingester.sh "<wiki_root>" "<capture_path>"
+   ```
+4. **Do not ignore the rejection, even if the user is mid-question.** Rejections happen in milliseconds and expanding takes seconds. Ignoring a rejection means the knowledge is lost and the capture accumulates dust in `.wiki-pending/`.
+
+"I'll come back to it later" is a forbidden rationalization here — same class as the rationalizations in the table below.
+
 ## Ingest — what the headless ingester does
 
 When spawned, the ingester has a single job: process one already-claimed capture into wiki pages. The spawner hands the ingester the path to a `.processing` file (already claimed), and passes `WIKI_ROOT` and `WIKI_CAPTURE` env vars.
@@ -154,6 +209,21 @@ When spawned, the ingester has a single job: process one already-claimed capture
 ### Ingester steps
 
 1. **The capture is already claimed for you.** Read `${WIKI_CAPTURE}` (it's a `.md.processing` file). If for some reason `${WIKI_CAPTURE}` is unset or missing, call `wiki_capture_claim "${WIKI_ROOT}"` to grab any pending capture as fallback.
+
+1a. **Body-sufficiency check — reject if too thin.** Measure the capture body size in bytes (the content AFTER the closing `---` of frontmatter). Apply the per-evidence-type floor:
+   - `evidence_type: file` → 200 bytes
+   - `evidence_type: mixed` → 1000 bytes
+   - `evidence_type: conversation` → 1500 bytes
+
+   If the body is BELOW its floor:
+   - Add a top-level `needs_more_detail: true` line to the capture's frontmatter.
+   - Add `needs_more_detail_reason: "body is <N> bytes; floor for evidence_type=<T> is <F> bytes — main agent must expand with concrete claims, numbers, URLs, and decisions before re-spawning"` to the frontmatter.
+   - Rename the file from `.md.processing` back to `.md` so the next session-start drain picks it up after the main agent has expanded it.
+   - Append a line to `log.md`: `## [<timestamp>] reject | <capture-basename> — body <N>b below <F>b floor`
+   - Exit 0. Do NOT write wiki pages. Do NOT commit. The main agent will see the rejection on its next turn (the capture reappears in `.wiki-pending/` with `needs_more_detail: true`) and is expected to expand the body before anything else happens.
+
+   A thin-capture rejection is a FEATURE, not a failure. It exists to stop low-quality captures from becoming low-quality wiki pages.
+
 2. **Read the orientation files**: schema.md, index.md, last 10 entries of log.md.
 3. **Read the capture body.**
 4. **Copy evidence, write manifest entry with correct origin:**
@@ -312,6 +382,9 @@ When you're about to skip a capture, check these red flags:
 | "The self-rating step is subjective, I'll skip it" | Ratings are mandatory. `ingester` is the default `rated_by`; leave rating accurate but lowball over missing. Every non-meta page needs a quality block — the validator will flag missing blocks. |
 | "I'll give everything 5s to be safe" | 5 is exceptional. Lowballing a page to 3 flags it for `wiki doctor` review later, which is the right outcome. False 5s silently bake errors — the exact failure mode we're guarding against. |
 | "I'll rewrite a human-rated page's quality because I just touched it" | Forbidden. `rated_by: human` is sacred. Touch only the body; leave the quality block alone. |
+| "My conversation capture can be short; the ingester can figure it out" | The ingester cannot figure it out. It has no transcript access, no session memory, no context except what you put in the capture body. Write it all. |
+| "The conversation was short, so the capture can be short" | The body size floor is about information density, not conversation length. A 3-turn conversation that produced 5 durable claims still needs ≥ 1500 bytes of claim-preserving body. |
+| "I'll skip this needs_more_detail rejection; the user just asked something else" | Forbidden. Expanding a rejected capture takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
 
 All of these are violations of the Iron Law.
 
