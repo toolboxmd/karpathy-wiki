@@ -1553,6 +1553,20 @@ updated: "2026-04-24T12:00:00Z"
 Source summary.
 ```
 
+Create `/Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/tests/fixtures/pre-hardening-wiki/sources/legacy-raw-field.md` (mirrors the live wiki's `sources/2026-04-24-claude-code-dotclaude-sync-plan.md` legacy schema: `raw:` + `captured_at:` + `pages_derived:`, NO `type/tags/sources/created/updated`):
+
+```markdown
+---
+title: "Source: Legacy Raw-Field Page (2026-04-24)"
+raw: raw/2026-04-24-sample.md
+captured_at: "2026-04-24T13:00:00Z"
+pages_derived:
+  - concepts/no-type.md
+---
+
+Legacy source-pointer page written before the v2-hardening schema was defined. Normalizer must translate raw→sources, captured_at→created, drop pages_derived, add type, add tags stub, add updated.
+```
+
 - [ ] **Step 2: Write failing test for `wiki-normalize-frontmatter.py`**
 
 Create `/Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/tests/unit/test-normalize-frontmatter.sh`:
@@ -1962,12 +1976,65 @@ EOF
   teardown
 }
 
+test_migrates_legacy_source_page_schema() {
+  # Mirrors the live wiki's sources/2026-04-24-claude-code-dotclaude-sync-plan.md:
+  # has raw:, captured_at:, pages_derived: but none of type/tags/sources/created/updated.
+  # Normalizer must translate the legacy fields and add the required ones.
+  setup
+  mkdir -p "${TESTDIR}/wiki/sources" "${TESTDIR}/wiki/raw"
+  touch "${TESTDIR}/wiki/raw/2026-04-24-sample.md"
+  cat > "${TESTDIR}/wiki/sources/legacy.md" <<'EOF'
+---
+title: "Source: Legacy"
+raw: raw/2026-04-24-sample.md
+captured_at: "2026-04-24T13:00:00Z"
+pages_derived:
+  - concepts/foo.md
+---
+
+Legacy body.
+EOF
+  python3 "${TOOL}" --wiki-root "${TESTDIR}/wiki" "${TESTDIR}/wiki/sources/legacy.md"
+  local out
+  out="$(cat "${TESTDIR}/wiki/sources/legacy.md")"
+  echo "${out}" | grep -q "^type: source$" || {
+    echo "FAIL: type missing"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  echo "${out}" | grep -q "^sources:$" || {
+    echo "FAIL: sources: block not emitted"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  echo "${out}" | grep -q "^  - raw/2026-04-24-sample.md$" || {
+    echo "FAIL: raw:-field not translated to sources:"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  echo "${out}" | grep -q "^created: \"2026-04-24T13:00:00Z\"$" || {
+    echo "FAIL: captured_at:-field not translated to created:"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  echo "${out}" | grep -q "^updated: \"2026-04-24T13:00:00Z\"$" || {
+    echo "FAIL: updated missing"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  echo "${out}" | grep -q "^tags: " || {
+    echo "FAIL: tags missing (stub not added)"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  }
+  if echo "${out}" | grep -q "^raw: "; then
+    echo "FAIL: raw: key should have been removed"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  fi
+  if echo "${out}" | grep -q "^captured_at:"; then
+    echo "FAIL: captured_at: key should have been removed"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  fi
+  if echo "${out}" | grep -q "^pages_derived:"; then
+    echo "FAIL: pages_derived: key should have been removed"; cat "${TESTDIR}/wiki/sources/legacy.md"; teardown; exit 1
+  fi
+  echo "PASS: test_migrates_legacy_source_page_schema"
+  teardown
+}
+
 test_adds_type_concept_for_concepts_path
 test_adds_type_entity_for_entities_path
 test_adds_type_source_for_sources_path
 test_expands_short_date_to_iso_utc
 test_adds_updated_when_missing
 test_flattens_nested_sources
+test_migrates_legacy_source_page_schema
 test_is_idempotent
 echo "ALL PASS"
 ```
@@ -2004,6 +2071,15 @@ Changes applied (all idempotent):
   4. If any entry in `sources:` is a nested mapping like `- key: value`,
      flatten it to the bare key (e.g. `- conversation`). The value is
      dropped.
+  5. Legacy source-page schema migration: if the page has a top-level
+     `raw:` key (scalar pointing to a raw/ path), translate to a
+     `sources:` block list with that one entry. If the page has
+     `captured_at:` but no `created:`, translate captured_at → created.
+     Drop `pages_derived:` (the derived pages are listed as markdown
+     links in the body, and the manifest's `referenced_by` is the
+     machine-readable version). If `tags:` is missing after this
+     migration, seed with `tags: [source]` so the validator is happy —
+     the real domain tags are filled in by wiki doctor or by hand later.
 
 This script does NOT:
   - Add the `quality:` block (Phase B, Task 36 does that).
@@ -2057,7 +2133,99 @@ def _expand_date(value: str) -> str:
     return value  # leave alone; validator will flag if still invalid
 
 
+def _migrate_legacy_source_schema(fm: list[str]) -> list[str]:
+    """First-pass migration of legacy source-page frontmatter to the v2-hardening
+    schema. Idempotent: returns `fm` unchanged if no legacy keys present.
+
+    Rules:
+    - `raw: raw/<basename>.md` scalar -> `sources:` block list with that one entry.
+    - `captured_at: <value>` -> `created: <value>` (only if `created:` not present).
+    - Drop `pages_derived:` block (incl. its list body).
+    - If tags: missing AFTER the above, add `tags: [source]` as a stub.
+    """
+    has_raw_scalar = False
+    has_captured_at = False
+    has_sources = False
+    has_created = False
+    has_tags = False
+    raw_value: str | None = None
+    captured_at_value: str | None = None
+
+    # First scan: detect what's present.
+    for line in fm:
+        stripped = line.rstrip("\n")
+        if re.match(r'^raw:\s+\S', stripped) and not stripped.startswith("raw/"):
+            has_raw_scalar = True
+            raw_value = stripped.split(":", 1)[1].strip()
+        elif re.match(r'^captured_at:\s+', stripped):
+            has_captured_at = True
+            captured_at_value = stripped.split(":", 1)[1].strip()
+        elif stripped == 'sources:':
+            has_sources = True
+        elif re.match(r'^created:\s+', stripped):
+            has_created = True
+        elif re.match(r'^tags:\s+', stripped) or stripped == 'tags:':
+            has_tags = True
+
+    # Fast path: no legacy keys, no-op.
+    if not has_raw_scalar and not has_captured_at:
+        return fm
+
+    # Second pass: rewrite.
+    out: list[str] = []
+    in_pages_derived = False
+    for line in fm:
+        stripped = line.rstrip("\n")
+        # Drop the pages_derived: block and its list body entirely.
+        if stripped == 'pages_derived:':
+            in_pages_derived = True
+            continue
+        if in_pages_derived:
+            if line.startswith("  ") or line.startswith("\t") or \
+               line.startswith("- ") or line.startswith(" -"):
+                continue
+            in_pages_derived = False
+        # Translate `raw: raw/foo.md` to a `sources:` block list, unless
+        # sources: already exists (then just drop the raw: line to avoid a
+        # duplicate key).
+        if has_raw_scalar and re.match(r'^raw:\s+\S', stripped) and \
+                not stripped.startswith("raw/"):
+            if not has_sources and raw_value is not None:
+                out.append('sources:\n')
+                out.append(f'  - {raw_value}\n')
+                has_sources = True
+            # else: drop the raw: scalar; sources: block already present.
+            continue
+        # Translate captured_at: -> created: (only if no created: yet).
+        if re.match(r'^captured_at:\s+', stripped):
+            if not has_created and captured_at_value is not None:
+                out.append(f'created: {captured_at_value}\n')
+                has_created = True
+            # else: drop captured_at:; created: already present.
+            continue
+        out.append(line)
+
+    # Seed tags: [source] if still missing after migration.
+    if not has_tags:
+        # Insert after title: line if present, else at end.
+        inserted = False
+        result: list[str] = []
+        for line in out:
+            result.append(line)
+            if not inserted and line.startswith("title:"):
+                result.append('tags: [source]\n')
+                inserted = True
+        if not inserted:
+            result.append('tags: [source]\n')
+        out = result
+
+    return out
+
+
 def _process_fm(fm: list[str], inferred_type: str | None) -> list[str]:
+    # Phase 1: migrate legacy source-page schema if applicable.
+    fm = _migrate_legacy_source_schema(fm)
+
     out: list[str] = []
     has_type = False
     has_updated = False
@@ -2469,19 +2637,19 @@ PASS: test_migrate_rolls_back_on_validator_failure
 ALL PASS
 ```
 
-- [ ] **Step 10: DRY-RUN the migration against live `~/wiki/`**
+- [ ] **Step 10: Run the migration against live `~/wiki/` (autonomous)**
 
-This is a dry-run: we expect all fixtures to pass after migration, and since the live `~/wiki/` has the same classes of violations, the migration should succeed. Do NOT commit yet — just verify the backup + migration + validation chain runs clean.
+We expect all fixtures to pass after migration, and since the live `~/wiki/` has the same classes of violations, the migration should succeed. The migration script backs up first, migrates second, validates third, and rolls back automatically on any validation failure — rollback is the safety net, not an interactive prompt.
 
-Run:
+Run (autonomous mode — `--yes` skips the interactive confirm; rollback-on-fail is the safety):
 ```bash
-bash /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/scripts/wiki-migrate-v2-hardening.sh
+bash /Users/lukaszmaj/dev/toolboxmd/karpathy-wiki/scripts/wiki-migrate-v2-hardening.sh --yes
 ```
 
 - Expected first line: `backup: /Users/lukaszmaj/wiki.backup-<timestamp>`
 - After manifest + normalize + validate: no output on stderr about violations.
 - Final line: `done. backup at: /Users/lukaszmaj/wiki.backup-<timestamp>`
-- The prompt `commit the migration now? [y/N]` will appear. Respond `y` ONLY after inspecting `git status` and `git diff` in `~/wiki/` in a separate terminal. If anything looks wrong, answer `N` — the backup is retained and the implementer must investigate before proceeding.
+- With `--yes`, the migration commits automatically inside `~/wiki/` if validation passes; if validation fails, the backup is restored and the script exits non-zero (subagent reports BLOCKED).
 
 **If the migration FAILS** on live data (a page has a shape the normalizer doesn't handle): roll back happens automatically, the backup is retained. The implementer should:
 1. Add the failing shape as a new fixture under `tests/fixtures/pre-hardening-wiki/`.
@@ -4544,6 +4712,12 @@ The following tags are evolved by the ingester; `wiki-lint-tags.py` flags drift.
 ### Domain tags
 
 Grow organically; no closed list. See `wiki-lint-tags.py --all` for the live set.
+
+### Tag Synonyms
+
+Synonym pairs are consolidated in future rounds via `wiki doctor`. Until then, `wiki-lint-tags.py --all` treats both forms as drift and flags them in `wiki status`. The syntax is `- short == long` (left and right are interchangeable; the pair is symmetric).
+
+- dental == dentistry
 ```
 
 - [ ] **Step 2: Add `#personal` to the dentin-hypersensitivity page**
