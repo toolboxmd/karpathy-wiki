@@ -107,6 +107,8 @@ Write a capture when any of these fire:
 - Two claims contradict each other
 - The user adds a file to `raw/`
 
+**Durability test.** A capture is wiki-worthy when (a) the information is still true in 30 days AND (b) future-you would search for it. If (a) fails it is version-bump noise; if (b) fails it is a personal-preference / task-scratch detail. Both must hold. Personal-preference carve-outs that the user has asked you to remember (explicit "remember this") bypass this test — capture them but tag them `#personal`.
+
 ### What is NOT wiki-worthy
 
 Do NOT capture:
@@ -190,6 +192,23 @@ This returns in milliseconds. The spawner atomically claims the capture (renames
 
 **Never wait for the ingester. Never read the capture back. Move on.**
 
+### Turn closure — before you stop
+
+Before emitting your final assistant message in any turn, run this single check:
+
+```bash
+ls "<wiki_root>/.wiki-pending/" 2>/dev/null | grep -v '^archive$\|^schema-proposals$' | head -20
+```
+
+If the output lists any `.md` file OR any `.md.processing` file older than 10 minutes (see next subsection), the turn is NOT done. Handle the pending captures first, then re-check, then close the turn.
+
+Covered cases, both must be handled before turn-closure:
+
+1. **You forgot to write a capture this turn.** A trigger fired (research subagent returned a file, confusion resolved, gotcha surfaced) and you answered the user without calling `wiki-spawn-ingester.sh`. The `.wiki-pending/` check catches nothing, but the trigger criteria in the previous subsections still apply: if a trigger fired, write the capture before closing the turn.
+2. **A previous turn's capture was never written.** Session drain runs on session-start only; it cannot catch mid-session misses. A capture from an earlier turn may be sitting in `.wiki-pending/` with `needs_more_detail: true`, or a `.md.processing` file may be stalled. The `ls` command surfaces both; the rejection-handling and stalled-recovery subsections tell you what to do.
+
+This is a self-discipline rule until a Stop-hook gate is wired (v2.x). The check is cheap; run it every turn.
+
 ### If the ingester rejects a capture (`needs_more_detail: true`)
 
 On a later turn, you may notice a capture in `.wiki-pending/` whose frontmatter has `needs_more_detail: true`. That means an earlier ingester found the body too thin for its evidence_type and sent it back.
@@ -205,6 +224,26 @@ When you see this:
 4. **Do not ignore the rejection, even if the user is mid-question.** Rejections happen in milliseconds and expanding takes seconds. Ignoring a rejection means the knowledge is lost and the capture accumulates dust in `.wiki-pending/`.
 
 "I'll come back to it later" is a forbidden rationalization here — same class as the rationalizations in the table below.
+
+### If an ingester died mid-run (stalled-capture recovery)
+
+`.wiki-pending/*.md.processing` files that are still present 10+ minutes after their rename are stalled — the ingester that claimed them either crashed, was SIGTERMed by the runtime (documented behaviour on Max subscription; see `~/wiki/concepts/claude-code-headless-subagents.md` issue #29642, 3-10 min), or was orphaned when a `claude -p` parent exited (the in-process Node worker dies with the parent).
+
+A capture is definitively stalled when:
+
+1. `<capture>.md.processing` exists in `.wiki-pending/`, AND
+2. The file's mtime is older than 10 minutes, AND
+3. No `log.md` line within the last N turns references this capture, by EITHER its basename OR the title from its frontmatter. Search for both: the `reject | <basename>` / `skip | <basename>` / `stalled | <basename>` / `overwrite | <basename>` forms use basename; the `ingest | <title>` form uses the title. If either form matches, the capture is NOT stalled — it completed or was deliberately rejected. Only the absence of both forms flags a stall.
+
+All three conditions together — NEVER act on mtime alone; a legitimate in-flight ingester on a large page may legitimately take several minutes.
+
+When all three hold:
+
+1. Rename the file back from `.md.processing` to `.md` (leaves it in `.wiki-pending/` — the next turn's turn-closure check will see it).
+2. Append a line to `log.md`: `## [<timestamp>] stalled | <capture-basename> — reclaimed after 10+ min, no ingest or reject entry found`.
+3. Re-spawn the ingester: `bash scripts/wiki-spawn-ingester.sh "<wiki_root>" "<capture_path>"`.
+
+Do NOT delete the stalled `.md.processing` file — the rename is the recovery. Do NOT attempt to resume the dead ingester's session — `claude -p` subagent transcripts persist but the worker is gone (documented: resume starts a fresh worker, it does not resurrect an in-flight one). Start clean.
 
 ## Ingest — what the headless ingester does
 
@@ -247,6 +286,9 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
    - Always call `bash scripts/wiki-manifest.py build "${WIKI_ROOT}"` at the end of ingest to refresh sha256 and `last_ingested`. This is mandatory; the manifest is the drift-detection source of truth.
    - **Iron rule:** `origin` is the capture's `evidence` field value — never the string `"file"`, `"conversation"` (when a real path was available), `"mixed"`, or the evidence_type. If `evidence_type == "conversation"` AND the capture has no real path, `origin` is the literal string `"conversation"`. Any other value is a validator failure.
    - After copying to raw/, create a `sources/<basename>.md` pointer page IF one does not already exist. Template in `references/source-pointer-template.md` (if present) or inline in the skill's base prose. Every raw file MUST have a matching sources/ pointer page — the validator now enforces this.
+   - **sha256 short-circuit.** If `raw/<basename>` already exists AND `sha256(new) == manifest[raw/<basename>].sha256`, the evidence content is identical — skip re-ingest of this capture and append `## [<timestamp>] skip | <capture-basename> — sha match, no-op` to `log.md`. Archive the capture normally (step 10). This prevents re-ingesting the same research file twice when the capture-trigger fires on a near-duplicate.
+   - **Title-scope check.** Before merging into an existing wiki page in step 6, compare the new evidence's scope to the existing page's slug. Scope is the set of distinct entities (product names, versions, model names, concepts) the evidence covers. If the existing page's slug is NARROWER than the new evidence's scope (example: existing `concepts/gemma4-27b-hardware-requirements.md` vs new evidence covering a 27B+31B comparison), do NOT force-merge the broader content into the narrower-titled page. Instead, either (a) create a sibling concept page with a scope-appropriate slug (e.g. `concepts/gemma4-27b-vs-31b-hardware-comparison.md`) and cross-link both, or (b) rename the existing page's slug AND frontmatter title to cover the new scope, then merge — only if no other wiki page currently links to the old slug (if any do, use option (a) to avoid broken links). Log which option was taken in `log.md`.
+   - **Overwrite-detection recovery.** If `raw/<basename>` already exists AND the new sha256 differs from the manifest entry AND the manifest's `last_ingested` is within the last 60 minutes (the evidence file on disk was replaced since the previous ingest), treat this as an overwrite situation: copy the new evidence to `raw/<basename>` AS NORMAL, but also append `## [<timestamp>] overwrite | <capture-basename> — raw sha changed since <previous_ingested_iso>, previous referenced_by: [<list>]` to `log.md`. Proceed with the rest of step 4 and the title-scope check in step 6 as above. The overwrite is not an error — it is the exact scenario from the failure-mode transcript (two research agents both wrote to `2026-04-24-gemma4-hardware.md`), and the title-scope check catches the content-divergence part.
 5. **Decide target pages**: `suggested_pages` is a hint; orientation may change it.
 6. **For each target page**:
    a. Acquire a page lock (`wiki_lock_wait_and_acquire`).
@@ -273,8 +315,12 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
 7. **Update `index.md`** (locked). When rendering a page entry, append its overall rating: `- [Title](path/page.md) — (q: 4.25) short description`.
 7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the current `index.md` content to the cheap model with this prompt: "Identify any existing wiki page in index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
 8. **Append to `log.md`**.
-9. **If this wiki is a project wiki** and the capture is general-interest:
-   write a new capture in the main wiki's `.wiki-pending/` with `propagated_from: <project wiki path>`.
+9. **If this wiki is a project wiki, decide propagation.** A project wiki evaluates whether each capture is general-interest (useful across projects) or project-specific, using these criteria:
+   - **Propagate** if the capture describes a tool, concept, pattern, or principle applicable outside this project. Write a new capture in the main wiki's `.wiki-pending/` with `propagated_from: <project wiki path>`.
+   - **Keep local** if the capture uses project-specific names, references this codebase's architecture, or only applies here.
+   - **When ambiguous, propagate** with a short pointer page — lower risk than missing knowledge.
+
+   Main wiki ingestion is otherwise identical to project wiki ingestion.
 10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`.
 11. **Call auto-commit** (from skill's base dir): `bash scripts/wiki-commit.sh "${WIKI_ROOT}" "ingest: <capture title>"`
 12. **Exit.**
@@ -310,6 +356,7 @@ Additionally: after running the validator, also run `wiki-lint-tags.py` (Phase B
 - **Split a concept page** when it has material from 2+ sources OR exceeds 200 lines.
 - **Archive a raw source** when it's referenced by 5+ wiki pages (move to `raw/archive/`, update references).
 - **Restructure a top-level category** when it contains 500+ pages.
+- **Split or atom-ize `index.md`** when it exceeds ~200 entries / 8KB / 2000 tokens — orientation degrades beyond that. Evidence: Chroma Context Rot research shows retrieval accuracy starts degrading around 1,000 tokens of preamble; Obsidian MOC practitioners cap at 25 items per MOC; Starmorph flags 100-200 pages as the scale-out point.
 
 When a threshold is reached, propose the restructure via a `schema-proposal` capture in `.wiki-pending/schema-proposals/`. Do NOT restructure during the current ingest.
 
@@ -373,6 +420,7 @@ When you're about to skip a capture, check these red flags:
 | "The user will remember this / it's obvious from context" | The user won't; context evaporates. That's the whole point of the wiki. |
 | "It's too trivial for the wiki" | If it meets the trigger criteria, capture it. Lint filters noise later. |
 | "I'll capture it later / I'm mid-task" | Later means never. Capture is milliseconds. Do it now. |
+| "I responded to the user already, I'll capture separately" | Turn isn't done until the capture is written. Reply-first-capture-later is fine; reply-first-never-capture is the failure mode this skill was hardened against. Run the `ls .wiki-pending/` check before you emit the stop sentinel. |
 | "It's already covered" | Orientation protocol tells you if it is. Did you check? |
 | "The user didn't ask me to save this" | Capture triggers fire automatically — no explicit user request required. |
 | "I don't have a memory tool available" | This skill IS the memory tool. Its presence is the trigger. |
@@ -380,23 +428,15 @@ When you're about to skip a capture, check these red flags:
 | "I'll answer from training data; the question doesn't look wiki-shaped" | Run orientation first. The wiki's scope is whatever has been captured — you can't know without checking. |
 | "This doesn't look wiki-shaped / there's no code here / this isn't a wiki context" | Tone is not the trigger. If new factual info appeared — a USB version mapping, a library quirk, a historical date, anything durable — capture. A casual "what's the difference between USB 3.0, 3.1, 3.2" exchange is as wiki-worthy as a full research report on API rate limits. |
 | "The user asked a casual question, research was just informational" | A research subagent returning a file with findings is itself a TRIGGER line in the description. User framing doesn't override that. |
+| "The research file hasn't changed, I'll skip re-capture" | Correct *only if* sha256 of the file matches `manifest[raw/<basename>].sha256`. Different sha = different content = new capture. Ingest step 4's sha-match short-circuit is the only valid place to skip; skipping in the foreground is fabrication. |
 | "The self-rating step is subjective, I'll skip it" | Ratings are mandatory. Lowball over missing; the validator flags missing blocks. |
 | "I'll give everything 5s to be safe" | 5 is exceptional. Lowballing a page to 3 flags it for `wiki doctor` later, which is the right outcome. False 5s silently bake errors. |
 | "I'll rewrite a human-rated page's quality because I just touched it" | Forbidden. `rated_by: human` is sacred. Touch only the body; leave the quality block alone. |
 | "My conversation capture can be short — short chat, or the ingester figures it out" | The ingester has no transcript access. Whatever you omit is gone. Body-size floor is about information density, not conversation length. |
 | "I'll skip this `needs_more_detail` rejection; the user just asked something else" | Forbidden. Expanding takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
-| "I'm being transparent about my process" (narrating the capture/spawn/orientation steps) | Transparency about process IS noise. The user wanted the answer, not a tour of the wiki mechanics. Capture, spawn, orient — silently. Speak only the announce line and the answer. |
+| "I have a good reason to skip this capture" (any rationalization not literally in this table) | Cite the exact SKILL.md line that justifies skipping. If you cannot quote it, you are fabricating — capture now. Transparency-about-process is a subset: the user wanted the answer, not a tour of the wiki mechanics. Capture, spawn, orient — silently. Speak only the announce line and the answer. |
 
 All of these are violations of the Iron Law.
-
-## What changes between main and project wikis
-
-The only behavioral difference: during ingest, a project wiki evaluates whether each capture is general-interest (useful across projects) or project-specific. General-interest captures are propagated to the main wiki's `.wiki-pending/` with an `origin` marker. Main wiki ingestion is otherwise identical.
-
-Criteria for propagation:
-- **Propagate** if the capture describes a tool, concept, pattern, or principle applicable outside this project.
-- **Keep local** if it uses project-specific names, references this codebase's architecture, or only applies here.
-- **When ambiguous, propagate** with a short pointer page — lower risk than missing knowledge.
 
 ## Read-before-write, in detail
 
