@@ -172,6 +172,7 @@ When spawned, the ingester has a single job: process one already-claimed capture
      ```
    - Always call `bash scripts/wiki-manifest.py build "${WIKI_ROOT}"` at the end of ingest to refresh sha256 and `last_ingested`. This is mandatory; the manifest is the drift-detection source of truth.
    - **Iron rule:** `origin` is the capture's `evidence` field value — never the string `"file"`, `"conversation"` (when a real path was available), `"mixed"`, or the evidence_type. If `evidence_type == "conversation"` AND the capture has no real path, `origin` is the literal string `"conversation"`. Any other value is a validator failure.
+   - After copying to raw/, create a `sources/<basename>.md` pointer page IF one does not already exist. Template in `references/source-pointer-template.md` (if present) or inline in the skill's base prose. Every raw file MUST have a matching sources/ pointer page — the validator now enforces this.
 5. **Decide target pages**: `suggested_pages` is a hint; orientation may change it.
 6. **For each target page**:
    a. Acquire a page lock (`wiki_lock_wait_and_acquire`).
