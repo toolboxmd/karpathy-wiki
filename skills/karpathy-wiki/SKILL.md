@@ -343,7 +343,7 @@ The validator checks:
 - `sources:` is a flat list of strings (no nested mappings).
 - Every `quality.*` field is present and in range.
 
-If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails.
+If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails. The ingester MUST NOT call `wiki-commit.sh` (step 11) until every touched page passes the validator. Audit Finding 04 traced 7 broken links to this gate being permissive: ingester logs showed `ingest |` entries with no validator-failure follow-up, meaning the success log fired before the validator was consulted (or its failure was ignored). Wire the validator's exit code into the commit decision; do not paper over it with a log line.
 
 If a contradiction surfaces, add `contradictions:` frontmatter pointing to the conflicting page — do NOT resolve it during ingest. (Contradictions are a judgement call, not a validator violation.)
 
@@ -407,7 +407,7 @@ Everything else is automatic. There is no `wiki init`, no `wiki ingest`, no `wik
 4. **Never block the user on ingest.** Ingestion is asynchronous. If you find yourself waiting for an ingester, you are doing it wrong.
 5. **Never modify files in `raw/`** once the ingester has copied them. They are immutable source of truth.
 6. **Never answer a wiki-eligible question from training data without running orientation first.** If the user's question could plausibly be covered by the wiki, `ls` the cwd and walk up to check for a wiki before answering. Skipping orientation because "the question looks like general knowledge" is a forbidden rationalization — the whole point is that the wiki knows things your training data doesn't.
-7. **Never set `.manifest.json` `origin` to `"file"`, `"mixed"`, or the evidence type.** `origin` is the source-of-truth pointer for the raw file — the capture's `evidence` field value. If `evidence` is an absolute path, `origin` is that path. If `evidence` is the literal string `"conversation"`, `origin` is the literal string `"conversation"`. There is no third option. The clove-oil regression (Audit fix 2) happened because this distinction was fuzzy; now it is not.
+7. **Never set `.manifest.json` `origin` to `"file"`, `"mixed"`, the evidence type, the empty string, or a relative path.** `origin` is the source-of-truth pointer for the raw file; the capture's `evidence` field value. If `evidence` is an absolute path, `origin` is that path. If `evidence` is the literal string `"conversation"`, `origin` is the literal string `"conversation"`. There is no third option. Empty-origin (`""`) means the per-capture write of step 4 was skipped or failed; bail with a `## [...] reject |` log line rather than writing a manifest entry without provenance. The clove-oil regression (Audit fix 2) and the v2.2 copyparty/yazi empty-origin regression both trace to this distinction being fuzzy; now it is not. Run `python3 scripts/wiki-manifest.py validate "${WIKI_ROOT}"` to audit at any time.
 
 ## Rationalizations to resist (red flags)
 
