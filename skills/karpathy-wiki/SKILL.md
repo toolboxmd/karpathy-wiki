@@ -116,19 +116,24 @@ Append a file to `<wiki>/.wiki-pending/` named `<ISO-timestamp>-<slug>.md`:
 ```markdown
 ---
 title: "<one-line title>"
-evidence: "<absolute path to evidence file, OR 'conversation'>"
+evidence: "<absolute path to evidence file, OR the literal string conversation>"
 evidence_type: "file"  # or "conversation" or "mixed"
 suggested_action: "create"  # or "update" or "augment"
 suggested_pages:
   - concepts/<slug>.md   # paths relative to wiki root
 captured_at: "<ISO-8601 UTC timestamp>"
 captured_by: "in-session-agent"
-origin: null  # set to wiki path if propagated from satellite
+propagated_from: null  # set to originating wiki path if propagated from satellite
 ---
 
 <one paragraph summary. if evidence_type=conversation, include enough
 detail for the ingester to write a page without re-reading the transcript>
 ```
+
+**Field contract:**
+- `evidence`: the literal string `conversation` (when the capture came from in-session discussion with no file on disk) OR an absolute filesystem path to the source file. NEVER `file`, `mixed`, or a wiki-relative path.
+- `evidence_type`: one of `file`, `conversation`, `mixed`. This is a TYPE descriptor only. The ingester does not record this in the manifest; it records `evidence` (as `origin`).
+- `propagated_from` (previously `origin`): renamed to prevent confusion with the manifest's `origin` field. Value: absolute path to a project wiki root, or `null`.
 
 ### After writing a capture
 
@@ -151,7 +156,22 @@ When spawned, the ingester has a single job: process one already-claimed capture
 1. **The capture is already claimed for you.** Read `${WIKI_CAPTURE}` (it's a `.md.processing` file). If for some reason `${WIKI_CAPTURE}` is unset or missing, call `wiki_capture_claim "${WIKI_ROOT}"` to grab any pending capture as fallback.
 2. **Read the orientation files**: schema.md, index.md, last 10 entries of log.md.
 3. **Read the capture body.**
-4. **If evidence_type=file**, copy the evidence into `<wiki>/raw/` preserving basename. Update `.manifest.json`.
+4. **Copy evidence, write manifest entry with correct origin:**
+   - If `evidence_type` is `file` or `mixed`: `cp` the evidence file to `<wiki>/raw/<basename>` preserving basename.
+   - In ALL cases (including `evidence_type=conversation`): write or update the manifest entry for the raw file in `<wiki>/.manifest.json`:
+     ```json
+     {
+       "raw/<basename>": {
+         "sha256": "<sha256 of raw file>",
+         "origin": "<exact value of capture's `evidence` field>",
+         "copied_at": "<iso-8601 utc, preserve if already present>",
+         "last_ingested": "<iso-8601 utc, now>",
+         "referenced_by": ["<pages added to this list below>"]
+       }
+     }
+     ```
+   - Always call `bash scripts/wiki-manifest.py build "${WIKI_ROOT}"` at the end of ingest to refresh sha256 and `last_ingested`. This is mandatory; the manifest is the drift-detection source of truth.
+   - **Iron rule:** `origin` is the capture's `evidence` field value — never the string `"file"`, `"conversation"` (when a real path was available), `"mixed"`, or the evidence_type. If `evidence_type == "conversation"` AND the capture has no real path, `origin` is the literal string `"conversation"`. Any other value is a validator failure.
 5. **Decide target pages**: `suggested_pages` is a hint; orientation may change it.
 6. **For each target page**:
    a. Acquire a page lock (`wiki_lock_wait_and_acquire`).
@@ -168,13 +188,29 @@ When spawned, the ingester has a single job: process one already-claimed capture
 
 ### Tier-1 lint at ingest (inline)
 
-Before exiting, check the pages you just touched:
+Before exiting, run the validator on every page you just touched:
 
-- Every markdown link resolves (file exists).
-- Every YAML frontmatter field is valid (dates parseable, required fields present).
-- `index.md` has an entry for every new page.
+```bash
+for page in "${touched_pages[@]}"; do
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-validate-page.py" \
+    --wiki-root "${WIKI_ROOT}" "${page}"
+done
+```
 
-Fix mechanical issues silently. If a contradiction surfaces, add `contradictions:` frontmatter pointing to the conflicting page — do NOT resolve it during ingest.
+The validator checks:
+- Every markdown link in the page resolves to an existing file.
+- Required frontmatter fields (`title`, `type`, `tags`, `sources`, `created`, `updated`) present.
+- `type` is one of `concept, entity, source, query`.
+- Dates are full ISO-8601 UTC (`2026-04-24T13:00:00Z`, not `2026-04-24`).
+- `sources:` is a flat list of strings (no nested mappings).
+- For `type: source` pages: a matching raw file exists at `raw/<basename>.*`.
+- In Phase B (post this task), also: every `quality.*` field is present and in range.
+
+If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails.
+
+If a contradiction surfaces, add `contradictions:` frontmatter pointing to the conflicting page — do NOT resolve it during ingest. (Contradictions are a judgement call, not a validator violation.)
+
+Additionally: after running the validator, also run `wiki-lint-tags.py` (Phase B, Task 37) if it exists in the plugin. If it reports proposed new tags, drop a schema-proposal capture in `.wiki-pending/schema-proposals/` and continue — do NOT rename tags inline.
 
 ### Numeric thresholds (from schema.md)
 
@@ -213,6 +249,7 @@ Everything else is automatic. There is no `wiki init`, no `wiki ingest`, no `wik
 4. **Never block the user on ingest.** Ingestion is asynchronous. If you find yourself waiting for an ingester, you are doing it wrong.
 5. **Never modify files in `raw/`** once the ingester has copied them. They are immutable source of truth.
 6. **Never answer a wiki-eligible question from training data without running orientation first.** If the user's question could plausibly be covered by the wiki, `ls` the cwd and walk up to check for a wiki before answering. Skipping orientation because "the question looks like general knowledge" is a forbidden rationalization — the whole point is that the wiki knows things your training data doesn't.
+7. **Never set `.manifest.json` `origin` to `"file"`, `"mixed"`, or the evidence type.** `origin` is the source-of-truth pointer for the raw file — the capture's `evidence` field value. If `evidence` is an absolute path, `origin` is that path. If `evidence` is the literal string `"conversation"`, `origin` is the literal string `"conversation"`. There is no third option. The clove-oil regression (Audit fix 2) happened because this distinction was fuzzy; now it is not.
 
 ## Rationalizations to resist (red flags)
 
