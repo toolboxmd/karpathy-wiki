@@ -21,3 +21,6 @@ npm-debug.log
 .wiki-pending/
 .locks/
 .ingest.log
+
+# Per-user Claude Code settings (machine-local paths, never share)
+.claude/settings.local.json
