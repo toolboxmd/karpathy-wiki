@@ -24,21 +24,21 @@ total_pages="$(find "${wiki}" -type f -name "*.md" -not -path "*/.wiki-pending/*
 
 last_ingest="never"
 if [[ -f "${wiki}/.manifest.json" ]]; then
-  last_ingest="$(python3 -c "
+  last_ingest="$(python3 -c '
 import json, sys
 try:
-    m = json.load(open('${wiki}/.manifest.json'))
+    m = json.load(open(sys.argv[1] + "/.manifest.json"))
     if not isinstance(m, dict) or not m:
         sys.exit(0)
     iso = max(
-        v.get('last_ingested', '')
+        v.get("last_ingested", "")
         for v in m.values()
-        if isinstance(v, dict) and v.get('last_ingested')
+        if isinstance(v, dict) and v.get("last_ingested")
     )
-    print(iso[:10] if iso else '')
+    print(iso[:10] if iso else "")
 except Exception:
     pass
-" 2>/dev/null)"
+' "${wiki}" 2>/dev/null)"
   [[ -z "${last_ingest}" ]] && last_ingest="never"
 fi
 
