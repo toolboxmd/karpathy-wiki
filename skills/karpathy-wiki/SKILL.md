@@ -315,7 +315,7 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
 7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the current `index.md` content to the cheap model with this prompt: "Identify any existing wiki page in index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
 7.6. **Index size threshold check.** After updating `index.md` in step 7, measure its byte size:
    ```bash
-   size="$(wc -c < "${WIKI_ROOT}/index.md")"
+   size="$(wc -c < "${WIKI_ROOT}/index.md" | tr -d ' ')"
    ```
    If `size > 8192` AND no `*-index-split.md` capture exists in `.wiki-pending/schema-proposals/` with mtime within the last 24 hours, write a new schema-proposal capture (do NOT block ingest, do NOT split inline):
    ```bash
@@ -324,14 +324,14 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
      if [[ -z "${recent}" ]]; then
        ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
        cat > "${WIKI_ROOT}/.wiki-pending/schema-proposals/${ts}-index-split.md" <<EOF
-   ---
-   title: "Schema proposal: split index.md (size threshold exceeded)"
-   captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-   trigger: "index.md size = ${size} bytes (threshold 8192 bytes)"
-   ---
+---
+title: "Schema proposal: split index.md (size threshold exceeded)"
+captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+trigger: "index.md size = ${size} bytes (threshold 8192 bytes)"
+---
 
-   index.md exceeded the orientation-degradation threshold. Recommended atom-ization: split into per-category sub-indexes (index/concepts.md, index/entities.md, index/queries.md, index/ideas.md), with index.md becoming a 5-line MOC pointing at each. Rationale: per-category matches existing wiki structure; agents reading index.md get cheap orientation and can drill down.
-   EOF
+index.md exceeded the orientation-degradation threshold. Recommended atom-ization: split into per-category sub-indexes (index/concepts.md, index/entities.md, index/queries.md, index/ideas.md), with index.md becoming a 5-line MOC pointing at each. Rationale: per-category matches existing wiki structure; agents reading index.md get cheap orientation and can drill down.
+EOF
      fi
    fi
    ```

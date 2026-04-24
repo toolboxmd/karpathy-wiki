@@ -29,34 +29,36 @@ if [[ ${size} -le 8192 ]]; then
   exit 1
 fi
 
-# Inline mechanism: mirrors the SKILL.md step 7.6 prose.
-# A schema-proposal capture should exist in .wiki-pending/schema-proposals/
-# only IF threshold is exceeded AND no recent (<=24h) such proposal exists.
-INDEX_SIZE_THRESHOLD=8192
-recent_proposal="$(find "${tmp}/wiki/.wiki-pending/schema-proposals" -name '*-index-split.md' -mtime -1 2>/dev/null | head -1)"
-if [[ ${size} -gt ${INDEX_SIZE_THRESHOLD} && -z "${recent_proposal}" ]]; then
-  ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-  cat > "${tmp}/wiki/.wiki-pending/schema-proposals/${ts}-index-split.md" <<EOF
+# Inline mechanism: exact SKILL.md step 7.6 snippet (verbatim copy).
+WIKI_ROOT="${tmp}/wiki"
+size="$(wc -c < "${WIKI_ROOT}/index.md" | tr -d ' ')"
+if [[ ${size} -gt 8192 ]]; then
+  recent="$(find "${WIKI_ROOT}/.wiki-pending/schema-proposals" -name '*-index-split.md' -mtime -1 2>/dev/null | head -1)"
+  if [[ -z "${recent}" ]]; then
+    ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+    cat > "${WIKI_ROOT}/.wiki-pending/schema-proposals/${ts}-index-split.md" <<EOF
 ---
 title: "Schema proposal: split index.md (size threshold exceeded)"
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-trigger: "index.md size = ${size} bytes (threshold ${INDEX_SIZE_THRESHOLD} bytes)"
+trigger: "index.md size = ${size} bytes (threshold 8192 bytes)"
 ---
 
-index.md exceeded the orientation-degradation threshold. Recommended atom-ization:
-- index/concepts.md
-- index/entities.md
-- index/queries.md
-- index/ideas.md
-
-index.md becomes a 5-line MOC pointing at each sub-index.
+index.md exceeded the orientation-degradation threshold. Recommended atom-ization: split into per-category sub-indexes (index/concepts.md, index/entities.md, index/queries.md, index/ideas.md), with index.md becoming a 5-line MOC pointing at each. Rationale: per-category matches existing wiki structure; agents reading index.md get cheap orientation and can drill down.
 EOF
+  fi
 fi
 
 # Assert exactly one schema-proposal capture exists.
 proposals="$(find "${tmp}/wiki/.wiki-pending/schema-proposals" -name '*-index-split.md' | wc -l | tr -d ' ')"
 if [[ "${proposals}" -ne 1 ]]; then
   echo "FAIL: expected 1 index-split proposal capture, got ${proposals}"
+  exit 1
+fi
+
+# Assert the rendered capture file's first line is exactly '---' (no leading whitespace).
+first_line="$(head -1 "${tmp}/wiki/.wiki-pending/schema-proposals"/*-index-split.md)"
+if [[ "${first_line}" != "---" ]]; then
+  echo "FAIL: capture first line is not '---' (leading whitespace?). Got: '${first_line}'"
   exit 1
 fi
 
