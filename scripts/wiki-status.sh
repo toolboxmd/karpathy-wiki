@@ -40,6 +40,24 @@ if command -v git >/dev/null 2>&1 && (cd "${wiki}" && git rev-parse --is-inside-
   fi
 fi
 
+# Quality rollup: count pages with overall < 3.5
+below_35=0
+while IFS= read -r page; do
+  overall="$(grep -oE '^  overall: [0-9]+\.[0-9]+$' "${page}" | head -1 | awk '{print $2}')"
+  if [[ -n "${overall}" ]]; then
+    if awk -v v="${overall}" 'BEGIN { exit !(v < 3.5) }'; then
+      below_35=$((below_35 + 1))
+    fi
+  fi
+done < <(find "${wiki}/concepts" "${wiki}/entities" "${wiki}/sources" "${wiki}/queries" -type f -name "*.md" 2>/dev/null)
+
+# Tag synonym count
+synonym_count=0
+if [[ -x "${SCRIPT_DIR}/wiki-lint-tags.py" ]]; then
+  synonym_count="$(python3 "${SCRIPT_DIR}/wiki-lint-tags.py" --wiki-root "${wiki}" --all 2>/dev/null | grep -oE 'synonym pairs flagged: [0-9]+' | awk '{print $NF}')"
+  [[ -z "${synonym_count}" ]] && synonym_count=0
+fi
+
 cat <<EOF
 wiki: ${wiki}
 role: ${role}
@@ -50,4 +68,6 @@ active locks: ${locks}
 last ingest: ${last_ingest}
 drift: ${drift}
 git: ${git_status}
+pages below 3.5 quality: ${below_35}
+tag synonyms flagged: ${synonym_count}
 EOF
