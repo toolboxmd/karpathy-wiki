@@ -1,6 +1,6 @@
 ---
 title: "Source: orphan"
-type: source
+type: concept
 tags: [x]
 sources:
   - raw/does-not-exist.md

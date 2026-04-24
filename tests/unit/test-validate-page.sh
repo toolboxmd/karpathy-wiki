@@ -1,8 +1,7 @@
 #!/bin/bash
 # Tests for wiki-validate-page.py (base rules).
 # Phase A rules: required fields, type whitelist, ISO-8601 dates, flat sources list,
-# markdown link resolution (wiki-root mode), raw-source existence (wiki-root mode),
-# matching raw for type=source (wiki-root mode).
+# markdown link resolution (wiki-root mode), raw-source existence (wiki-root mode).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,10 +51,10 @@ expect_exit 1 "broken link fails in wiki-root mode" -- \
 expect_exit 1 "missing raw source fails in wiki-root mode" -- \
   python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/concepts/missing-source.md"
 
-expect_exit 0 "valid type=source passes in wiki-root mode" -- \
+expect_exit 0 "valid concept in sources/ dir passes in wiki-root mode" -- \
   python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/sources/2026-04-24-x.md"
 
-expect_exit 1 "orphan type=source (no raw) fails in wiki-root mode" -- \
+expect_exit 1 "concept with missing raw source fails in wiki-root mode" -- \
   python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/sources/orphan-source.md"
 
 # -- stderr messages --

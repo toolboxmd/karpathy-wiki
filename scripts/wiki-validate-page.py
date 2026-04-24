@@ -9,7 +9,7 @@ Checks performed in every mode:
   - Page has YAML frontmatter.
   - Required fields present: title, type, tags, sources, created, updated.
     (Phase B extends this with quality.* fields via a future patch.)
-  - `type` is one of: concept, entity, source, query.
+  - `type` is one of: concept, entity, query. (`source` removed in v2.2 — `sources/` category was deleted.)
   - `created` and `updated` are full ISO-8601 UTC strings
     (e.g. 2026-04-24T13:00:00Z).
   - `tags` is a flat list.
@@ -21,7 +21,6 @@ Additional checks when --wiki-root is given:
   - Every entry in `sources:` resolves to an existing file relative to the
     wiki root (skipped for a raw-file pointer that uses the literal string
     "conversation" -- that's handled in Phase B origin-tracking rules).
-  - For `type: source`, a raw file at `raw/<basename-of-this-page>` exists.
 
 Exit codes:
   0 -- all checks pass
@@ -37,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-VALID_TYPES = {"concept", "entity", "source", "query"}
+VALID_TYPES = {"concept", "entity", "query"}
 ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # A YAML block-list item is treated as a one-key nested mapping only if
 # its pre-colon token looks like a YAML identifier. Without this guard,
@@ -364,17 +363,6 @@ def validate(page_path: Path, wiki_root: Optional[Path]) -> list[str]:
                     violations.append(
                         f"{page_path}: sources entry does not exist on disk: {s}"
                     )
-
-        # type=source must have a matching raw file
-        if data.get("type") == "source":
-            # Basename of the page (without .md) must correspond to a raw file
-            base = page_path.stem  # e.g. 2026-04-24-x
-            candidates = list((wiki_root / "raw").glob(f"{base}.*"))
-            if not candidates:
-                violations.append(
-                    f"{page_path}: type=source but no matching raw file at "
-                    f"raw/{base}.*"
-                )
 
     return violations
 
