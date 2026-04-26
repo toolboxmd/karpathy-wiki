@@ -4,7 +4,7 @@
 Usage:
     wiki-backfill-quality.py --wiki-root <wiki-root>
 
-Walks concepts/, entities/, sources/, queries/ recursively.
+Walks all discovered categories (via wiki-discover.py) recursively.
 For each page WITHOUT a `quality:` key in frontmatter, appends:
 
   quality:
