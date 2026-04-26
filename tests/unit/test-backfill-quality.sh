@@ -93,8 +93,67 @@ test_validator_passes_after_backfill() {
   teardown
 }
 
+test_backfill_walks_discovered_categories() {
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/concepts" "${tmp}/wiki/ideas" "${tmp}/wiki/raw"
+  touch "${tmp}/wiki/.wiki-config"
+  cat > "${tmp}/wiki/ideas/foo.md" <<'EOF'
+---
+title: "Foo"
+type: idea
+status: open
+priority: p2
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+---
+body
+EOF
+  python3 "${REPO_ROOT}/scripts/wiki-backfill-quality.py" --wiki-root "${tmp}/wiki"
+  grep -q "rated_by: ingester" "${tmp}/wiki/ideas/foo.md" || { echo "FAIL: backfill skipped ideas/"; rm -rf "${tmp}"; exit 1; }
+  rm -rf "${tmp}"
+  echo "PASS: test_backfill_walks_discovered_categories"
+}
+
+test_backfill_skips_reserved_directories() {
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/concepts" "${tmp}/wiki/Clippings" "${tmp}/wiki/raw"
+  touch "${tmp}/wiki/.wiki-config"
+  cat > "${tmp}/wiki/Clippings/Post.md" <<'EOF'
+some clipping content with no frontmatter
+EOF
+  python3 "${REPO_ROOT}/scripts/wiki-backfill-quality.py" --wiki-root "${tmp}/wiki"
+  if grep -q "rated_by:" "${tmp}/wiki/Clippings/Post.md" 2>/dev/null; then
+    echo "FAIL: backfill modified Clippings/"
+    rm -rf "${tmp}"
+    exit 1
+  fi
+  rm -rf "${tmp}"
+  echo "PASS: test_backfill_skips_reserved_directories"
+}
+
+test_backfill_no_longer_walks_sources_when_absent() {
+  # Verify the script no longer hardcodes 'sources' — if the dir doesn't exist,
+  # there's no error message about it.
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/concepts" "${tmp}/wiki/raw"
+  touch "${tmp}/wiki/.wiki-config"
+  out="$(python3 "${REPO_ROOT}/scripts/wiki-backfill-quality.py" --wiki-root "${tmp}/wiki" 2>&1)"
+  # Should not mention 'sources' — there's no sources/ category
+  if echo "${out}" | grep -q "sources"; then
+    echo "FAIL: output mentions 'sources' when no such category exists"
+    rm -rf "${tmp}"; exit 1
+  fi
+  rm -rf "${tmp}"
+  echo "PASS: test_backfill_no_longer_walks_sources_when_absent"
+}
+
 test_adds_default_quality_block
 test_preserves_human_rated
 test_is_idempotent
 test_validator_passes_after_backfill
+test_backfill_walks_discovered_categories
+test_backfill_skips_reserved_directories
+test_backfill_no_longer_walks_sources_when_absent
 echo "ALL PASS"

@@ -21,7 +21,9 @@ Pages WITH a `quality:` block are left untouched (including `rated_by: human`).
 Idempotent.
 """
 
+import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,8 +82,19 @@ def main() -> int:
         print(f"not a directory: {root}", file=sys.stderr)
         return 1
 
+    # Discover categories via wiki-discover.py
+    discover_script = Path(__file__).parent / "wiki-discover.py"
+    result = subprocess.run(
+        ["python3", str(discover_script), "--wiki-root", str(root)],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"wiki-discover.py failed: {result.stderr.strip()}", file=sys.stderr)
+        return 1
+    disc = json.loads(result.stdout)
+
     changed = 0
-    for category in ("concepts", "entities", "sources", "queries"):
+    for category in disc["categories"]:
         cat = root / category
         if not cat.is_dir():
             continue
