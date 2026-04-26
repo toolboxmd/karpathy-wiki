@@ -209,6 +209,15 @@ V3EOF
 expect_exit 1 "v2.3: depth >=5 hard rejects" -- \
   python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/a/b/c/d/deep.md"
 
+# v2.3 I-1 follow-up: out-of-tree page produces clean error, not traceback
+expect_exit 1 "v2.3 I-1: out-of-tree page returns clean error" -- \
+  python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "/tmp/definitely-not-in-wiki.md"
+
+out_outoftree="$(python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "/tmp/definitely-not-in-wiki.md" 2>&1 || true)"
+echo "${out_outoftree}" | grep -qi "not under wiki-root\|not.*subpath\|outside" \
+  && say_pass "v2.3 I-1: out-of-tree error message is clean (no Python traceback)" \
+  || say_fail "v2.3 I-1: expected clean error, got: ${out_outoftree}"
+
 echo
 echo "passed: ${pass_count}"
 echo "failed: ${fail_count}"

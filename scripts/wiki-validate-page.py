@@ -138,7 +138,9 @@ def validate(page_path: Path, wiki_root: Optional[Path] = None, disc: Optional[d
                         file=sys.stderr,
                     )
                     # PHASE_A_END
-                    # Phase D flip: replace with violations.append(...)
+                    # In Phase D's validator-flip task (Task 20), replace the print() above with:
+                    #     violations.append(f"{rel}: type '{t}' != path.parts[0] '{expected_type}' "
+                    #                       f"(run: python3 scripts/wiki-fix-frontmatter.py --wiki-root {wiki_root} {rel})")
 
     # Depth >= 5 hard reject (Rule 2; always-on, no soft-warn period).
     if wiki_root is not None:
@@ -306,6 +308,14 @@ def main() -> int:
     if sys.version_info < (3, 11):
         print("python 3.11+ required", file=sys.stderr)
         return 1
+
+    # v2.3 I-1: catch caller-error case (page outside wiki root) cleanly.
+    if wiki_root is not None:
+        try:
+            page.resolve().relative_to(wiki_root)
+        except ValueError:
+            print(f"error: {page} is not under wiki-root {wiki_root}", file=sys.stderr)
+            return 1
 
     disc = None
     if wiki_root:
