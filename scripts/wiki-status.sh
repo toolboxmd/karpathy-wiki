@@ -55,7 +55,14 @@ if command -v git >/dev/null 2>&1 && (cd "${wiki}" && git rev-parse --is-inside-
   fi
 fi
 
-# Quality rollup: count pages with overall < 3.5
+# v2.3: read categories from wiki-discover.py
+SCRIPT_DIR_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+discovered_json="$(python3 "${SCRIPT_DIR_LOCAL}/wiki-discover.py" --wiki-root "${wiki}" 2>/dev/null)" || {
+  echo "ERROR: wiki-discover.py failed; status report degraded" >&2
+  exit 1
+}
+
+# Quality rollup: count pages with overall < 3.5 (walks all discovered categories)
 below_35=0
 while IFS= read -r page; do
   overall="$(grep -oE '^  overall: [0-9]+\.[0-9]+$' "${page}" | head -1 | awk '{print $2}')"
@@ -64,7 +71,15 @@ while IFS= read -r page; do
       below_35=$((below_35 + 1))
     fi
   fi
-done < <(find "${wiki}/concepts" "${wiki}/entities" "${wiki}/sources" "${wiki}/queries" -type f -name "*.md" 2>/dev/null)
+done < <(
+  echo "${discovered_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('\n'.join(d['categories']))
+" | while read -r cat; do
+    find "${wiki}/${cat}" -type f -name "*.md" 2>/dev/null
+  done
+)
 
 # Tag synonym count
 synonym_count=0
@@ -87,6 +102,19 @@ if [[ -f "${wiki}/index.md" ]]; then
   fi
 fi
 
+# v2.3 new: categories exceeding depth 4
+exceeding="$(echo "${discovered_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(sum(1 for c in d['categories'] if d['depths'].get(c, 1) > 4))
+")"
+
+# v2.3 new: category count vs soft-ceiling 8
+cat_count="$(echo "${discovered_json}" | python3 -c "
+import json, sys
+print(len(json.load(sys.stdin)['categories']))
+")"
+
 cat <<EOF
 wiki: ${wiki}
 role: ${role}
@@ -100,4 +128,17 @@ git: ${git_status}
 pages below 3.5 quality: ${below_35}
 tag synonyms flagged: ${synonym_count}
 index.md: ${index_size}${index_warn}
+EOF
+
+# Per-category counts (v2.3)
+echo "${discovered_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for cat in d['categories']:
+    print(f'{cat}: {d[\"counts\"][cat]}')
+"
+
+cat <<EOF
+categories exceeding depth 4: ${exceeding}
+category count vs soft-ceiling 8: ${cat_count} (ceiling 8)
 EOF
