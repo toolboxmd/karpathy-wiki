@@ -64,9 +64,9 @@ echo "${out}" | grep -q "missing required field: title" \
   || say_fail "stderr: expected 'missing required field: title', got: ${out}"
 
 out="$(python3 "${TOOL}" "${FIX}/bad-type.md" 2>&1 >/dev/null || true)"
-echo "${out}" | grep -q "type must be one of" \
-  && say_pass "stderr: bad type mentions 'type must be one of'" \
-  || say_fail "stderr: expected 'type must be one of', got: ${out}"
+echo "${out}" | grep -q "missing required field: quality" \
+  && say_pass "stderr: bad type (single-file mode) mentions 'missing required field: quality'" \
+  || say_fail "stderr: expected 'missing required field: quality', got: ${out}"
 
 # -- Phase B: quality block --
 expect_exit 0 "good-with-quality passes" -- python3 "${TOOL}" "${FIX}/good-with-quality.md"
@@ -96,6 +96,118 @@ if echo "${out}" | grep -q "nested mapping"; then
 else
   say_pass "stderr: URL source did NOT trigger 'nested mapping' violation"
 fi
+
+# v2.3: Phase A new checks
+TMPV3="$(mktemp -d)"
+trap "rm -rf '${TMPV3}'" EXIT
+
+# Build a fixture wiki for v2.3 cases
+mkdir -p "${TMPV3}/wiki/concepts" "${TMPV3}/wiki/projects/toolboxmd/karpathy-wiki" "${TMPV3}/wiki/journal" "${TMPV3}/wiki/raw"
+touch "${TMPV3}/wiki/.wiki-config"
+echo "stub" > "${TMPV3}/wiki/concepts/foo.md"
+
+cat > "${TMPV3}/wiki/projects/toolboxmd/karpathy-wiki/v23.md" <<'V3EOF'
+---
+title: "v2.3"
+type: projects
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 5
+  signal: 5
+  interlinking: 5
+  overall: 5.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+
+See [foo](/concepts/foo.md).
+V3EOF
+
+expect_exit 0 "v2.3: leading-/ link resolves from wiki root" -- \
+  python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/projects/toolboxmd/karpathy-wiki/v23.md"
+
+# Phase A: type/path cross-check is WARNING only -- exit 0
+cat > "${TMPV3}/wiki/concepts/mismatch.md" <<'V3EOF'
+---
+title: "Mismatch"
+type: entities
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 5
+  signal: 5
+  interlinking: 5
+  overall: 5.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+body
+V3EOF
+expect_exit 0 "v2.3 Phase A: type/path mismatch is WARNING only" -- \
+  python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/mismatch.md"
+
+out_warn="$(python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/mismatch.md" 2>&1 1>/dev/null || true)"
+echo "${out_warn}" | grep -q "WARNING.*type.*entities" \
+  && say_pass "v2.3 Phase A: cross-check WARNING line emitted to stderr" \
+  || say_fail "v2.3 Phase A: expected WARNING line, got: ${out_warn}"
+
+# Discovery returns dynamic types -- `journal/` IS a category
+cat > "${TMPV3}/wiki/journal/2026-04-26.md" <<'V3EOF'
+---
+title: "Today"
+type: journal
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 5
+  signal: 5
+  interlinking: 5
+  overall: 5.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+body
+V3EOF
+expect_exit 0 "v2.3: dynamic category 'journal' from discovery is valid" -- \
+  python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/journal/2026-04-26.md"
+
+# Discovery failure: bogus wiki-root.
+expect_exit 1 "v2.3: discovery failure exits non-zero" -- \
+  python3 "${TOOL}" --wiki-root "/nonexistent/v23/path/zzz" "/nonexistent/v23/path/zzz/concepts/foo.md"
+
+# Depth->=5 hard reject (always-on)
+mkdir -p "${TMPV3}/wiki/concepts/a/b/c/d"
+cat > "${TMPV3}/wiki/concepts/a/b/c/d/deep.md" <<'V3EOF'
+---
+title: "Deep"
+type: concepts
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 5
+  signal: 5
+  interlinking: 5
+  overall: 5.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+body
+V3EOF
+expect_exit 1 "v2.3: depth >=5 hard rejects" -- \
+  python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/a/b/c/d/deep.md"
 
 echo
 echo "passed: ${pass_count}"

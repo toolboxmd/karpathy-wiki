@@ -9,7 +9,8 @@ Checks performed in every mode:
   - Page has YAML frontmatter.
   - Required fields present: title, type, tags, sources, created, updated.
     (Phase B extends this with quality.* fields via a future patch.)
-  - `type` is one of: concept, entity, query (source removed in v2.2; sources/ category was deleted).
+  - `type` membership checked against discovered categories (wiki-root mode only;
+    Phase A: WARNING only; Phase D will flip to hard).
   - `created` and `updated` are full ISO-8601 UTC strings
     (e.g. 2026-04-24T13:00:00Z).
   - `tags` is a flat list.
@@ -21,6 +22,7 @@ Additional checks when --wiki-root is given:
   - Every entry in `sources:` resolves to an existing file relative to the
     wiki root (skipped for a raw-file pointer that uses the literal string
     "conversation" -- that's handled in Phase B origin-tracking rules).
+  - Depth >= 5 hard reject (Rule 2; always-on).
 
 Exit codes:
   0 -- all checks pass
@@ -31,163 +33,33 @@ Python 3.11+ required (for stdlib tomllib, though YAML parsing uses a tiny
 vendored parser here to stay stdlib-only).
 """
 
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-VALID_TYPES = {"concept", "entity", "query"}
+sys.path.insert(0, str(Path(__file__).parent))
+from wiki_yaml import extract_frontmatter, parse_yaml
+
 ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-# A YAML block-list item is treated as a one-key nested mapping only if
-# its pre-colon token looks like a YAML identifier. Without this guard,
-# list items like `- https://foo/bar` would be mis-parsed as
-# {"https": "//foo/bar"}.
-_NESTED_MAP_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)")
 REQUIRED_FIELDS_BASE = ("title", "type", "tags", "sources", "created", "updated")
 
 
-def _extract_frontmatter(text: str) -> Optional[str]:
-    """Return the YAML frontmatter block, or None if the page has none."""
-    if not text.startswith("---\n") and not text.startswith("---\r\n"):
-        return None
-    # Split on the closing ---
-    parts = text.split("\n---\n", 1) if "\n---\n" in text else text.split("\n---\r\n", 1)
-    if len(parts) < 2:
-        return None
-    head = parts[0]
-    if not head.startswith("---"):
-        return None
-    # head is e.g. "---\ntitle: ...\n..."; strip leading "---\n"
-    return head[4:] if head.startswith("---\n") else head[5:]
+def _discover(wiki_root: Path) -> dict:
+    """Invoke wiki-discover.py; return its JSON output as a dict.
 
-
-def _parse_scalar(s: str) -> Any:
-    s = s.strip()
-    if s == "":
-        return ""
-    if s == "null" or s == "~":
-        return None
-    if s == "true":
-        return True
-    if s == "false":
-        return False
-    # Quoted string
-    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        return s[1:-1]
-    if len(s) >= 2 and s[0] == "'" and s[-1] == "'":
-        return s[1:-1]
-    # Try int
-    try:
-        return int(s)
-    except ValueError:
-        pass
-    # Try float
-    try:
-        return float(s)
-    except ValueError:
-        pass
-    return s  # bare string
-
-
-def _parse_yaml(fm: str) -> dict[str, Any]:
-    """Minimal YAML parser covering the subset wiki pages use.
-
-    Supports:
-      key: scalar
-      key: [a, b, c]
-      key:
-        - item
-        - item
-      key:
-        - nested: value
-      key:
-        subkey: scalar
-        subkey2: scalar
-
-    Indentation rule for nested map: two-space child indent.
+    Raises RuntimeError on discovery failure (validator exits non-zero on this).
     """
-    result: dict[str, Any] = {}
-    lines = fm.splitlines()
-    i = 0
-    n = len(lines)
-    while i < n:
-        line = lines[i].rstrip()
-        if line == "" or line.startswith("#"):
-            i += 1
-            continue
-        if ":" not in line:
-            raise ValueError(f"malformed line (no colon): {line!r}")
-        key, _, rest = line.partition(":")
-        key = key.strip()
-        rest = rest.strip()
-        if rest == "":
-            # Peek next non-blank line to decide list vs nested map.
-            j = i + 1
-            while j < n and (lines[j].strip() == "" or lines[j].lstrip().startswith("#")):
-                j += 1
-            if j >= n:
-                result[key] = []
-                i += 1
-                continue
-            peek = lines[j]
-            if peek.lstrip().startswith("- "):
-                # Block list
-                items: list[Any] = []
-                k = j
-                while k < n:
-                    pl = lines[k].rstrip()
-                    if pl == "":
-                        k += 1; continue
-                    s = pl.lstrip()
-                    if not s.startswith("- "):
-                        break
-                    indent = len(pl) - len(s)
-                    if indent < 2:
-                        break
-                    content = s[2:]
-                    # Treat as a nested one-key mapping ONLY if the pre-colon
-                    # token looks like a YAML identifier (letters/digits/_/-).
-                    # Protects against URLs and other colon-bearing strings
-                    # being mis-parsed — e.g. "https://foo" must stay a
-                    # string, not become {"https": "//foo"}.
-                    if _NESTED_MAP_RE.match(content):
-                        ck, _, cv = content.partition(":")
-                        items.append({ck.strip(): _parse_scalar(cv.strip())})
-                    else:
-                        items.append(_parse_scalar(content))
-                    k += 1
-                result[key] = items
-                i = k
-                continue
-            # Nested map
-            sub: dict[str, Any] = {}
-            k = j
-            while k < n:
-                pl = lines[k].rstrip()
-                if pl == "":
-                    k += 1; continue
-                s = pl.lstrip()
-                indent = len(pl) - len(s)
-                if indent < 2:
-                    break
-                if ":" not in s:
-                    raise ValueError(f"malformed nested line: {pl!r}")
-                sk, _, sv = s.partition(":")
-                sub[sk.strip()] = _parse_scalar(sv.strip())
-                k += 1
-            result[key] = sub
-            i = k
-            continue
-        if rest.startswith("["):
-            if not rest.endswith("]"):
-                raise ValueError(f"unterminated inline list for {key}")
-            inner = rest[1:-1].strip()
-            result[key] = [] if inner == "" else [_parse_scalar(p.strip()) for p in inner.split(",")]
-            i += 1
-            continue
-        result[key] = _parse_scalar(rest)
-        i += 1
-    return result
+    script = Path(__file__).parent / "wiki-discover.py"
+    result = subprocess.run(
+        ["python3", str(script), "--wiki-root", str(wiki_root)],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"wiki-discover.py failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
 
 
 _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
@@ -216,19 +88,22 @@ def _is_external(link: str) -> bool:
     )
 
 
-def validate(page_path: Path, wiki_root: Optional[Path]) -> list[str]:
+def validate(page_path: Path, wiki_root: Optional[Path] = None, disc: Optional[dict] = None) -> list[str]:
     """Return list of violation strings. Empty list = pass."""
     violations: list[str] = []
     if not page_path.is_file():
         return [f"{page_path}: file does not exist"]
 
+    # rel is used by v2.3-added stderr messages and violation strings.
+    rel = str(page_path.relative_to(wiki_root)) if wiki_root is not None else str(page_path)
+
     text = page_path.read_text()
-    fm = _extract_frontmatter(text)
+    fm = extract_frontmatter(text)
     if fm is None:
         return [f"{page_path}: no YAML frontmatter"]
 
     try:
-        data = _parse_yaml(fm)
+        data = parse_yaml(fm)
     except ValueError as e:
         return [f"{page_path}: malformed frontmatter: {e}"]
 
@@ -237,13 +112,41 @@ def validate(page_path: Path, wiki_root: Optional[Path]) -> list[str]:
         if field not in data:
             violations.append(f"{page_path}: missing required field: {field}")
 
-    # type whitelist
+    # v2.3: type-membership check (Phase A: WARNING-only; Phase D will flip to hard).
     if "type" in data:
         t = data["type"]
-        if t not in VALID_TYPES:
-            sorted_types = sorted(VALID_TYPES)
+        if disc is not None:
+            discovered_types = set(disc["categories"])
+            if t not in discovered_types:
+                # PHASE_A_BEGIN
+                print(
+                    f"{rel}: WARNING type '{t}' not in discovered categories {sorted(discovered_types)}",
+                    file=sys.stderr,
+                )
+                # PHASE_A_END
+                # In Phase D's validator-flip task (Task 20), replace the print() above with:
+                #     violations.append(f"{rel}: type '{t}' not in discovered categories {sorted(discovered_types)}")
+
+            # Type vs path cross-check (Phase A: WARNING-only).
+            if wiki_root is not None:
+                expected_type = page_path.relative_to(wiki_root).parts[0]
+                if t != expected_type:
+                    # PHASE_A_BEGIN
+                    print(
+                        f"{rel}: WARNING type '{t}' != path.parts[0] '{expected_type}' "
+                        f"(run: python3 scripts/wiki-fix-frontmatter.py --wiki-root {wiki_root} {rel})",
+                        file=sys.stderr,
+                    )
+                    # PHASE_A_END
+                    # Phase D flip: replace with violations.append(...)
+
+    # Depth >= 5 hard reject (Rule 2; always-on, no soft-warn period).
+    if wiki_root is not None:
+        rel_parts = page_path.relative_to(wiki_root).parts
+        if len(rel_parts) > 5:
             violations.append(
-                f"{page_path}: type must be one of {sorted_types}, got {t!r}"
+                f"{rel}: page at depth {len(rel_parts)} exceeds hard cap (5); "
+                f"place shallower or restructure category."
             )
 
     # dates
@@ -351,8 +254,11 @@ def validate(page_path: Path, wiki_root: Optional[Path]) -> list[str]:
             link_clean = link.split("#", 1)[0]
             if link_clean == "":
                 continue
-            # Resolve relative to the page's own directory
-            target = (page_path.parent / link_clean).resolve()
+            # v2.3: leading "/" resolves from wiki root, not page directory.
+            if wiki_root is not None and link_clean.startswith("/"):
+                target = (wiki_root / link_clean.lstrip("/")).resolve()
+            else:
+                target = (page_path.parent / link_clean).resolve()
             if not target.exists():
                 violations.append(
                     f"{page_path}: broken markdown link: {link}"
@@ -385,7 +291,7 @@ def main() -> int:
                   file=sys.stderr)
             return 1
         wiki_root = Path(argv[1]).resolve()
-        page = Path(argv[2])
+        page = Path(argv[2]).resolve()
         if not wiki_root.is_dir():
             print(f"not a directory: {wiki_root}", file=sys.stderr)
             return 1
@@ -401,7 +307,15 @@ def main() -> int:
         print("python 3.11+ required", file=sys.stderr)
         return 1
 
-    violations = validate(page, wiki_root)
+    disc = None
+    if wiki_root:
+        try:
+            disc = _discover(wiki_root)
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+
+    violations = validate(page, wiki_root, disc)
     if not violations:
         return 0
     for v in violations:

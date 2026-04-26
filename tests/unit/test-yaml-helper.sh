@@ -38,13 +38,18 @@ test_oracle_against_validator_parser() {
   python3 - <<'PYEOF'
 import sys, importlib.util
 sys.path.insert(0, "scripts")
-from wiki_yaml import parse_yaml as new_parse
+from wiki_yaml import parse_yaml
 
-# Load _parse_yaml from wiki-validate-page.py via spec import
+# v2.3: wiki-validate-page.py no longer defines _parse_yaml locally; it
+# imports parse_yaml from wiki_yaml. The oracle now verifies that the
+# validator module exposes the same function object (or at minimum produces
+# identical results via the canonical shared implementation).
 spec = importlib.util.spec_from_file_location("validate_module", "scripts/wiki-validate-page.py")
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-old_parse = mod._parse_yaml
+# The validator must expose parse_yaml (imported from wiki_yaml).
+assert hasattr(mod, "parse_yaml"), "wiki-validate-page.py must expose parse_yaml via import"
+validator_parse = mod.parse_yaml
 
 inputs = [
     "title: foo\ntags: [a, b]\n",
@@ -56,24 +61,24 @@ inputs = [
 fails = []
 for fm in inputs:
     try:
-        old_result = old_parse(fm)
-        old_err = None
+        canonical = parse_yaml(fm)
+        canonical_err = None
     except Exception as e:
-        old_result = None
-        old_err = type(e).__name__
+        canonical = None
+        canonical_err = type(e).__name__
 
     try:
-        new_result = new_parse(fm)
-        new_err = None
+        via_validator = validator_parse(fm)
+        validator_err = None
     except Exception as e:
-        new_result = None
-        new_err = type(e).__name__
+        via_validator = None
+        validator_err = type(e).__name__
 
-    if old_err != new_err or old_result != new_result:
+    if canonical_err != validator_err or canonical != via_validator:
         fails.append({
             "input": fm,
-            "old": (old_result, old_err),
-            "new": (new_result, new_err),
+            "canonical": (canonical, canonical_err),
+            "via_validator": (via_validator, validator_err),
         })
 
 if fails:
