@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Normalize a single wiki page's YAML frontmatter to the v2-hardening schema.
+"""DEPRECATED in karpathy-wiki v2.3.
+
+Superseded by wiki-fix-frontmatter.py (path-derived plural type).
+
+Retained because scripts/wiki-migrate-v2-hardening.sh:71 invokes this
+script for replay of the historical v2-hardening migration on a fresh
+fixture; deletion would break that script's reproducibility.
+
+DO NOT INVOKE FROM v2.3+ FLOWS. Use wiki-fix-frontmatter.py instead.
+
+[Original docstring]
+Normalize a single wiki page's YAML frontmatter to the v2-hardening schema.
 
 Usage:
     wiki-normalize-frontmatter.py --wiki-root <wiki_root> <page_path>
