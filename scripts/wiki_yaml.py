@@ -11,6 +11,9 @@ Exports:
             - after is everything from the closing "---" onward, INCLUDING that closing "---" and any trailing body+newline.
         Returns (None, None, None) if no frontmatter.
         Reconstruction: opener + frontmatter_block + "\n" + after.
+    RESERVED: set[str]
+        Directory names that are NEVER treated as wiki categories (used by wiki-discover.py,
+        wiki-fix-frontmatter.py, wiki-build-index.py to skip infrastructure dirs).
 
 Identical-behavior port of wiki-validate-page.py's parser; an oracle test in
 test-yaml-helper.sh enforces parity. DO NOT reimplement; import from here.
@@ -20,6 +23,11 @@ from typing import Any, Optional
 
 ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")  # exported for use by validator (not used inside this module)
 _NESTED_MAP_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)")
+
+# Directory names that are NEVER treated as wiki categories. Used by
+# wiki-discover.py, wiki-fix-frontmatter.py, wiki-build-index.py to skip
+# infrastructure dirs at any depth in the wiki tree.
+RESERVED: set[str] = {"raw", "index", "archive", "Clippings"}
 
 
 def extract_frontmatter(text: str) -> Optional[str]:

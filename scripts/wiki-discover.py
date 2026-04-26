@@ -23,8 +23,8 @@ import json
 import sys
 from pathlib import Path
 
-# Reserved names (Python constant, also mirrored to schema.md by Phase A.1 of v2.3).
-RESERVED = {"raw", "index", "archive", "Clippings"}
+sys.path.insert(0, str(Path(__file__).parent))
+from wiki_yaml import RESERVED
 
 
 def _is_category(name: str) -> bool:

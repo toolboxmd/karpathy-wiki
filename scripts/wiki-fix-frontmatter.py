@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from wiki_yaml import split_frontmatter
+from wiki_yaml import RESERVED, split_frontmatter
 
 
 FRONTMATTER_TYPE_RE = re.compile(r"^type:\s*\S.*$", re.MULTILINE)
@@ -65,7 +65,7 @@ def main() -> int:
         changed = 0
         for page in sorted(root.rglob("*.md")):
             rel_parts = page.relative_to(root).parts
-            if rel_parts[0] in {"raw", "index", "archive", "Clippings"}:
+            if rel_parts[0] in RESERVED:
                 continue
             if rel_parts[0].startswith("."):
                 continue
