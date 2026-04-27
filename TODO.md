@@ -436,6 +436,54 @@ Items deferred from v2.3:
 
 Each of these is a candidate for a future ship; none block v2.3.
 
+## Project-wiki auto-resolution at capture time (architectural — surfaced 2026-04-27 post-v2.3 ship)
+
+```yaml
+status: open
+priority: p1
+effort: medium
+labels: [v2.4, architecture, ingest, project-wiki]
+refs:
+  - skills/karpathy-wiki/SKILL.md (lines 74-91: "When no wiki exists" auto-init algorithm)
+  - scripts/wiki-lib.sh (lines 47-65: wiki_root_from_cwd walks up looking for .wiki-config)
+  - scripts/wiki-init.sh (supports project mode: `wiki-init.sh project ./wiki ~/wiki`)
+```
+
+**Bug surfaced post-v2.3-ship.** The architecture supports project-wiki-in-cwd + main-wiki-in-`$HOME` (SKILL.md describes the three-case algorithm; `wiki-init.sh project` mode exists; `wiki_root_from_cwd` walks up looking for `.wiki-config`). But in practice agents always write captures to `$HOME/wiki/` even when in a project directory.
+
+**Why:** the auto-init algorithm is PROSE in SKILL.md, not a SCRIPT that fires at capture time. Concretely:
+
+- `wiki_root_from_cwd` (in `wiki-lib.sh`) walks up from cwd. If no parent has `.wiki-config`, it returns nothing.
+- SKILL.md says "if `$HOME/wiki/.wiki-config` exists AND cwd is outside a wiki, CREATE a project wiki at `./wiki/` linked to `$HOME/wiki/`."
+- But no script automates that creation. Captures default to `$HOME/wiki/` because that's where the manually-initialized main wiki is.
+- The agent doesn't run the auto-init branching at every capture — it assumes wiki-resolution already happened.
+
+**Symptom in v2.x usage:** every project session this user has ever run has captured to `$HOME/wiki/`, not to a project-local `./wiki/`. The project-wiki branch of the algorithm is dead code in practice.
+
+**Downstream effect:** the propagation mechanism (SKILL.md line 385 — project wiki decides whether each capture is general-interest or project-specific, propagates to main wiki when general) is unused. Without project wikis existing, there's nothing to propagate.
+
+**The cleaner v2.4 architecture:**
+
+Add a `wiki-resolve.sh` (or extend `wiki-spawn-ingester.sh`'s entry point) that runs at the start of every capture flow:
+
+1. If `wiki_root_from_cwd` finds a `.wiki-config`, use it.
+2. Else if `$HOME/wiki/.wiki-config` exists AND cwd is in a git repo (or has another "this is a project" signal), AUTO-CREATE `./wiki/` linked to `$HOME/wiki/` via `wiki-init.sh project ./wiki $HOME/wiki`.
+3. Else fall back to `$HOME/wiki/`.
+
+Capture and spawn-ingester scripts call this resolver instead of hardcoding `$HOME/wiki/`.
+
+**Open design questions for the v2.4 brainstorm:**
+
+- **Auto-create vs prompt.** Should step 2 silently create `./wiki/` (zero-friction; user might be surprised by a new directory in their repo) or prompt the user (interrupts the agent flow with a Y/N) or require an explicit opt-in (`wiki use-local`)?
+- **What counts as "project context"?** Presence of `.git/`? Presence of any specific marker file (`package.json`, `pyproject.toml`, etc.)? Fall through to "ask user once per cwd"?
+- **Backfill: should existing captures in `$HOME/wiki/` get reclassified?** Probably no — they were captured during sessions where the user thought they were going to main wiki. Don't move them retroactively.
+
+**Why this didn't ship in v2.3:** v2.3 was about category-flexibility within a single wiki. The cross-wiki-resolution gap is orthogonal. Surfaced in conversation post-ship when the user noticed that not a single agent had ever created a project-wiki for them, despite working in projects regularly.
+
+**Combines with the raw-direct ingest gap above:** both are "the SKILL.md describes a flow but no SCRIPT enforces it" failure mode. v2.4 should address them together as the "executable-protocol" theme: SKILL.md prose backed by hooks/scripts that actually fire.
+
+---
+
 ## Raw-direct ingest path (architectural — surfaced 2026-04-27 post-v2.3 ship)
 
 ```yaml
