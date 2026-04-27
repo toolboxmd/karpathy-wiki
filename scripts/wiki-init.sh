@@ -41,15 +41,24 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo >&2 "ERROR: python3 not found on PATH; karpathy-wiki requires Python 3.11+"
   exit 1
 fi
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-  echo >&2 "ERROR: Python 3.11+ required (tomllib is stdlib from 3.11). Detected: $(python3 --version 2>&1)"
+if ! python3 --version 2>&1 | grep -qE 'Python 3\.(1[1-9]|[2-9][0-9])'; then
+  cat >&2 <<'PYVER_EOF'
+ERROR: karpathy-wiki requires Python 3.11+.
+
+Install:
+  macOS:  brew install python
+  Linux:  apt install python3   (or your distro's equivalent)
+
+Then re-run: bash scripts/wiki-init.sh
+PYVER_EOF
+  echo >&2 "Detected: $(python3 --version 2>&1)"
   exit 1
 fi
 
 mkdir -p "${wiki}"
 
 # Directories (always ensure present)
-for d in concepts entities sources queries raw .wiki-pending .locks .obsidian; do
+for d in concepts entities queries ideas raw .wiki-pending .locks .obsidian; do
   mkdir -p "${wiki}/${d}"
 done
 
@@ -95,10 +104,10 @@ if [[ ! -f "${wiki}/index.md" ]]; then
 ## Entities
 (empty)
 
-## Sources
+## Queries
 (empty)
 
-## Queries
+## Ideas
 (empty)
 EOF
 fi
@@ -119,10 +128,10 @@ if [[ ! -f "${wiki}/schema.md" ]]; then
 ${role}
 
 ## Categories
-- \`concepts/\` — ideas, patterns, principles
+- \`concepts/\` — ideas, patterns, principles (durable factual knowledge)
 - \`entities/\` — specific tools, services, APIs
-- \`sources/\` — one summary page per ingested source
 - \`queries/\` — filed Q&A worth keeping
+- \`ideas/\` — forward-looking candidate work; requires \`status:\` and \`priority:\` frontmatter
 
 ## Tag Taxonomy (bounded)
 Tags are evolved by the ingester; propose changes via schema edits, not ad-hoc.

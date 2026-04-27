@@ -19,7 +19,7 @@ test_init_main_creates_structure() {
   for f in index.md log.md schema.md .wiki-config .manifest.json .gitignore; do
     [[ -e "${TESTDIR}/wiki/${f}" ]] || { echo "FAIL: missing ${f}"; teardown; exit 1; }
   done
-  for d in concepts entities sources queries raw .wiki-pending .locks; do
+  for d in concepts entities queries ideas raw .wiki-pending .locks; do
     [[ -d "${TESTDIR}/wiki/${d}" ]] || { echo "FAIL: missing dir ${d}"; teardown; exit 1; }
   done
   echo "PASS: test_init_main_creates_structure"
@@ -74,9 +74,49 @@ test_init_creates_git_repo_if_git_installed() {
   teardown
 }
 
+test_init_python_version_check_too_old() {
+  # Mock python3 returning 3.10 by prepending PATH with a fake python3
+  local tmp; tmp="$(mktemp -d)"
+  cat > "${tmp}/python3" <<'PYEOF'
+#!/bin/bash
+case "$1" in
+  --version) echo "Python 3.10.0"; exit 0 ;;
+  *) /usr/bin/env -S python3 "$@" 2>/dev/null || command python3 "$@" 2>/dev/null ;;
+esac
+PYEOF
+  chmod +x "${tmp}/python3"
+  out="$(PATH="${tmp}:${PATH}" bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${tmp}/wiki" 2>&1 || true)"
+  echo "${out}" | grep -q "Python 3.11" || {
+    echo "FAIL: missing Python version error message; got: ${out}"
+    rm -rf "${tmp}"
+    exit 1
+  }
+  rm -rf "${tmp}"
+  echo "PASS: test_init_python_version_check_too_old"
+}
+
+test_init_seed_list_creates_ideas_not_sources() {
+  local tmp; tmp="$(mktemp -d)"
+  bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${tmp}/wiki" >/dev/null 2>&1
+  if [[ ! -d "${tmp}/wiki/ideas" ]]; then
+    echo "FAIL: ideas/ not created"
+    rm -rf "${tmp}"
+    exit 1
+  fi
+  if [[ -d "${tmp}/wiki/sources" ]]; then
+    echo "FAIL: sources/ created (should be removed in v2.3)"
+    rm -rf "${tmp}"
+    exit 1
+  fi
+  rm -rf "${tmp}"
+  echo "PASS: test_init_seed_list_creates_ideas_not_sources"
+}
+
 test_init_main_creates_structure
 test_init_main_writes_correct_role
 test_init_project_links_to_main
 test_init_idempotent
 test_init_creates_git_repo_if_git_installed
+test_init_python_version_check_too_old
+test_init_seed_list_creates_ideas_not_sources
 echo "ALL PASS"
