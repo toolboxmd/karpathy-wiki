@@ -401,6 +401,22 @@ The four dimensions (1 = terrible, 5 = excellent):
 
 Surfaced in `index.md` per-page ( e.g. `- [Title](concepts/x.md) — (q: 3.25) description`) and in `wiki status` as a rollup ("N pages below 3.5 — run `wiki doctor`").
 
+## Cross-link convention (v2.3+)
+
+When writing a page that lives in a nested directory and you want to link to a wiki page in another category, use the **wiki-root-relative** form:
+
+```markdown
+See [decoration vs mechanism](/concepts/decoration-vs-mechanism.md).
+```
+
+The leading `/` resolves from the wiki root (`${WIKI_ROOT}`), regardless of how deep the source page is nested. This is preferred over relative paths like `../../../concepts/foo.md` because:
+
+- The path stays stable when pages move between subdirectories.
+- Renderers (Mintlify, GitHub markdown) respect the leading-`/` convention.
+- The validator's link-resolver handles it identically to a relative link.
+
+Existing relative links (e.g., `concepts/foo.md` from a top-level page) keep working — v2.3 does not retroactively migrate them. New cross-links from nested pages should use the leading-`/` form.
+
 ## Query — how the agent uses the wiki
 
 When the user asks a question that the wiki might answer:
