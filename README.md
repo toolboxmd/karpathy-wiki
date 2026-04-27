@@ -8,12 +8,12 @@ Instead of re-deriving answers from raw documents every time (RAG), the LLM incr
 
 As you work with Claude Code, any durable knowledge — research findings, resolved confusions, validated patterns, gotchas, architectural decisions — gets written as a small capture file and processed by a detached background worker into a persistent wiki. The wiki is git-versioned. Your flow is never interrupted.
 
-Two user commands:
+User commands:
 
-- `wiki status` — health report
-- `wiki doctor` — deep lint (post-MVP)
+- `wiki status` — health report (categories, page counts, depth-violation count, soft-ceiling indicator, quality rollup, last ingest, drift). **Implemented.**
+- `wiki doctor` — deep lint + smartest-model re-rate of quality blocks. **Not yet implemented (stub returns "not implemented" exit 1).** Deferred to a future ship; tracked in `TODO.md`.
 
-Everything else is automatic. One skill handles both a main knowledge base (`~/wiki/`) and per-project wikis (`<project>/wiki/`), with the same conventions.
+Everything else is automatic. One skill handles both a main knowledge base (`~/wiki/`) and per-project wikis (`<project>/wiki/`), with the same conventions. Note: per-project wiki auto-resolution is not fully wired — captures from project sessions currently flow into the main `~/wiki/` even when a project-local `./wiki/` would be more appropriate. This is a known v2.4 gap; see `TODO.md`.
 
 ## Install
 
@@ -39,7 +39,25 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-v0.1.0 — MVP. Claude Code only. Cross-platform support (Codex, OpenCode, Cursor, Hermes, Gemini) planned.
+**v0.2.3 — work in progress.** Claude Code only. Active development on a single-user wiki; not yet packaged for general consumption.
+
+**What works today (v2.3):**
+- Auto-capture + detached background ingest into a git-versioned wiki.
+- Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
+- Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.
+- Validator enforces `type: <plural-category>` matching `path.parts[0]` and rejects pages at depth ≥5.
+- `wiki status` health report.
+- Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
+
+**What's deferred (v2.4 candidates, see `TODO.md`):**
+- `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
+- Project-wiki auto-resolution at capture time — currently SKILL.md describes the algorithm but no script enforces it; project captures default to `~/wiki/`.
+- Raw-direct ingest path — Obsidian Web Clipper / file-as-source content currently requires a wrapping capture.
+- SessionStart hook injecting SKILL.md content (the `using-superpowers` autoload pattern).
+- Stop-hook gate for turn-closure enforcement.
+- Cross-platform support (Codex, OpenCode, Cursor, Hermes, Gemini).
+
+The shipped surface is enough for daily personal use; rough edges remain. PRs welcome once the repo opens for external contributions.
 
 ## Tests
 
