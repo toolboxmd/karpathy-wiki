@@ -1,0 +1,16 @@
+{
+  "name": "karpathy-wiki-local",
+  "owner": {
+    "name": "lukaszmaj"
+  },
+  "metadata": {
+    "description": "Local-directory marketplace exposing the karpathy-wiki plugin from this repo."
+  },
+  "plugins": [
+    {
+      "name": "karpathy-wiki",
+      "description": "Auto-maintained LLM wiki based on Andrej Karpathy's pattern.",
+      "source": "./"
+    }
+  ]
+}

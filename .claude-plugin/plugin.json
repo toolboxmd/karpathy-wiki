@@ -2,6 +2,8 @@
   "name": "karpathy-wiki",
   "version": "0.2.3",
   "description": "Auto-maintained LLM wiki based on Andrej Karpathy's pattern.",
-  "author": "lukaszmaj",
+  "author": {
+    "name": "lukaszmaj"
+  },
   "repository": "https://github.com/toolboxmd/karpathy-wiki"
 }

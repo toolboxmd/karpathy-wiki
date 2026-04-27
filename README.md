@@ -17,14 +17,34 @@ Everything else is automatic. One skill handles both a main knowledge base (`~/w
 
 ## Install
 
+Clone the repo and the user CLI symlink:
+
 ```bash
 git clone https://github.com/toolboxmd/karpathy-wiki ~/dev/karpathy-wiki
-ln -s ~/dev/karpathy-wiki ~/.claude/plugins/karpathy-wiki
-ln -s ~/dev/karpathy-wiki/skills/karpathy-wiki ~/.claude/skills/karpathy-wiki
 ln -s ~/dev/karpathy-wiki/bin/wiki ~/.local/bin/wiki   # or anywhere on PATH
 ```
 
-That's it. Hooks are auto-discovered from `hooks/hooks.json` inside the plugin — no manual `settings.json` surgery required.
+Then register the plugin with Claude Code by adding two entries to `~/.claude/settings.json` — the marketplace pointer and the enabled-plugins flag:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "karpathy-wiki-local": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/<you>/dev/karpathy-wiki"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "karpathy-wiki@karpathy-wiki-local": true
+  }
+}
+```
+
+Replace `/Users/<you>/dev/karpathy-wiki` with your actual repo path. Then run `/reload-plugins` in any Claude Code session. Hooks, commands, and the SKILL are auto-discovered from the plugin manifest — no manual hook wiring required.
+
+> **Note on local install:** Claude Code's plugin system requires plugins to come from a registered marketplace, even for local-directory sources. The `extraKnownMarketplaces` entry above declares this repo IS a (single-plugin) marketplace; `marketplace.json` at the repo root makes that real. A bare `~/.claude/plugins/karpathy-wiki` symlink is NOT enough — Claude Code won't load slash commands from it.
 
 ## How it works
 
