@@ -446,3 +446,43 @@ Items deferred from v2.3:
 - **Singular `type:` orphan recovery** — if anyone hand-writes a page with singular `type:` post-v2.3, the validator hard-rejects. A friendlier `wiki fix-type` CLI that runs `wiki-fix-frontmatter.py` on the offending page would smooth this.
 
 Each of these is a candidate for a future ship; none block v2.3.
+
+## Raw-direct ingest path (architectural — surfaced 2026-04-27 post-v2.3 ship)
+
+```yaml
+status: open
+priority: p1
+effort: medium
+labels: [v2.4, architecture, ingest]
+refs:
+  - skills/karpathy-wiki/SKILL.md (line 121: "user adds a file to raw/" trigger)
+  - skills/karpathy-wiki/SKILL.md (line 502: Iron Rule 5 "Never modify files in raw/")
+```
+
+**Bug surfaced post-v2.3-ship.** The capture-driven ingest architecture conflates two distinct semantic flows:
+
+1. **Capture-driven ingest** (conversation IS the source): A conversation surfaced durable knowledge → agent writes a capture → ingester reads capture body → generates wiki page. The capture is the canonical encoding of what the conversation produced; the file (if any) is supporting evidence.
+
+2. **Raw-direct ingest** (file IS the source): A file appears on disk (Obsidian Clippings, manual download, research-tool export). The file IS the durable content. There is no conversation context to encode.
+
+Today's design only supports flow 1. SKILL.md line 121 lists "user adds a file to raw/" as a capture trigger — but that's misleading: the actual mechanism requires the agent to write a capture WRAPPING the raw file (`evidence: <abs-path>`, `evidence_type: file`), which is a fabrication step for material with no conversation behind it. The capture body becomes meta-text like "this is a Clippings file, please process it," failing the body-floor sufficiency rule and producing low-information wiki pages.
+
+**The cleaner architecture (v2.4 work):**
+
+Add a `wiki-ingest-raw.py` mode (or `--from-file` flag on the existing ingester) that:
+- Copies file to `raw/<basename>` with manifest entry (`origin: <original-path>`).
+- Reads the file directly (no capture middleman).
+- Generates a wiki page from file content; `sources:` points at `raw/<basename>`.
+- Logs `raw-ingest |` (new verb distinct from `ingest |` for capture-driven runs).
+
+Open design questions to settle in the v2.4 brainstorm:
+
+- **Trigger mechanism:** SessionStart hook scanning `Clippings/`? CLI command (`wiki ingest-raw <file>`)? Filesystem watcher?
+- **Agent involvement:** pure auto-ingest, or the raw-direct path produces a draft for next-session agent review (categorization, cross-link enrichment, quality rating)?
+- **What about Clippings/?** Currently reserved (validator skips, discovery skips). Either keep reserved + require explicit move to a "queue" dir, OR auto-process Clippings/ via the raw-direct path on session start.
+
+**Why this matters for the wiki use case:** Obsidian Web Clipper users will drop external content (articles, X posts, technical docs) into Clippings/ regularly. Without raw-direct, every clipping requires the user to invoke an agent + write a thin capture + spawn ingester. With raw-direct, drop-and-go works.
+
+**Why this didn't ship in v2.3:** the bug surfaced AFTER v2.3 shipped, in conversation about Obsidian Clipper behavior. The architectural fix is non-trivial (new ingest path, new tests, new log verb, design choices about agent involvement). Shipping it would have been scope creep.
+
+**What v2.3 ships in the meantime:** the misleading "user adds a file to raw/" trigger remains in SKILL.md. Pragmatically the agent can still read a Clippings file and write a thin capture, but it's a workaround, not the right architecture. v2.4 fixes properly.
