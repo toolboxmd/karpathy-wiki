@@ -108,4 +108,5 @@ If the plan and reality disagree (e.g. a referenced script path is wrong, a test
 ## v2.3 backups (Phase A.2, 2026-04-27)
 
 - `~/wiki-backup-pre-v2.3-phase-a-20260427T074509Z.tar.gz` (2.6 MB) — outermost rollback for the live frontmatter migration. Pre-migration HEAD: `06db5d3` on `~/wiki/main`. Restore command: `tar xzf ~/wiki-backup-pre-v2.3-phase-a-20260427T074509Z.tar.gz -C ~`.
+- `~/wiki-backup-pre-v2.3-phase-d-20260427T081358Z.tar.gz` (2.8 MB) — outermost rollback for Phase D page moves (4 pages from `concepts/` to `projects/toolboxmd/<project>/`). Restore command: `tar xzf ~/wiki-backup-pre-v2.3-phase-d-20260427T081358Z.tar.gz -C ~`.
 
