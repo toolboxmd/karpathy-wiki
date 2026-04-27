@@ -393,3 +393,56 @@ Likely future audit targets (not commitments):
   rating surface to rate against.
 
 Audit shipped 2026-04-24 (`docs/planning/2026-04-24-karpathy-wiki-v2.2-audit.md`); v2.2-hardening plan executed Tasks 50-62 closing 6 of the 16 findings (architectural cut + 5 mechanical fixes). The remaining 10 findings remain on TODO.md or defer to v2.3 / `wiki doctor`.
+
+## v2.3: flexible auto-discovered categories + recursive _index.md tree
+
+```yaml
+status: shipped
+priority: p1
+effort: high
+labels: [v2.3, architecture, schema]
+shipped_in: 2b91706
+refs:
+  - docs/planning/2026-04-25-karpathy-wiki-v2.3-flexible-categories-design.md
+  - docs/planning/2026-04-25-karpathy-wiki-v2.3-spec.md
+  - docs/planning/2026-04-25-karpathy-wiki-v2.3-plan.md
+  - docs/planning/transcripts/2026-04-26-auto-discovered-categories.md
+  - docs/planning/transcripts/2026-04-26-category-discipline-ceiling.md
+  - docs/planning/transcripts/2026-04-26-reply-first-ordering.md
+```
+
+v2.3 deletes the validator's hardcoded `VALID_TYPES` whitelist and makes the directory tree the single source of truth for categories. A user/agent can `mkdir <wiki-root>/<name>/` to create a category — discovery picks it up on the next ingest, schema.md regenerates, sub-indexes auto-build. `type:` frontmatter equals `path.parts[0]` (plural form); validator enforces this as a hard violation.
+
+Other shipped pieces:
+- Recursive per-directory `_index.md` files replace the legacy 25 KB monolithic `index.md`. Root MOC ~10 lines.
+- Wiki-root-relative cross-link convention (`/concepts/foo.md`) for nested pages.
+- Three category-discipline rules (≥3 pages per category, depth ≤4 hard cap, ≥8 categories soft ceiling).
+- Reply-first turn ordering rule documented in SKILL.md (was implicit in line 444 of the resist-table; now prescriptive).
+- Live wiki migrated: 60 pages got `type:` rewritten plural; 4 named pages moved from `concepts/` to `projects/toolboxmd/<project>/`; outbound + inbound cross-links rewritten to leading-`/` form; 8 new `_index.md` files generated.
+- Pre-existing bugs cleaned up alongside: `wiki-init.sh` no longer seeds deleted `sources/` and now seeds `ideas/`; `wiki-status.sh` and `wiki-backfill-quality.py` rewired from hardcoded category lists to discovery-driven walks.
+- Bundle directory is a symlink to `/scripts/` (verified, structurally drift-proof). Symlink-guard test in `test-bundle-sync.sh`.
+
+Plan executed via subagent-driven-development (~30 commits across phases A.1, A.2, B, C, D, E). Both reviewer passes (spec-compliance + code-quality) caught real bugs: parser drift in Task 0 (4 silent divergences from the existing validator parser, fixed via oracle test), reserved-dir descendant leak in Task 11's index builder (would have inflated subdirectory counts), and root-dir double-write in single-directory mode. Phase D's atomic moves+relinks contract held — validator passed clean between every commit. Two tarballs preserved at `~/wiki-backup-pre-v2.3-phase-{a,d}-*.tar.gz` as outermost rollbacks.
+
+## v2.4 deferrals (out of scope from v2.3)
+
+```yaml
+status: open
+priority: p2
+effort: medium
+labels: [v2.4, follow-up]
+refs:
+  - docs/planning/2026-04-25-karpathy-wiki-v2.3-spec.md (out-of-scope section)
+```
+
+Items deferred from v2.3:
+
+- **Automated retroactive global link migration** — v2.3 only rewrote inbound links to the 4 moved pages; ~50+ other relative links throughout the wiki stayed in their existing form. A bulk migration script that converts every `../foo.md` to `/category/foo.md` would polish the wiki but is non-urgent.
+- **Skill-bundling sync mechanism** — currently `/skills/karpathy-wiki/scripts/` is a symlink to `../../scripts/`, which works for development but breaks if the plugin is installed via `claude plugin install` (which resolves the symlink to a real copy). A proper sync mechanism (build step, symlink-aware install, single canonical location) would be cleaner. v2.3 ships hand-copy + symlink + CI guard; v2.4 picks the right machinery.
+- **`wiki create-category <name>` CLI** — v2.3 contract is `mkdir`. If friction surfaces from heavy use, a small CLI wrapper that does `mkdir + name validation + initial _index.md skeleton` is straightforward.
+- **Cosmetic reorg of historical migration scripts to `scripts/historical/`** — `wiki-migrate-v2-hardening.sh`, `wiki-migrate-v2.2.sh`, `wiki-migrate-v2.3.sh` accumulate. Moving them to `scripts/historical/` (or similar) keeps the active scripts dir clean.
+- **`wiki doctor` real implementation** — still a stub. Now with the recursive `_index.md` tree, the smartest-model re-rate path is unblocked; orphan repair and tag-synonym consolidation also become cleaner.
+- **Per-`_index.md` schema-proposal firing** — the SKILL.md ingester step 7.6 has prose for this but it's not exercised by an actual ingester run yet (would happen during an organic ingest after v2.3 ships).
+- **Singular `type:` orphan recovery** — if anyone hand-writes a page with singular `type:` post-v2.3, the validator hard-rejects. A friendlier `wiki fix-type` CLI that runs `wiki-fix-frontmatter.py` on the offending page would smooth this.
+
+Each of these is a candidate for a future ship; none block v2.3.
