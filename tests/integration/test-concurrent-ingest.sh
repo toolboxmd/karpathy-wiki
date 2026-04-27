@@ -103,5 +103,83 @@ test_two_ingesters_no_data_loss() {
   teardown
 }
 
+test_concurrent_build_index_same_subtree_serializes() {
+  # Two background invocations of wiki-build-index.py on the same subtree
+  # should not deadlock. Lock-slug matches wiki-lock.sh, so the lock
+  # acquisition serializes both runs.
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/projects/a" "${tmp}/wiki/raw" "${tmp}/wiki/.locks"
+  touch "${tmp}/wiki/.wiki-config"
+  cat > "${tmp}/wiki/projects/a/x.md" <<'EOF'
+---
+title: "X"
+type: projects
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 4
+  completeness: 4
+  signal: 4
+  interlinking: 4
+  overall: 4.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+body
+EOF
+  # Background one, foreground the other
+  python3 "${REPO_ROOT}/scripts/wiki-build-index.py" --wiki-root "${tmp}/wiki" --rebuild-all &
+  BG_PID=$!
+  python3 "${REPO_ROOT}/scripts/wiki-build-index.py" --wiki-root "${tmp}/wiki" --rebuild-all
+  wait "${BG_PID}"
+  [[ -f "${tmp}/wiki/projects/_index.md" ]] || { echo "FAIL: _index not generated"; rm -rf "${tmp}"; exit 1; }
+  [[ -f "${tmp}/wiki/index.md" ]] || { echo "FAIL: root index.md not generated"; rm -rf "${tmp}"; exit 1; }
+  rm -rf "${tmp}"
+}
+
+test_ancestor_lock_path_ordering_no_deadlock() {
+  # Two sequential build-index calls on a deep tree should release locks
+  # cleanly between runs (no held-chain deadlock).
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/projects/a/b/c" "${tmp}/wiki/raw" "${tmp}/wiki/.locks"
+  touch "${tmp}/wiki/.wiki-config"
+  cat > "${tmp}/wiki/projects/a/b/c/x.md" <<'EOF'
+---
+title: "X"
+type: projects
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 4
+  completeness: 4
+  signal: 4
+  interlinking: 4
+  overall: 4.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+body
+EOF
+  python3 "${REPO_ROOT}/scripts/wiki-build-index.py" --wiki-root "${tmp}/wiki" --rebuild-all
+  # No locks should remain after a clean run
+  remaining_locks="$(ls "${tmp}/wiki/.locks" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${remaining_locks}" != "0" ]]; then
+    echo "FAIL: ${remaining_locks} locks remained; expected 0"
+    ls "${tmp}/wiki/.locks"
+    rm -rf "${tmp}"; exit 1
+  fi
+  # Run again — should still work cleanly
+  python3 "${REPO_ROOT}/scripts/wiki-build-index.py" --wiki-root "${tmp}/wiki" --rebuild-all
+  rm -rf "${tmp}"
+}
+
 test_two_ingesters_no_data_loss
+test_concurrent_build_index_same_subtree_serializes
+echo "PASS: test_concurrent_build_index_same_subtree_serializes"
+test_ancestor_lock_path_ordering_no_deadlock
+echo "PASS: test_ancestor_lock_path_ordering_no_deadlock"
 echo "ALL PASS"

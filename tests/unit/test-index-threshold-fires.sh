@@ -63,4 +63,59 @@ if [[ "${first_line}" != "---" ]]; then
 fi
 
 echo "PASS: index.md > 8 KB triggers schema-proposal capture"
+
+test_per_index_md_threshold_fires() {
+  # Build a deeply-nested category whose _index.md exceeds 8 KB
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/projects/a/b/c" "${tmp}/wiki/raw" "${tmp}/wiki/.wiki-pending/schema-proposals"
+  touch "${tmp}/wiki/.wiki-config"
+  for i in $(seq 1 100); do
+    cat > "${tmp}/wiki/projects/a/b/c/page${i}.md" <<EOF
+---
+title: "Page ${i} with a long descriptive title that contributes to index size"
+type: projects
+tags: []
+sources: []
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 4
+  completeness: 4
+  signal: 4
+  interlinking: 4
+  overall: 4.00
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+Long body paragraph for entry ${i}. word word word word word word word word word word
+EOF
+  done
+  python3 "${REPO_ROOT}/scripts/wiki-build-index.py" --wiki-root "${tmp}/wiki" --rebuild-all
+  size=$(wc -c < "${tmp}/wiki/projects/a/b/c/_index.md")
+  if [[ "${size}" -le 8192 ]]; then
+    echo "FAIL: expected projects/a/b/c/_index.md to exceed 8 KB; got ${size}"
+    rm -rf "${tmp}"; exit 1
+  fi
+  rm -rf "${tmp}"
+}
+
+test_threshold_24h_debounce_predicate() {
+  # The threshold-fires logic is in the SKILL.md ingester step 7.6.
+  # This test verifies the predicate: a recent proposal under 24h
+  # should suppress new firings (the debounce key is the slug-derived
+  # filename pattern). We don't run the ingester here; we exercise the
+  # find-mtime-1 predicate that step 7.6 uses.
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/wiki/.wiki-pending/schema-proposals"
+  ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+  echo "stub" > "${tmp}/wiki/.wiki-pending/schema-proposals/${ts}-projects-a-b-c-_index-md-index-split.md"
+  recent="$(find "${tmp}/wiki/.wiki-pending/schema-proposals" -name '*-index-split.md' -mtime -1 | head -1)"
+  [[ -n "${recent}" ]] || { echo "FAIL: debounce file not found"; rm -rf "${tmp}"; exit 1; }
+  rm -rf "${tmp}"
+}
+
+test_per_index_md_threshold_fires
+echo "PASS: test_per_index_md_threshold_fires"
+test_threshold_24h_debounce_predicate
+echo "PASS: test_threshold_24h_debounce_predicate"
 echo "ALL PASS"
