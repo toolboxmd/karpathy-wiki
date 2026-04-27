@@ -14,6 +14,14 @@
 # should not prevent drain. Use `set -uo pipefail` for safer var handling.
 set -uo pipefail
 
+# Fork-bomb guard. Spawned ingesters are themselves `claude -p` sessions, which
+# trigger SessionStart again. Without this guard, drift+drain re-runs inside
+# every ingester, each spawning N more, exploding to thousands of processes.
+# WIKI_CAPTURE is set by wiki-spawn-ingester.sh on the headless worker's env.
+if [[ -n "${WIKI_CAPTURE:-}" ]]; then
+  exit 0
+fi
+
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HOOK_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
