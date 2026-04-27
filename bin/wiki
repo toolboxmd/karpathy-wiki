@@ -9,7 +9,19 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks so the script works when invoked via ~/.local/bin/wiki
+# or any other symlink on PATH. Without this, REPO_ROOT resolves to the
+# directory containing the symlink (e.g. ~/.local/bin), not the repo.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SOURCE}" ]]; do
+  TARGET="$(readlink "${SOURCE}")"
+  if [[ "${TARGET}" == /* ]]; then
+    SOURCE="${TARGET}"
+  else
+    SOURCE="$(cd "$(dirname "${SOURCE}")" && pwd)/${TARGET}"
+  fi
+done
+SCRIPT_DIR="$(cd "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
