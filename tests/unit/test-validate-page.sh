@@ -51,11 +51,11 @@ expect_exit 1 "broken link fails in wiki-root mode" -- \
 expect_exit 1 "missing raw source fails in wiki-root mode" -- \
   python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/concepts/missing-source.md"
 
-expect_exit 0 "valid concept in sources/ dir passes in wiki-root mode" -- \
-  python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/sources/2026-04-24-x.md"
+expect_exit 0 "valid plural-concepts page passes in wiki-root mode passes in wiki-root mode" -- \
+  python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/concepts/2026-04-24-x.md"
 
-expect_exit 1 "concept with missing raw source fails in wiki-root mode" -- \
-  python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/sources/orphan-source.md"
+expect_exit 1 "orphan-source (missing raw) fails in wiki-root mode" -- \
+  python3 "${TOOL}" --wiki-root "${WIKI_FIX}" "${WIKI_FIX}/concepts/orphan-source.md"
 
 # -- stderr messages --
 out="$(python3 "${TOOL}" "${FIX}/missing-title.md" 2>&1 >/dev/null || true)"
@@ -150,13 +150,13 @@ quality:
 ---
 body
 V3EOF
-expect_exit 0 "v2.3 Phase A: type/path mismatch is WARNING only" -- \
+expect_exit 1 "v2.3 Phase D: type/path mismatch is HARD violation" -- \
   python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/mismatch.md"
 
-out_warn="$(python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/mismatch.md" 2>&1 1>/dev/null || true)"
-echo "${out_warn}" | grep -q "WARNING.*type.*entities" \
-  && say_pass "v2.3 Phase A: cross-check WARNING line emitted to stderr" \
-  || say_fail "v2.3 Phase A: expected WARNING line, got: ${out_warn}"
+out_err="$(python3 "${TOOL}" --wiki-root "${TMPV3}/wiki" "${TMPV3}/wiki/concepts/mismatch.md" 2>&1 1>/dev/null || true)"
+echo "${out_err}" | grep -q "type 'entities' != path.parts\[0\] 'concepts'" \
+  && say_pass "v2.3 Phase D: cross-check violation message emitted to stderr" \
+  || say_fail "v2.3 Phase D: expected cross-check violation, got: ${out_err}"
 
 # Discovery returns dynamic types -- `journal/` IS a category
 cat > "${TMPV3}/wiki/journal/2026-04-26.md" <<'V3EOF'

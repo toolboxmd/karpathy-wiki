@@ -1,6 +1,6 @@
 ---
 title: "Missing Source"
-type: concept
+type: concepts
 tags: [x]
 sources:
   - raw/does-not-exist.md

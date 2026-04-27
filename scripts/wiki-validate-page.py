@@ -120,35 +120,26 @@ def validate(page_path: Path, wiki_root: Optional[Path] = None, disc: Optional[d
         if field not in data:
             violations.append(f"{page_path}: missing required field: {field}")
 
-    # v2.3: type-membership check (Phase A: WARNING-only; Phase D will flip to hard).
+    # v2.3 Phase D: type-membership and type/path cross-check are HARD violations.
+    # (Phase A shipped these as WARNING-only with PHASE_A_BEGIN/END markers; Task 20
+    # flipped them after the live wiki frontmatter migration completed clean.)
     if "type" in data:
         t = data["type"]
         if disc is not None:
             discovered_types = set(disc["categories"])
             if t not in discovered_types:
-                # PHASE_A_BEGIN
-                print(
-                    f"{rel}: WARNING type '{t}' not in discovered categories {sorted(discovered_types)}",
-                    file=sys.stderr,
+                violations.append(
+                    f"{rel}: type '{t}' not in discovered categories {sorted(discovered_types)}"
                 )
-                # PHASE_A_END
-                # In Phase D's validator-flip task (Task 20), replace the print() above with:
-                #     violations.append(f"{rel}: type '{t}' not in discovered categories {sorted(discovered_types)}")
 
-            # Type vs path cross-check (Phase A: WARNING-only).
+            # Type vs path cross-check (post-Phase-D flip: HARD violation).
             if wiki_root is not None:
                 expected_type = page_path.relative_to(wiki_root).parts[0]
                 if t != expected_type:
-                    # PHASE_A_BEGIN
-                    print(
-                        f"{rel}: WARNING type '{t}' != path.parts[0] '{expected_type}' "
-                        f"(run: python3 scripts/wiki-fix-frontmatter.py --wiki-root {wiki_root} {rel})",
-                        file=sys.stderr,
+                    violations.append(
+                        f"{rel}: type '{t}' != path.parts[0] '{expected_type}' "
+                        f"(run: python3 scripts/wiki-fix-frontmatter.py --wiki-root {wiki_root} {rel})"
                     )
-                    # PHASE_A_END
-                    # In Phase D's validator-flip task (Task 20), replace the print() above with:
-                    #     violations.append(f"{rel}: type '{t}' != path.parts[0] '{expected_type}' "
-                    #                       f"(run: python3 scripts/wiki-fix-frontmatter.py --wiki-root {wiki_root} {rel})")
 
     # Depth >= 5 hard reject (Rule 2; always-on, no soft-warn period).
     if wiki_root is not None:

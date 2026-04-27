@@ -12,7 +12,7 @@ setup() {
   cat > "${WIKI}/concepts/no-quality.md" <<'EOF'
 ---
 title: "No Quality"
-type: concept
+type: concepts
 tags: [x]
 sources:
   - raw/x.md
@@ -25,7 +25,7 @@ EOF
   cat > "${WIKI}/concepts/already-has-quality.md" <<'EOF'
 ---
 title: "Already Rated"
-type: concept
+type: concepts
 tags: [x]
 sources:
   - raw/x.md
@@ -100,7 +100,7 @@ test_backfill_walks_discovered_categories() {
   cat > "${tmp}/wiki/ideas/foo.md" <<'EOF'
 ---
 title: "Foo"
-type: idea
+type: ideas
 status: open
 priority: p2
 tags: []

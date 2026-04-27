@@ -97,12 +97,18 @@ test_phase_index_rebuild_creates_index_md() {
   teardown_fixture
 }
 
-test_validator_passes_after_atomic_phase() {
-  # CRITICAL: the atomic moves+relinks phase must leave the wiki in a state
-  # where the validator passes (no broken links). This is corrigendum C-G's
-  # whole point -- splitting moves and relinks would produce broken state.
+test_validator_passes_after_full_migration() {
+  # CRITICAL: the full migration sequence (atomic moves+relinks → fix-frontmatter
+  # for moved pages → index-rebuild) must leave the wiki validator-clean.
+  # Corrigendum C-G's atomic moves+relinks contract: no broken links between phases.
+  # Post-Phase-D-flip: type/path mismatch is a hard violation, so moved pages
+  # need their type: updated before validation.
   setup_fixture
   bash "${MIGRATE}" --phase=moves-and-relinks --wiki-root "${WIKI}" >/dev/null
+  # After moves, the moved pages have type: concepts but path is projects/...
+  # Re-run wiki-fix-frontmatter.py on every page to recompute type from new path.
+  python3 "${REPO_ROOT}/scripts/wiki-fix-frontmatter.py" --wiki-root "${WIKI}" --all >/dev/null
+  bash "${MIGRATE}" --phase=index-rebuild --wiki-root "${WIKI}" >/dev/null
   for p in $(find "${WIKI}" -name "*.md" -not -path "*/raw/*" -not -path "*/.wiki-pending/*"); do
     python3 "${VALIDATOR}" --wiki-root "${WIKI}" "${p}" || {
       echo "FAIL: validator failed on ${p}"
@@ -117,5 +123,5 @@ test_dry_run_lists_planned_mutations
 test_phase_moves_and_relinks_atomic
 test_idempotent_phase_moves_and_relinks
 test_phase_index_rebuild_creates_index_md
-test_validator_passes_after_atomic_phase
+test_validator_passes_after_full_migration
 echo "all tests passed"

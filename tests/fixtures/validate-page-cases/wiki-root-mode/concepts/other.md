@@ -1,6 +1,6 @@
 ---
 title: "Other"
-type: concept
+type: concepts
 tags: [x]
 sources:
   - raw/2026-04-24-x.md
