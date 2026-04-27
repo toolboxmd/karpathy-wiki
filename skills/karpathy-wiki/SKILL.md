@@ -92,6 +92,19 @@ bash scripts/wiki-init.sh project "./wiki" "$HOME/wiki"
 
 No prompts. No confirmations. Initialization is automatic and idempotent.
 
+## Auto-discovered categories (v2.3+)
+
+The wiki's category set is the directory tree itself. Top-level directories of `<wiki-root>` ARE categories, with these exceptions (the reserved set, hardcoded in `wiki-discover.py`):
+
+- `raw/`, `index/`, `archive/`, `Clippings/`
+- Any directory whose name starts with `.` (e.g., `.wiki-pending/`, `.locks/`, `.git/`, `.obsidian/`)
+
+To add a new category: `mkdir <wiki-root>/<name>/`. The next ingest's discovery picks it up; `wiki-build-index.py` creates `<name>/_index.md`; `schema.md`'s `<!-- CATEGORIES:START/END -->` block regenerates with the new line. No code edits required.
+
+To delete a category: `rm -rf` the directory (destructive — git is the only undo). The next discovery doesn't see it; schema.md drops the line; `wiki-build-index.py --rebuild-all` removes orphaned `_index.md`.
+
+A page's `type:` frontmatter MUST equal `path.parts[0]` of its file path (the top-level directory name, plural form). The validator enforces this.
+
 ## Capture — what, when, how
 
 ### What counts as wiki-worthy (trigger criteria)
@@ -191,6 +204,20 @@ bash scripts/wiki-spawn-ingester.sh "<wiki_root>" "<capture_path>"
 This returns in milliseconds. The spawner atomically claims the capture (renames `.md` → `.md.processing`) and then launches `claude -p` detached. You continue the user's task.
 
 **Never wait for the ingester. Never read the capture back. Move on.**
+
+### Order matters: reply first, then capture
+
+Reply to the user FIRST. The user is waiting; capture mechanics are not. After the reply emits, write any captures whose triggers fired, spawn ingesters, then run the turn-closure check before stopping. The user sees the answer immediately; wiki recording happens in the milliseconds after.
+
+The procedural sequence within a turn — each step is unconditional unless explicitly conditioned on trigger state:
+
+1. **Do the work.** (Research, file reads, tool calls, subagent dispatch, etc.) Triggers may fire at any point during this step — a research subagent returning a file, a confusion resolving, a gotcha surfacing.
+2. **Emit user-facing reply.** This is the user's answer. Triggers may also fire while composing the reply itself — writing the answer can surface a durable claim that wasn't durable until you wrote it down.
+3. **For each trigger that fired in steps 1-2:** write a capture file to `.wiki-pending/`, then spawn a detached ingester. If no triggers fired, skip directly to step 4.
+4. **Run `ls .wiki-pending/` turn-closure check.** Handle any pending residue (rejection-handling, stalled-recovery, missed-capture from earlier turns).
+5. **Emit stop sentinel.** Turn ends.
+
+The trigger-detection is independent of step ordering: the agent checks "did a trigger fire" at the transition from step 2 → step 3, not before step 1 began. Triggers that fire pre-reply (research) and post-reply (durable-claim-from-writing-the-answer) both produce captures in step 3, in the order they fired.
 
 ### Turn closure — before you stop
 
@@ -381,6 +408,16 @@ Additionally: after running the validator, also run `wiki-lint-tags.py` (Phase B
 
 When a threshold is reached, propose the restructure via a `schema-proposal` capture in `.wiki-pending/schema-proposals/`. Do NOT restructure during the current ingest.
 
+### Category discipline (v2.3+)
+
+Three rules govern how categories grow. Each has firing mechanism aimed at the agent during ingest, not at the user via status alarms.
+
+**Rule 1: Don't create a new category to file ONE page.** Before mkdir-ing during ingest step 5 (decide-target-page), the agent checks: are there ≥3 pages I can place here, or one page that will grow to ≥3? If neither, place this page in an existing category instead. **Mechanism:** the cheap model's prompt at step 5 carries this rule explicitly. Decision-time prevention beats after-the-fact warning.
+
+**Rule 2: Sub-directory depth has a HARD cap of 4.** Validator REJECTS any page placed at depth ≥5 (`category/a/b/c/d/page.md`). The cheap model is told at step 5 to place shallower if a deeper position would be required. **Mechanism:** validator exit non-zero. `wiki-status.sh` surfaces "categories exceeding depth 4" (always 0 if validator is doing its job).
+
+**Rule 3: ≥8 categories soft ceiling triggers schema-proposal.** When current category count is already 8 and the cheap model wants to mkdir a 9th, it files a schema-proposal capture in `.wiki-pending/schema-proposals/<timestamp>-9th-category-<name>.md` instead of mkdir-ing. The current capture is filed in the existing-best-fit category for now. User reviews schema-proposal and can `mkdir` themselves to override. **Mechanism:** schema-proposal capture (not a hard reject — flexibility preserved). `wiki-status.sh` surfaces "category count vs soft-ceiling 8."
+
 ### Quality ratings — what the 4 dimensions mean
 
 Every non-meta page (concept, entity, query) carries a `quality:` block in frontmatter. The block is maintained by the ingester at every ingest (step 6.5), re-rated by `wiki doctor` with a smarter model (post-MVP), and never clobbered once a human has rated.
@@ -472,6 +509,9 @@ When you're about to skip a capture, check these red flags:
 | "My conversation capture can be short — short chat, or the ingester figures it out" | The ingester has no transcript access. Whatever you omit is gone. Body-size floor is about information density, not conversation length. |
 | "I'll skip this `needs_more_detail` rejection; the user just asked something else" | Forbidden. Expanding takes seconds. Ignoring it means the knowledge is lost and `.wiki-pending/` fills with dust. Handle the rejection before answering the new turn. |
 | "I have a good reason to skip this capture" (any rationalization not literally in this table) | Cite the exact SKILL.md line that justifies skipping. If you cannot quote it, you are fabricating — capture now. Transparency-about-process is a subset: the user wanted the answer, not a tour of the wiki mechanics. Capture, spawn, orient — silently. Speak only the announce line and the answer. |
+| "I'll write the capture before replying — it's only milliseconds" | Forbidden in v2.3+. The user is waiting; capture is post-reply machinery. Reply first, capture in the turn-tail. See "Order matters" section. |
+| "I'll mkdir a 9th category since the rule is just a soft warning" | File a schema-proposal capture instead. Place the current capture in the best-fit existing category. Wait for user review. Rule 3 of category discipline. |
+| "This page is at depth 5 but it's logically deep" | Forbidden. Validator rejects depth ≥5 hard. Restructure the category or place shallower. Rule 2 of category discipline. |
 
 All of these are violations of the Iron Law.
 
