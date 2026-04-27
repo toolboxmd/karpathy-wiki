@@ -304,33 +304,6 @@ future user ~5 minutes and a lot of "wait why doesn't Obsidian show backlinks."
 
 ---
 
-## `ideas/` category in the wiki schema
-
-```yaml
-status: open
-priority: p3
-effort: medium
-labels: [wiki-schema]
-revisit_when:
-  "User actually uses this TODO.md and finds it insufficient. Right now, TODO.md
-  covers skill-dev backlog; `ideas/` in the wiki would cover general-knowledge
-  forward-looking items separately. If TODO.md absorbs both use cases, `ideas/`
-  is redundant; if TODO.md feels wrong for non-skill-related ideas, `ideas/`
-  earns its keep."
-refs:
-  - ~/wiki/.wiki-pending/2026-04-24T14-08-32Z-ideas-category-proposal.md (the
-    capture that proposed this — currently being ingested)
-  - ~/wiki/schema.md (target of the category addition)
-  - scripts/wiki-validate-page.py (would gain `type: idea` case)
-```
-
-Semantically distinct from this TODO.md: this file is the plugin's own backlog;
-the `ideas/` category would be for ideas IN the wiki about external topics
-("should I investigate X-technology?"). Keep both or drop the wiki one if
-redundant — decide after using TODO.md for a while.
-
----
-
 ## Consider migration: TODO.md → GitHub Issues when repo goes public
 
 ```yaml
@@ -393,6 +366,22 @@ Likely future audit targets (not commitments):
   rating surface to rate against.
 
 Audit shipped 2026-04-24 (`docs/planning/2026-04-24-karpathy-wiki-v2.2-audit.md`); v2.2-hardening plan executed Tasks 50-62 closing 6 of the 16 findings (architectural cut + 5 mechanical fixes). The remaining 10 findings remain on TODO.md or defer to v2.3 / `wiki doctor`.
+
+## `ideas/` category in the wiki schema
+
+```yaml
+status: shipped
+priority: p3
+effort: medium
+labels: [wiki-schema]
+shipped_in: 2b91706
+refs:
+  - ~/wiki/concepts/wiki-ideas-category-convention.md (the convention page)
+  - ~/wiki/schema.md (now contains "## Ideas Category Extension" section per v2.3)
+  - scripts/wiki-validate-page.py (validates type: ideas via discovery; no special-case needed)
+```
+
+The `ideas/` category was already a wiki-level convention pre-v2.3 (with required `status:` and `priority:` frontmatter fields). v2.3 cemented it into the auto-discovery contract: `ideas/` is one of the four seed categories `wiki-init.sh` creates, validator accepts `type: ideas` because discovery returns it from the directory tree, `wiki-status.sh` counts it, `wiki-backfill-quality.py` walks it. The decision "keep or drop" is settled — the wiki has 5 idea pages today (action-tokenization-v0-build, obsidian-rich-init, sessionstart-hook-inject-skill, validate-idea-pages, wiki-doctor-real-implementation), all earning their keep as durable forward-looking items distinct from this plugin's TODO backlog. Different scopes: TODO.md = plugin-development backlog (in-repo). `ideas/` = wiki-knowledge forward-looking items (in the wiki itself, surfaced to agents via index/discovery).
 
 ## v2.3: flexible auto-discovered categories + recursive _index.md tree
 
