@@ -43,18 +43,35 @@ _drift_scan() {
   [[ "${drift_out}" == "CLEAN" ]] && return 0
 
   log_info "session-start: drift detected"
-  local line src capture_name capture_path
+  local line src capture_name capture_path src_hash
   while IFS= read -r line; do
     case "${line}" in
-      NEW:*|MODIFIED:*)
-        src="$(echo "${line}" | awk '{print $2}')"
-        capture_name="$(date +%Y-%m-%dT%H-%M)-drift-$(slugify "${src}").md"
-        capture_path="${wiki}/.wiki-pending/${capture_name}"
-        # Idempotency: skip if a drift capture for this src already exists.
-        if [[ -f "${capture_path}" ]]; then
-          continue
-        fi
-        cat > "${capture_path}" <<EOF
+      NEW:\ *)      src="${line#NEW: }" ;;
+      MODIFIED:\ *) src="${line#MODIFIED: }" ;;
+      *)            continue ;;
+    esac
+    # Idempotency primitive: filename keyed on a content-stable hash of the
+    # SRC path (not %H-%M, which collides under concurrent SessionStart
+    # firings inside the same minute). Each unique src maps to exactly one
+    # capture name, so two hooks racing on the same drift produce the same
+    # filename — `set -C` (noclobber) below makes the create atomic.
+    src_hash="$(printf '%s' "${src}" | shasum | cut -c1-12)"
+    # Cap base length so absurdly long filenames stay under PATH_MAX, then
+    # add the .md extension exactly once.
+    capture_base="drift-${src_hash}-$(slugify "${src}")"
+    capture_name="${capture_base:0:200}.md"
+    capture_path="${wiki}/.wiki-pending/${capture_name}"
+    # Atomic exclusive create. If two hooks race, only one wins; the other
+    # sees a non-zero exit from `set -C` and we treat that as "already
+    # captured this drift" — exactly the idempotency we want.
+    if ( set -C; : > "${capture_path}" ) 2>/dev/null; then
+      # Body must clear the 200-byte floor for evidence_type: file. The
+      # ingester reads the raw file separately; the body's job is to give it
+      # context — what changed, why this isn't a chat capture, what the
+      # ingester should do (read the raw, infer category, decide create vs
+      # update). Without enough body the ingester rejects with
+      # needs_more_detail and the capture rots in .wiki-pending/ forever.
+      cat > "${capture_path}" <<EOF
 ---
 title: "Drift: ${src}"
 evidence: "${wiki}/${src}"
@@ -66,11 +83,21 @@ captured_by: "session-start-drift"
 origin: null
 ---
 
-Raw source \`${src}\` changed since last manifest. Treat as new source.
+Auto-generated drift capture. The raw source file at \`${src}\` is either
+new (not yet in \`.manifest.json\`) or its sha256 has changed since the last
+ingest. This capture exists so the next ingester run brings the wiki back
+in sync with what's actually on disk in \`raw/\`.
+
+Action for the ingester: read the raw file at \`evidence\`, decide which
+existing page (if any) it augments based on its content, and either update
+that page or create a new one in the appropriate category. Update the
+manifest entry for this raw file once done so this drift doesn't re-fire
+on the next session-start. If the raw file looks like an Obsidian Web
+Clipper export (has source/created/published frontmatter), preserve those
+fields when copying.
 EOF
-        log_info "session-start: drift capture created: ${capture_name}"
-        ;;
-    esac
+      log_info "session-start: drift capture created: ${capture_name}"
+    fi
   done <<< "${drift_out}"
 }
 _drift_scan || log_warn "session-start: drift scan failed (non-fatal)"
