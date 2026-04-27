@@ -1,0 +1,9 @@
+---
+title: "No Type Concept"
+tags: [example]
+sources:
+  - raw/2026-04-24-sample.md
+created: "2026-04-24T12:00:00Z"
+---
+
+Body.

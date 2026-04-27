@@ -1,0 +1,26 @@
+# Test artifacts
+tests/tmp/
+tests/*.log
+tests/*/*.actual
+
+# Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+npm-debug.log
+
+# Wiki runtime state (never ship)
+.wiki-pending/
+.locks/
+.ingest.log
+
+# Per-user Claude Code settings (machine-local paths, never share)
+.claude/settings.local.json

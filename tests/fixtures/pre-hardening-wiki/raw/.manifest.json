@@ -1,0 +1,7 @@
+{
+  "2026-04-24-sample.md": {
+    "source": "/tmp/origin/2026-04-24-sample.md",
+    "added": "2026-04-24T12:00:00Z",
+    "referenced_by": ["concepts/short-date.md", "entities/nested-sources.md", "sources/2026-04-24-sample.md", "concepts/never-existed.md"]
+  }
+}

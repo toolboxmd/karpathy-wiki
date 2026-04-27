@@ -1,0 +1,9 @@
+role = "main"
+created = "2026-04-22"
+
+[platform]
+agent_cli = "claude"
+headless_command = "claude -p"
+
+[settings]
+auto_commit = true
