@@ -338,31 +338,49 @@ The ingester's job: process one already-claimed capture into wiki pages. It runs
    - signal: dense knowledge vs restatement?
    - interlinking: does it link to every related page the wiki contains?
    **Never clobber `rated_by: human`.** If the existing page has `quality.rated_by == "human"`, skip this step for that page entirely.
-7. **Update `index.md`** (locked). When rendering a page entry, append its overall rating: `- [Title](path/page.md) — (q: 4.25) short description`.
-7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the current `index.md` content to the cheap model with this prompt: "Identify any existing wiki page in index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
-7.6. **Index size threshold check.** After updating `index.md` in step 7, measure its byte size:
+7. **Update indexes via `wiki-build-index.py`.** Do NOT write `index.md` or any `_index.md` directly. Instead, for each unique parent directory of a touched page (deduplicated from `touched_pages`), invoke:
+
    ```bash
-   size="$(wc -c < "${WIKI_ROOT}/index.md" | tr -d ' ')"
+   for dir in "${TOUCHED_DIRS[@]}"; do
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-build-index.py" \
+       --wiki-root "${WIKI_ROOT}" "${dir}"
+   done
    ```
-   If `size > 8192` AND no `*-index-split.md` capture exists in `.wiki-pending/schema-proposals/` with mtime within the last 24 hours, write a new schema-proposal capture (do NOT block ingest, do NOT split inline):
+
+   The script regenerates `_index.md` in that directory and walks UP to ancestors (path-order locks, leaves first). Root MOC (`index.md`) is rebuilt automatically by the script if a top-level category was added or removed.
+
+   If the script exits non-zero (lock timeout, discovery failure), log the failure to `log.md` and continue. The next ingest catches up because indexes are a function of directory state.
+
+7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the relevant `_index.md` content (the page's parent directory's index, NOT root index.md) to the cheap model with this prompt: "Identify any existing wiki page in _index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in _index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
+
+7.6. **Per-`_index.md` size threshold check.** After step 7's invocation, check the size of every `_index.md` the script touched:
+
    ```bash
-   if [[ ${size} -gt 8192 ]]; then
-     recent="$(find "${WIKI_ROOT}/.wiki-pending/schema-proposals" -name '*-index-split.md' -mtime -1 2>/dev/null | head -1)"
-     if [[ -z "${recent}" ]]; then
-       ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-       cat > "${WIKI_ROOT}/.wiki-pending/schema-proposals/${ts}-index-split.md" <<EOF
+   for idx in "${TOUCHED_INDEXES[@]}"; do
+     size="$(wc -c < "${idx}" | tr -d ' ')"
+     if [[ "${size}" -gt 8192 ]]; then
+       # 24-hour debounce: only fire if no recent proposal for THIS file exists.
+       slug="$(echo "${idx#${WIKI_ROOT}/}" | tr '/' '-' | tr '.' '-')"
+       proposal_pattern="${WIKI_ROOT}/.wiki-pending/schema-proposals/*-${slug}-index-split.md"
+       if ! find ${proposal_pattern} -mtime -1 2>/dev/null | grep -q .; then
+         ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+         cat > "${WIKI_ROOT}/.wiki-pending/schema-proposals/${ts}-${slug}-index-split.md" <<EOF
 ---
-title: "Schema proposal: split index.md (size threshold exceeded)"
+title: "Schema proposal: split ${idx#${WIKI_ROOT}/} (size threshold exceeded)"
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-trigger: "index.md size = ${size} bytes (threshold 8192 bytes)"
+trigger: "${idx#${WIKI_ROOT}/} size = ${size} bytes (threshold 8192 bytes)"
 ---
 
-index.md exceeded the orientation-degradation threshold. Recommended atom-ization: split into per-category sub-indexes (index/concepts.md, index/entities.md, index/queries.md, index/ideas.md), with index.md becoming a 5-line MOC pointing at each. Rationale: per-category matches existing wiki structure; agents reading index.md get cheap orientation and can drill down.
+The sub-index file ${idx#${WIKI_ROOT}/} exceeded the 8 KB orientation-degradation threshold. Recommended: split this directory into sub-categories, OR consolidate scope. Root MOC is exempt from this threshold (capped via Rule 3 instead — see Category discipline).
 EOF
+       fi
      fi
-   fi
+   done
    ```
-   Audit Finding 01 surfaced index.md at 25 KB / 76 entries / ~12,500 tokens; over 3x the 8 KB ceiling and ~12x the Chroma Context Rot inflection point. The thresholds existed in prose but had no firing mechanism; this step closes the loop.
+
+   The root `index.md` (small MOC built by `_build_root_moc`) is exempt from this 8 KB threshold. The MOC is bounded by Rule 3 (≥8 categories soft ceiling) instead — see Category discipline section.
+
+   Audit Finding 01 surfaced index.md at 25 KB / 76 entries / ~12,500 tokens (pre-v2.3); v2.3 replaces that monolithic index with the recursive `_index.md` tree, and this step ensures any individual `_index.md` doesn't grow unbounded.
 8. **Append to `log.md`**.
 9. **If this wiki is a project wiki, decide propagation.** A project wiki evaluates whether each capture is general-interest (useful across projects) or project-specific, using these criteria:
    - **Propagate** if the capture describes a tool, concept, pattern, or principle applicable outside this project. Write a new capture in the main wiki's `.wiki-pending/` with `propagated_from: <project wiki path>`.
