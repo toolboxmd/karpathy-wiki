@@ -41,7 +41,7 @@ v2.4 ships them together.
   judgment.
 - The wiki the capture lands in is decided by the user (one-time per
   cwd), not silently defaulted.
-- Files dropped into a wiki's drop zones (`Clippings/`, `raw/`) are
+- Files dropped into a wiki's drop zones (`inbox/`, `raw/`) are
   ingested directly from their content, with no fabricated wrapper.
 - Each ingester's view of the world is shaped by the wiki it reads —
   index, schema, log, **and the pages it's about to link to** — so the
@@ -83,7 +83,7 @@ Concretely:
 |---|---|---|---|
 | Auto-load | session start | `skills/using-karpathy-wiki/SKILL.md` exists | inject loader as `additionalContext` |
 | Project resolver | every `wiki capture` invocation | cwd has `.wiki-config` / `.wiki-mode` / neither; `~/.wiki-pointer` exists / not | use existing wiki, OR signal "user prompt needed" via exit code, OR initialize |
-| Raw-direct | session start AND on-demand `wiki ingest-now` | files in `<wiki>/Clippings/` (drop zone); manifest sha vs sha for files in `raw/` | create raw-direct capture per file; ingester moves Clippings → raw on commit |
+| Raw-direct | session start AND on-demand `wiki ingest-now` | files in `<wiki>/inbox/` (drop zone); manifest sha vs sha for files in `raw/` | create raw-direct capture per file; ingester moves inbox → raw on commit |
 
 ### Component map
 
@@ -103,7 +103,7 @@ scripts/wiki-ingest-now.sh                      # on-demand drift-scan + drain (
 scripts/wiki-manifest-lock.sh                   # flock-based wrapper around manifest mutations
 scripts/wiki-issues.sh                          # render .ingest-issues.jsonl as markdown
 scripts/wiki-issue-log.sh                       # ingester helper to append a JSON line (uses flock)
-hooks/session-start                             # extended: inject loader + scan Clippings/ + scan raw/ for drift
+hooks/session-start                             # extended: inject loader + scan inbox/ + scan raw/ for drift
 ```
 
 Removed / split:
@@ -634,7 +634,7 @@ wiki's directory.
 
 ---
 
-## Leg 3 — Raw-direct ingest (unified Clippings + subagent-report flow)
+## Leg 3 — Raw-direct ingest (unified inbox flow)
 
 ### Source classes
 
@@ -643,41 +643,72 @@ mechanism:
 
 | Source | Where it lands | How it gets there |
 |---|---|---|
-| Obsidian Web Clipper | `<wiki>/Clippings/` | external app drops file |
-| Research subagent report | `<wiki>/Clippings/` | main agent moves the file (single command — see below) |
+| Obsidian Web Clipper | `<wiki>/inbox/` | external app drops file |
+| Research subagent report | `<wiki>/inbox/` | main agent moves the file (single command — see below) |
 | Drift in `raw/` | already in `<wiki>/raw/`; manifest sha mismatch | external edit / replacement of an existing raw |
 
-### `Clippings/` is a queue, `raw/` is the archive
+### `inbox/` is a queue, `raw/` is the archive
 
-`<wiki>/Clippings/` is the **drop zone**: a transient queue. Any file
-present in `Clippings/` is by definition unprocessed; once an ingester
+`<wiki>/inbox/` is the **drop zone**: a transient queue. Any file
+present in `inbox/` is by definition unprocessed; once an ingester
 runs, the file is moved to `raw/<basename>` and removed from
-`Clippings/`. There is no separate "Clippings manifest" — durable
+`inbox/`. There is no separate inbox manifest — durable
 state lives in `raw/.manifest.json` exactly as today.
 
 This is the central simplification:
 
-- **Detection rule:** `ls <wiki>/Clippings/*.md` (and other supported
+- **Detection rule:** `ls <wiki>/inbox/*.md` (and other supported
   extensions). Any file present is queue-pending.
 - **Ingest action:** for each queue file, create a raw-direct capture
   in `<wiki>/.wiki-pending/`, spawn an ingester. The ingester reads
-  the file from `Clippings/`, copies to `raw/`, registers in
-  manifest, removes from `Clippings/`, writes the wiki page,
+  the file from `inbox/`, copies to `raw/`, registers in
+  manifest, removes from `inbox/`, writes the wiki page,
   archives the capture.
-- **Idempotency:** re-running the scan over an empty `Clippings/`
-  is a no-op. If a file appears in `Clippings/` while an ingester is
+- **Idempotency:** re-running the scan over an empty `inbox/`
+  is a no-op. If a file appears in `inbox/` while an ingester is
   processing a sibling, it gets handled in the next scan iteration —
   no need to coordinate.
 
 The `raw/` drift-scan path (existing v2.x behavior) handles cases
-where a file in `raw/` has been replaced/edited externally. That
-remains separate from `Clippings/` queue processing — they share the
-ingester but use different detection mechanisms.
+where a file in `raw/` has been **edited or replaced** externally
+(sha mismatch against manifest). That remains separate from `inbox/`
+queue processing — they share the ingester but use different
+detection mechanisms.
+
+### `raw/` is ingester-write-only — recovery rule
+
+`raw/` is the ingester's archive. Every file there has provenance: the
+ingester copied it from `inbox/` (or generated it from a chat capture)
+AND wrote a manifest entry recording origin / sha / referenced_by /
+last_ingested. The README explicitly tells users not to put files in
+`raw/` directly.
+
+If the SessionStart drift-scan finds a file in `raw/` that is **not in
+the manifest** (someone put it there by accident, or via a tool that
+doesn't know the convention), the recovery is automatic:
+
+1. Move the file to `<wiki>/inbox/<basename>`. If `<basename>` already
+   exists in `inbox/`, append a counter: `<basename>.<n>.md`.
+2. Append a WARN line to `.ingest.log`:
+   *"raw-recovery | unmanifested file moved raw/ → inbox/: `<basename>`."*
+3. Continue normal scan — the moved file gets picked up by the inbox
+   queue iteration and ingested through the standard path. The
+   ingester's first read produces a fresh manifest entry with proper
+   provenance.
+
+This way `raw/` invariants stay intact: every file there is
+manifest-tracked. Accidental drops self-heal on the next scan.
+
+If a file in `raw/` IS in the manifest but its sha differs (the
+existing v2.x drift case), that's a different recovery — the existing
+overwrite-detection logic in the ingester handles it. The `raw/`
+recovery rule above is specifically for **unmanifested** files in
+`raw/`.
 
 ### Concurrent SessionStart safety
 
 Two SessionStart hooks firing concurrently (user opens two terminals)
-would both see the same `Clippings/foo.md`. The capture filename is
+would both see the same `inbox/foo.md`. The capture filename is
 deterministic from the source path:
 
 ```
@@ -685,7 +716,7 @@ capture_filename = drift-<sha12(absolute_path)>-<slugified-basename>.md
 ```
 
 This is the existing `_drift_scan` filename convention in
-`hooks/session-start:58-62`, extended to `Clippings/`. The atomic
+`hooks/session-start:58-62`, extended to `inbox/`. The atomic
 `set -C` create (`hooks/session-start:67`) makes the second hook's
 attempt fail silently — exactly the deduplication v2.x already relies
 on for `raw/` drift.
@@ -695,7 +726,7 @@ unchanged: spawned ingesters skip the hook entirely.
 
 ### Partial-write race (rsync, unzip, etc.)
 
-A file in `Clippings/` may be in the middle of being written (rsync
+A file in `inbox/` may be in the middle of being written (rsync
 hasn't finished, an editor is auto-saving, an unzip is extracting).
 The hook adds an mtime check: **skip files whose mtime is within the
 last 5 seconds.** They get picked up on the next SessionStart or
@@ -704,7 +735,7 @@ last 5 seconds.** They get picked up on the next SessionStart or
 5 seconds is an arbitrary safety floor; it covers most user-driven
 saves and small file copies. Long-running operations (large rsync,
 multi-MB extractions) are user responsibility — they should drop into
-a staging directory and `mv` into `Clippings/` when done.
+a staging directory and `mv` into `inbox/` when done.
 
 ### Subagent-report workflow (main agent's responsibility)
 
@@ -713,7 +744,7 @@ main agent's job is **not** to write a capture body summarizing the
 report. The report IS the capture. The main agent runs:
 
 ```bash
-mv <subagent-report-path> <wiki>/Clippings/<basename>
+mv <subagent-report-path> <wiki>/inbox/<basename>
 wiki ingest-now <wiki>          # or wait for next SessionStart
 ```
 
@@ -727,7 +758,7 @@ instructs:
 
 > **Subagent reports.** When a research subagent returns a file with
 > durable findings, do NOT write a chat-style capture body. Move the
-> file into `<wiki>/Clippings/<basename>` and run `wiki ingest-now
+> file into `<wiki>/inbox/<basename>` and run `wiki ingest-now
 > <wiki>`. The ingester reads the file directly. Subagent-report
 > bodies frequently exceed several KB; rewriting them as a capture
 > body wastes tokens and produces inferior wiki pages.
@@ -737,6 +768,76 @@ the prose-not-script auto-load gap and the project-wiki resolver gap):
 forcing the agent to fabricate a wrapper body when the source already
 exists.
 
+### Wiki-root README (auto-generated)
+
+`wiki-init.sh` writes a `README.md` at the wiki root explaining the
+drop zones and the `raw/` rule. The README is short, agent-friendly
+markdown, and gets created idempotently (only on first init; never
+overwritten). Template:
+
+```markdown
+# <wiki-role> wiki — <created-date>
+
+This wiki is auto-managed by the karpathy-wiki plugin. Most of the
+time you should not edit files directly — captures, ingestion, and
+page writes happen through the plugin's tooling.
+
+## Where to drop files
+
+**`inbox/`** — the universal drop zone for ingestion. Put anything
+that should become a wiki page here:
+
+- Obsidian Web Clipper exports (configure your template's "Note
+  location" to `inbox` and "Vault" to this wiki — see "Web Clipper
+  setup" below).
+- Research reports from subagents (the agent typically moves these
+  for you).
+- Manual file drops: downloaded articles, PDF→markdown exports,
+  meeting notes.
+
+After you drop a file, ingestion happens on the next agent session
+start (silent), or immediately if you run `wiki ingest-now <this-wiki-path>`.
+
+**Do NOT put files in `raw/`.** That directory is the ingester's
+archive — every file there has a manifest entry tracking origin,
+sha256, and which wiki pages reference it. If you put a file there
+by accident, the next ingest will move it to `inbox/` and process
+it normally (a WARN gets logged, but no data is lost).
+
+## Web Clipper setup
+
+In Obsidian Web Clipper settings → Templates → (your template) →
+Location:
+
+- **Note name:** `{{title}}` (or whatever filename pattern you prefer)
+- **Note location:** `inbox`
+- **Vault:** select this wiki's directory
+
+That's it. Clip a page; the file lands in `inbox/`; next agent session
+ingests it.
+
+## Other top-level directories
+
+- `concepts/`, `entities/`, `queries/`, `ideas/` — wiki content,
+  written by the ingester. Editing pages directly is allowed but the
+  ingester will eventually re-rate / re-link them.
+- `archive/` — old content the ingester decided to retire.
+- `raw/` — the ingester's archive (see above).
+- `.wiki-pending/` — pending captures (transient).
+- `.locks/` — concurrency primitives (transient).
+- `.manifest.json`, `.ingest.log`, `.ingest-issues.jsonl` — machine
+  state.
+
+## Schema
+
+See `schema.md` for the live category list, tag taxonomy, and
+thresholds.
+```
+
+The README is plain prose; users read it on first wiki creation and
+when they are confused about where to drop files. The plugin tooling
+does not read the README itself.
+
 ### Capture format for raw-direct
 
 The capture is auto-generated by the SessionStart hook (or
@@ -745,7 +846,7 @@ The capture is auto-generated by the SessionStart hook (or
 ```markdown
 ---
 title: "Drop: <basename>"
-evidence: "<absolute path to file in Clippings/ OR raw/>"
+evidence: "<absolute path to file in inbox/ OR raw/>"
 evidence_type: "file"
 capture_kind: "raw-direct"
 suggested_action: "auto"
@@ -755,7 +856,7 @@ captured_by: "session-start-drop"  # or "wiki-ingest-now"
 origin: null
 ---
 
-Auto-ingest of file in <Clippings|raw>/. The raw file at `evidence`
+Auto-ingest of file in <inbox|raw>/. The raw file at `evidence`
 is the canonical source; this body is auto-generated and intentionally
 minimal. Action for the ingester: read the raw file, infer category
 from content, decide create vs augment, file under appropriate
@@ -813,8 +914,8 @@ correctly.
 ### Lens for raw-direct
 
 The wiki's role determines the lens (same as chat-driven captures). A
-file dropped into a project wiki's `Clippings/` gets project-lens
-ingestion; a file dropped into a main wiki's `Clippings/` gets
+file dropped into a project wiki's `inbox/` gets project-lens
+ingestion; a file dropped into a main wiki's `inbox/` gets
 main-lens ingestion. **Drops do NOT fork** — the user picked the wiki
 by picking the directory. If the user wants the same file in both,
 they drop into both manually.
@@ -824,12 +925,12 @@ they drop into both manually.
 - File is binary / unreadable: ingester writes an issue
   (`issue_type: other`, severity `warn`, detail `cannot read raw
   file`), archives the capture, does not commit a page. The file
-  stays in `Clippings/` so the user can investigate (NOT moved to
+  stays in `inbox/` so the user can investigate (NOT moved to
   `raw/`).
 - File is empty: same.
 - File is a duplicate of an existing raw (sha256 already in
   manifest): ingester logs (`raw-ingest | skipped duplicate`),
-  removes the file from `Clippings/`, archives the capture.
+  removes the file from `inbox/`, archives the capture.
 - File mtime is within the last 5 seconds: hook skips it for this
   scan iteration.
 - File contains valid YAML frontmatter that conflicts with v2.4
@@ -838,9 +939,9 @@ they drop into both manually.
 
 ### Test surface
 
-- Drop a markdown file into `Clippings/`. Next session start:
+- Drop a markdown file into `inbox/`. Next session start:
   capture appears in `.wiki-pending/`; ingester runs; page committed;
-  raw is in `raw/`; manifest updated; `Clippings/` is empty.
+  raw is in `raw/`; manifest updated; `inbox/` is empty.
 - `wiki ingest-now` triggers same flow on demand without waiting for
   SessionStart.
 - Drop the same file twice (different content, same basename):
@@ -848,15 +949,15 @@ they drop into both manually.
   capture; the existing overwrite-detection logic (in current
   ingester) handles the merge.
 - Two SessionStarts fire concurrently with the same file in
-  `Clippings/`: deterministic capture filename + atomic `set -C`
+  `inbox/`: deterministic capture filename + atomic `set -C`
   ensures one wins, the other no-ops.
-- File in `Clippings/` with mtime now: hook skips; next scan picks it
+- File in `inbox/` with mtime now: hook skips; next scan picks it
   up.
 - Subagent report at `/tmp/foo-report.md` → main agent runs
-  `mv ... <wiki>/Clippings/ && wiki ingest-now <wiki>` → page
+  `mv ... <wiki>/inbox/ && wiki ingest-now <wiki>` → page
   committed without main agent writing a capture body.
-- Binary file in `Clippings/`: issue logged; file stays in
-  `Clippings/`; no page written.
+- Binary file in `inbox/`: issue logged; file stays in
+  `inbox/`; no page written.
 
 ---
 
@@ -1197,27 +1298,27 @@ ingester writes / augments / no-ops; appends issues to JSONL
 ingester commits, archives the capture, writes fork run record
 ```
 
-### Capture (raw-direct via Clippings drop)
+### Capture (raw-direct via inbox drop)
 
 ```
-user (or external tool) drops file into <wiki>/Clippings/<basename>
+user (or external tool) drops file into <wiki>/inbox/<basename>
   OR main agent moves a subagent report there
   ↓
 next SessionStart fires (OR user runs `wiki ingest-now <wiki>`)
   ↓
-hook scans <wiki>/Clippings/ and <wiki>/raw/ for unmanifested or sha-mismatched files
+hook scans <wiki>/inbox/ and <wiki>/raw/ for unmanifested or sha-mismatched files
   ↓
 for each: hook creates raw-direct capture in .wiki-pending/
   (filename = drift-<sha12(absolute_path)>-<slug>.md; atomic via set -C)
   ↓
 hook calls wiki-spawn-ingester.sh per capture
   ↓
-detached claude -p ingester reads the file in Clippings/ (NOT the capture body)
+detached claude -p ingester reads the file in inbox/ (NOT the capture body)
   ↓
 ingester runs deep orientation (lens shaped by wiki role)
   ↓
-ingester writes/augments/no-ops; copies Clippings/<basename> → raw/<basename>;
-  updates manifest (under flock); removes file from Clippings/
+ingester writes/augments/no-ops; copies inbox/<basename> → raw/<basename>;
+  updates manifest (under flock); removes file from inbox/
   ↓
 ingester commits, archives the capture, appends issues to JSONL
 ```
@@ -1227,11 +1328,11 @@ ingester commits, archives the capture, appends issues to JSONL
 ```
 research subagent returns a file at /tmp/foo-report.md
   ↓
-main agent: `mv /tmp/foo-report.md <wiki>/Clippings/foo-report.md`
+main agent: `mv /tmp/foo-report.md <wiki>/inbox/foo-report.md`
   ↓
 main agent: `wiki ingest-now <wiki>`
   ↓
-(falls through to "Capture (raw-direct via Clippings drop)" above)
+(falls through to "Capture (raw-direct via inbox drop)" above)
 ```
 
 ---
@@ -1256,8 +1357,9 @@ main agent: `wiki ingest-now <wiki>`
 | User types invalid input at per-cwd prompt | re-prompt up to 3 times; on 4th invalid, abort and orphan-preserve |
 | Spawn fails (no `claude` binary, etc.) | capture stays in `.wiki-pending/`; existing reclaim logic picks it up next session |
 | Spawn succeeds for one wiki in `both` mode but fails for the other | per-wiki run record reflects asymmetric outcome; `wiki status` shows fork mismatch; user can `wiki ingest-now <failed-wiki>` to retry |
-| Raw-direct file is binary / empty | issue logged; file stays in Clippings/ for user inspection; no page written |
+| Raw-direct file is binary / empty | issue logged; file stays in inbox/ for user inspection; no page written |
 | Raw-direct file mtime within last 5 seconds | hook skips this scan iteration; next scan picks up |
+| Unmanifested file in `raw/` (user dropped there by accident) | hook moves to `inbox/<basename>` (with collision suffix), logs WARN, queues normal raw-direct capture |
 | Two SessionStarts fire concurrently | deterministic capture filename + atomic `set -C` create dedupe; no double-ingest |
 | `.ingest-issues.jsonl` write fails (disk full, permission, etc.) | log to `.ingest.log` and continue (issue tracking is best-effort) |
 | `.ingest-issues.jsonl` flock acquisition fails after 30 s | log warning; skip this issue line; continue ingestion |
@@ -1305,11 +1407,14 @@ Per `superpowers:writing-skills` RED-GREEN-REFACTOR discipline.
 - **Chat capture, headless mode, no main:** capture aborts; body preserved at `~/.wiki-orphans/<timestamp>-<slug>.md`.
 - **Conflict resolution:** create cwd with both `.wiki-config` and `.wiki-mode = both`, where cwd is NOT the wiki root (project-pointer to `./wiki/` AND `.wiki-mode` markers both present). Resolver exits 13; `wiki capture` re-prompts.
 - **Both-mode partial failure:** capture in both mode, but main wiki has bad permissions on `.wiki-pending/`. Project ingester runs; main spawn fails. `wiki status` reports asymmetric outcome.
-- **Raw-direct, Clippings drop:** drop a markdown file → next SessionStart → page emerges, raw is in `raw/` with manifest, `Clippings/` is empty.
+- **Raw-direct, inbox drop:** drop a markdown file → next SessionStart → page emerges, raw is in `raw/` with manifest, `inbox/` is empty.
 - **Raw-direct, on-demand:** same as above but via `wiki ingest-now <wiki>` instead of waiting for SessionStart.
-- **Raw-direct, subagent report:** `mv` a fixture file into `<wiki>/Clippings/` then run `wiki ingest-now`; assert page emerges; assert main agent never wrote a capture body.
-- **Concurrent SessionStart:** two SessionStarts fire on the same wiki with the same file in `Clippings/`; assert exactly one capture is created (deterministic filename + atomic create).
-- **Partial-write race:** `touch` a file in Clippings/, run SessionStart immediately; hook skips it (mtime within 5s). Sleep 6s, re-run; hook picks it up.
+- **Raw-direct, subagent report:** `mv` a fixture file into `<wiki>/inbox/` then run `wiki ingest-now`; assert page emerges; assert main agent never wrote a capture body.
+- **Concurrent SessionStart:** two SessionStarts fire on the same wiki with the same file in `inbox/`; assert exactly one capture is created (deterministic filename + atomic create).
+- **Partial-write race:** `touch` a file in inbox/, run SessionStart immediately; hook skips it (mtime within 5s). Sleep 6s, re-run; hook picks it up.
+- **`raw/` recovery:** drop a fixture file directly into `<wiki>/raw/foo.md` (no manifest entry); next SessionStart moves it to `<wiki>/inbox/foo.md`, logs WARN, queues a raw-direct capture; ingester processes normally and writes a fresh manifest entry. Final state: file is in `raw/` with manifest entry, `inbox/` is empty.
+- **`raw/` recovery with collision:** repeat the above when `<wiki>/inbox/foo.md` already exists from a different drop; the recovery moves the dropped file to `inbox/foo.1.md`.
+- **Wiki-root README created on init:** fresh `wiki-init.sh main <path>` produces a `<path>/README.md` matching the template (idempotency verified by re-running init — README is not overwritten).
 - **Path with spaces/unicode:** fixture wiki path `/tmp/wiki test ünicode/` exercises every script; assert no failures.
 - **Symlink wiki path:** `~/.wiki-pointer` → symlink → real wiki directory; resolver follows correctly.
 - **Migration: single existing wiki at `~/wiki/`:** silent; pointer written.
@@ -1378,6 +1483,22 @@ safety (revised)" above. Concretely:
    main argument (new `wiki-init.sh project <path>` form). The
    existing `wiki-init.sh project <path> <main>` form continues to
    work. Tests cover both forms.
+9. **`wiki-init.sh` creates `inbox/`** in the directory tree
+   (alongside the existing `concepts/`, `entities/`, `queries/`,
+   `ideas/`, `raw/`, `.wiki-pending/`, `.locks/`, `.obsidian/`).
+10. **`wiki-init.sh` writes the wiki-root README** documenting drop
+    zones and the `raw/` rule (idempotent: only on first init).
+11. **Reserved-set update.** `scripts/wiki_yaml.py` and
+    `scripts/wiki-relink.py` reserved sets gain `inbox`. The legacy
+    `Clippings` entry is retired (no v2.4 wiki uses it; existing
+    wikis with empty `Clippings/` directories are untouched).
+12. **Existing wikis with files in `Clippings/`:** the v2.4 release
+    notes instruct users to `mv <wiki>/Clippings/* <wiki>/inbox/`.
+    No automatic migration script — users need to see the move and
+    confirm intent. If they don't migrate, files in `Clippings/`
+    remain visible to Obsidian (the directory is no longer reserved
+    in v2.4, so the validator MAY surface them as orphans; v2.4
+    accepts that as a one-time nudge).
 
 ### Rollback
 
@@ -1392,7 +1513,7 @@ Each leg is independently revertable:
   bugs — but those bugs predate v2.4 and aren't worse than rollback's
   starting state).
 - Raw-direct: revert the SessionStart drift-scan extension to
-  `Clippings/`. Files in `Clippings/` are silently ignored as
+  `inbox/`. Files in `inbox/` are silently ignored as
   before. `wiki ingest-now` is a separate CLI; reverting it doesn't
   affect the rest.
 - Issue reporting: revert `wiki-issue-log.sh`, `wiki-issues.sh`, and
@@ -1407,7 +1528,7 @@ between commits. Verification gate after each leg:
   `additionalContext`; subagent dispatch — loader absent.
 - After leg 2: per-cwd-prompt test (three interactive modes
   end-to-end); headless fallback test; conflict-resolution test.
-- After leg 3: drop-and-go test (Clippings/ → page); on-demand
+- After leg 3: drop-and-go test (inbox/ → page); on-demand
   `wiki ingest-now`; subagent-report move-and-ingest workflow.
 - After deep orientation + issue reporting: candidate-selection
   determinism test; issue-log atomicity test; cold-start lens test.
@@ -1496,8 +1617,11 @@ were settled:
 | JSONL or markdown for issues? | JSONL canonical, markdown rendered on demand. Per `agent-vs-machine-file-formats.md`. |
 | Should the main ingester silently reject captures with "no general kernel"? | No. An earlier brainstorm draft considered always-fork-and-let-main-reject; the user's per-cwd choice is now the single decision point. If user chose "both," both ingestions always run; the main ingester does not gate on generality. |
 | Single capture entry point or per-leg integration in agent prose? | Single entry point: `wiki capture` CLI. The agent never writes to `.wiki-pending/` directly. Resolves the prose-not-script concern raised in code review. |
-| `Clippings/` separate from `raw/` semantically? | No. `Clippings/` is the queue, `raw/` is the archive. Files transit Clippings → raw on ingest. No separate manifest. |
-| Subagent reports get a separate ingest path? | No. Subagent reports use the same Clippings drop-zone path. Main agent's job is `mv` + `wiki ingest-now`, not capture-body authoring. |
+| `inbox/` separate from `raw/` semantically? | No. `inbox/` is the queue, `raw/` is the archive. Files transit inbox → raw on ingest. No separate manifest. |
+| Subagent reports get a separate ingest path? | No. Subagent reports use the same inbox drop-zone path. Main agent's job is `mv` + `wiki ingest-now`, not capture-body authoring. |
+| Two drop zones (Clippings and inbox) or one? | One. `inbox/` covers Web Clipper, subagent reports, manual drops. Web Clipper users configure their template's "Note location" to `inbox` (per the screenshot in the design discussion). Reduces directory proliferation; one convention to remember. |
+| Is `raw/` ingester-only or can users drop there? | Ingester-write-only. README documents this. Recovery is automatic: the SessionStart hook moves any unmanifested file in `raw/` to `inbox/` and processes through the normal queue, preserving provenance. No data loss; one WARN logged. |
+| Wiki-root README auto-generated? | Yes. `wiki-init.sh` writes README.md on first init explaining drop zones, the `raw/` rule, and the Web Clipper template setup. Idempotent — only written if absent. |
 | Marker layout (where does `.wiki-config` live for project mode)? | `<cwd>/.wiki-config` is the canonical detection path; for project mode it carries `role = "project-pointer"` with `wiki = "./wiki"`; the actual project wiki is at `<cwd>/wiki/`. Eliminates the sibling-match bug. |
 | Should the resolver be interactive? | No. `wiki-resolve.sh` exits 0 with stdout, OR exits 10/11/12/13 to signal "user input needed." Prompting is `wiki-capture.sh`'s job; headless mode applies fallback rules. |
 | Index-pull lens vs. role-prompt lens? | Both. Index-pull is primary in mature wikis (>7 candidate-eligible pages). Role-prompt is primary in cold-start (≤7 pages). The role hint stays in the prompt at all times; weight in agent behavior shifts naturally. |
@@ -1535,13 +1659,23 @@ v2.4 ships when:
 - [ ] **(Automated)** First-time use with no main wiki and a single
       candidate at `~/wiki/` with `role = "main"` migrates silently;
       multiple candidates trigger interactive prompt.
-- [ ] **(Automated)** Files dropped in `Clippings/` are ingested
+- [ ] **(Automated)** Files dropped in `inbox/` are ingested
       next SessionStart with no manual capture authoring; file is
-      moved from `Clippings/` to `raw/` on commit; manifest updated.
+      moved from `inbox/` to `raw/` on commit; manifest updated.
+- [ ] **(Automated)** Unmanifested file in `raw/` is moved to
+      `inbox/` on next scan with WARN log; collision adds `.<n>`
+      suffix; final state has the file in `raw/` with proper
+      manifest entry.
+- [ ] **(Automated)** `wiki-init.sh main` creates `inbox/`
+      directory AND writes wiki-root `README.md` (idempotent on
+      re-run).
+- [ ] **(Automated)** `scripts/wiki_yaml.py` and
+      `scripts/wiki-relink.py` reserved sets contain `inbox` and
+      do not contain `Clippings`.
 - [ ] **(Automated)** Subagent-report move-and-ingest workflow:
-      `mv <file> <wiki>/Clippings/ && wiki ingest-now <wiki>` →
+      `mv <file> <wiki>/inbox/ && wiki ingest-now <wiki>` →
       page committed; main agent never wrote a capture body.
-- [ ] **(Automated)** Concurrent SessionStart with same Clippings
+- [ ] **(Automated)** Concurrent SessionStart with same inbox
       file produces exactly one capture (deterministic filename +
       atomic `set -C`).
 - [ ] **(Automated)** Ingester deep-orientation candidate selection
