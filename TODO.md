@@ -37,6 +37,46 @@ fill every field, link into the referencing plan/commit/concept page.
 
 ---
 
+## v2.5: migrate `.ingest.log` to `.ingest.jsonl` (dual-artifact pattern)
+
+```yaml
+status: deferred
+priority: p2
+effort: medium
+labels: [v2.5, format-alignment, follow-up]
+revisit_when:
+  "v2.5 planning starts, OR `.ingest.log` becomes painful (grep failures
+  due to prose-bleed, tooling that needs jq queries against ops history,
+  or test fixtures that depend on the current text format)."
+refs:
+  - docs/superpowers/specs/2026-05-05-karpathy-wiki-v2.4-executable-protocol-design.md (Deferred to v2.5 section)
+  - scripts/wiki-lib.sh (`_wiki_log` writes timestamp-prefixed text today)
+  - ~/wiki/concepts/agent-vs-machine-file-formats.md (canonical format-choice doctrine)
+```
+
+`.ingest.log` is currently a hybrid: the structured `_wiki_log` helper
+writes timestamp-prefixed text, AND ingester stdout bleeds into the same
+file as free-form prose ("Ingest complete..."). Per the wiki's own
+`concepts/agent-vs-machine-file-formats.md`, machine-write/agent-read
+event logs should be **JSONL canonical + markdown rendered on demand** —
+the same dual-artifact pattern v2.4 adopts for `.ingest-issues.jsonl`.
+
+v2.5 work:
+
+- Convert `_wiki_log` to emit JSON Lines instead of prefixed text.
+- Route the free-form ingester stdout away from `.ingest.log`. Most of
+  it is already captured into `log.md` (the agent-facing log); the
+  current `.ingest.log` bleed is accidental, not load-bearing.
+- Add `wiki ops` CLI to render `.ingest.jsonl` to markdown on demand.
+- Update test fixtures and any debug scripts that grep `.ingest.log`.
+
+Carved out of v2.4 to ship the JSONL-issue-stream pattern in isolation.
+Once v2.4's `.ingest-issues.jsonl` has lived in the wild for a release
+cycle, v2.5 applies the same pattern to the ops log with confidence
+(and reuses the same render-on-demand machinery).
+
+---
+
 ## `wiki-migrate-v2.2.sh`: regex misses inline-list `sources:` frontmatter
 
 ```yaml
