@@ -145,6 +145,51 @@ page is typically 5-20 KB. The ingester is already reading the
 capture and the schema; this is the same order of magnitude. No
 measurable spawn-time impact.
 
+## Run record (per ingestion)
+
+At the very start of your work, generate a unique `run_id` and append
+a "spawned" record to `<wiki>/.ingest-runs.jsonl`:
+
+```bash
+RUN_ID="in-$(date +%s)-$(openssl rand -hex 4 2>/dev/null || echo $$)"
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "${WIKI_ROOT}/.locks"
+{
+  flock 7
+  printf '{"run_id":"%s","capture":"%s","started_at":"%s","status":"spawned"}\n' \
+    "${RUN_ID}" "${WIKI_CAPTURE}" "${ts}" >> "${WIKI_ROOT}/.ingest-runs.jsonl"
+} 7>"${WIKI_ROOT}/.locks/ingest-runs.lock"
+```
+
+At the END of your work (success or failure), append a closing
+record:
+
+```bash
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+status="completed"  # or "failed" if you exit non-zero
+exit_code=0          # or your real exit code
+{
+  flock 7
+  printf '{"run_id":"%s","ended_at":"%s","status":"%s","exit_code":%d}\n' \
+    "${RUN_ID}" "${ts}" "${status}" "${exit_code}" >> "${WIKI_ROOT}/.ingest-runs.jsonl"
+} 7>"${WIKI_ROOT}/.locks/ingest-runs.lock"
+```
+
+The two records (spawned + closing) tie back via `run_id`. `wiki
+status` reads both files and surfaces asymmetric outcomes in `both`
+mode (a fork that has a project record but no main record is
+flagged).
+
+If the ingester crashes between the two records, the spawned record
+remains without a closing record. `wiki status` flags such records as
+"in-flight or stalled" if they're > 30 minutes old.
+
+On platforms without `flock(1)` (macOS), use the same noclobber-spin
+fallback used by `scripts/wiki-manifest-lock.sh`. The 4 KB-per-line
+JSONL discipline keeps the append atomic on POSIX even without a lock,
+but the lock prevents any partial-write contention under high
+concurrency.
+
 ## Role guardrail
 
 Read `<wiki>/.wiki-config` to determine the wiki's role:

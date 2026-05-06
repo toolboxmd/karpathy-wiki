@@ -198,3 +198,67 @@ if malformed:
     print(f"  ({malformed} malformed line(s) skipped)")
 PYEOF
 fi
+
+# Fork asymmetry (v2.4)
+forks_log="${HOME}/.wiki-forks.jsonl"
+if [[ -f "${forks_log}" && -s "${forks_log}" ]]; then
+  python3 - "${forks_log}" "${wiki}" <<'PYEOF'
+import json, os, sys
+from datetime import datetime, timedelta, timezone
+
+forks_path, target_wiki = sys.argv[1], os.path.realpath(sys.argv[2])
+cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+asymmetric = []
+
+with open(forks_path) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            fork = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        try:
+            ts = datetime.fromisoformat(fork.get("captured_at", "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if ts < cutoff:
+            continue
+        wikis = fork.get("wikis", [])
+        if target_wiki not in [os.path.realpath(w) for w in wikis]:
+            continue
+        statuses = {}
+        for w in wikis:
+            runs_log = os.path.join(w, ".ingest-runs.jsonl")
+            if not os.path.exists(runs_log):
+                statuses[w] = "missing"
+                continue
+            found_status = "spawned-no-close"
+            with open(runs_log) as rf:
+                for rline in rf:
+                    rline = rline.strip()
+                    if not rline:
+                        continue
+                    try:
+                        run = json.loads(rline)
+                    except json.JSONDecodeError:
+                        continue
+                    cap = run.get("capture", "")
+                    if cap in fork.get("captures", []) and "status" in run and run["status"] != "spawned":
+                        found_status = run["status"]
+                        break
+            statuses[w] = found_status
+        if any(s != "completed" for s in statuses.values()):
+            asymmetric.append((fork, statuses))
+
+if asymmetric:
+    print()
+    print("## Fork asymmetry (last 7 days)")
+    for fork, statuses in asymmetric:
+        print(f"  fork {fork.get('fork_id', '(no id)')}: {fork.get('title', '(no title)')}")
+        for w, s in statuses.items():
+            print(f"    {w}: {s}")
+    print("  Run `wiki ingest-now <wiki>` on incomplete sides to retry.")
+PYEOF
+fi
