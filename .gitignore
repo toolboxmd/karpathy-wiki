@@ -24,7 +24,9 @@ npm-debug.log
 
 # Per-user Claude Code settings (machine-local paths, never share)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Local scratch / brainstorming
 THOUGHTS.md
 .superpowers/
+tmp/
