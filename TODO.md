@@ -1,7 +1,7 @@
 ---
 title: karpathy-wiki — TODO / backlog
 status: living-document
-last_reviewed: 2026-04-24  # post-v2.2 ship; next audit due after 5-10 more real-session ingests
+last_reviewed: 2026-05-06  # post-v2.4 Leg 4 ship; next audit due after 5-10 more real-session ingests
 convention:
   "One ## section per issue. Each section has its own YAML frontmatter block at
   the top."
@@ -159,40 +159,6 @@ mechanically enforced rather than self-disciplined. Requires schema changes in
 `hooks/hooks.json`. The prose in v2.1 is the contract that hook must satisfy.
 This is the "real gate" the v2.1 plan reviewer called out as the ultimate fix
 for the missed-capture failure mode.
-
----
-
-## SessionStart hook injects SKILL.md content (using-superpowers pattern)
-
-```yaml
-status: deferred
-priority: p2
-effort: low
-labels: [post-mvp, architecture]
-revisit_when:
-  "Any of: (a) 3+ fresh sessions in a row where a durable trigger fires and the
-  agent does NOT invoke karpathy-wiki; (b) pattern where keyword-rich questions
-  invoke but implicit-trigger moments (research subagent return, confusion
-  resolved) fail; (c) user reports missing wiki entries where retrospective
-  shows the trigger should have fired."
-refs:
-  - ~/wiki/concepts/claude-code-skill-autoload-mechanisms.md (full revisit
-    criteria + implementation sketch)
-  - /Users/lukaszmaj/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/hooks/session-start
-    (canonical reference implementation)
-```
-
-Mirror the `superpowers:using-superpowers` pattern: `hooks/session-start` reads
-`skills/karpathy-wiki/SKILL.md` and emits its contents via
-`hookSpecificOutput.additionalContext` wrapped in `<EXTREMELY_IMPORTANT>` tags,
-so the agent reads the skill rules at session start regardless of whether it
-chooses to invoke. **CRITICAL:** must ship in the SAME COMMIT as a
-`<SUBAGENT-STOP>` block added to the top of SKILL.md — otherwise dispatched
-subagents receive the full ~455-line orchestration body in their context, making
-them loud, slow, and prone to spurious capture evaluation. Tag text: _"If you
-were dispatched as a subagent to execute a specific task unrelated to wiki
-capture or ingest, skip this skill."_ The "unrelated to wiki capture or ingest"
-qualifier is load-bearing — an ingester subagent DOES need the full skill.
 
 ---
 
@@ -479,15 +445,24 @@ Each of these is a candidate for a future ship; none block v2.3.
 ## Project-wiki auto-resolution at capture time (architectural — surfaced 2026-04-27 post-v2.3 ship)
 
 ```yaml
-status: open
+status: shipped
 priority: p1
 effort: medium
 labels: [v2.4, architecture, ingest, project-wiki]
+shipped_in: c82677b  # bin/wiki capture/use/init-main subcommands; wiki-resolve.sh in 7377a28; wiki-init-main.sh in a34be9d; wiki-use.sh in 1cce0cf
 refs:
-  - skills/karpathy-wiki/SKILL.md (lines 74-91: "When no wiki exists" auto-init algorithm)
+  - scripts/wiki-resolve.sh (non-interactive resolver, 5 exit codes)
+  - scripts/wiki-init-main.sh (silent migration + bootstrap prompts)
+  - scripts/wiki-use.sh (per-cwd mode switch: project|main|both)
+  - bin/wiki capture (calls resolver before writing to .wiki-pending/)
+  - skills/karpathy-wiki/SKILL.md (lines 74-91: "When no wiki exists" auto-init algorithm — now executable)
   - scripts/wiki-lib.sh (lines 47-65: wiki_root_from_cwd walks up looking for .wiki-config)
   - scripts/wiki-init.sh (supports project mode: `wiki-init.sh project ./wiki ~/wiki`)
 ```
+
+**SHIPPED in v2.4 Leg 2 (2026-05-06).** The "executable protocol" theme: SKILL.md prose is now backed by `wiki-resolve.sh` which fires at capture time. `bin/wiki capture` invokes the resolver; `wiki use project|main|both` lets the user override; `wiki init-main` bootstraps the main pointer. Original gap analysis preserved below.
+
+---
 
 **Bug surfaced post-v2.3-ship.** The architecture supports project-wiki-in-cwd + main-wiki-in-`$HOME` (SKILL.md describes the three-case algorithm; `wiki-init.sh project` mode exists; `wiki_root_from_cwd` walks up looking for `.wiki-config`). But in practice agents always write captures to `$HOME/wiki/` even when in a project directory.
 
@@ -527,14 +502,23 @@ Capture and spawn-ingester scripts call this resolver instead of hardcoding `$HO
 ## Raw-direct ingest path (architectural — surfaced 2026-04-27 post-v2.3 ship)
 
 ```yaml
-status: open
+status: shipped
 priority: p1
 effort: medium
 labels: [v2.4, architecture, ingest]
+shipped_in: 7faeeed  # SessionStart inbox/ scan + raw-direct capture + raw-recovery; manifest lock in d23a53b; reserved-set update in 715925c; ingest-now in ff91b06
 refs:
+  - hooks/session-start (inbox/ scan, raw-direct capture emission, raw-recovery)
+  - scripts/wiki-manifest-lock.sh (cross-platform lock + atomic manifest rename)
+  - scripts/wiki-ingest-now.sh (on-demand drift+drain)
+  - bin/wiki ingest-now (CLI entry point)
   - skills/karpathy-wiki/SKILL.md (line 121: "user adds a file to raw/" trigger)
   - skills/karpathy-wiki/SKILL.md (line 502: Iron Rule 5 "Never modify files in raw/")
 ```
+
+**SHIPPED in v2.4 Leg 3 (2026-05-06).** Files dropped into `inbox/` (the new unified drop zone, replacing reserved `Clippings/`) are auto-ingested without a fabricated wrapper capture: the SessionStart hook emits a `capture_kind: raw-direct` capture pointing at the absolute file path; the ingester reads the file directly and generates a wiki page. Files accidentally dropped in `raw/` are recovered to `inbox/` under the manifest lock. Original gap analysis preserved below.
+
+---
 
 **Bug surfaced post-v2.3-ship.** The capture-driven ingest architecture conflates two distinct semantic flows:
 
@@ -563,3 +547,24 @@ Open design questions to settle in the v2.4 brainstorm:
 **Why this didn't ship in v2.3:** the bug surfaced AFTER v2.3 shipped, in conversation about Obsidian Clipper behavior. The architectural fix is non-trivial (new ingest path, new tests, new log verb, design choices about agent involvement). Shipping it would have been scope creep.
 
 **What v2.3 ships in the meantime:** the misleading "user adds a file to raw/" trigger remains in SKILL.md. Pragmatically the agent can still read a Clippings file and write a thin capture, but it's a workaround, not the right architecture. v2.4 fixes properly.
+
+---
+
+## SessionStart hook injects SKILL.md content (using-superpowers pattern)
+
+```yaml
+status: shipped
+priority: p2
+effort: low
+labels: [post-mvp, architecture, v2.4]
+shipped_in: cca22c5  # plus skill split: d72fa75 (using-karpathy-wiki loader), f349439 (capture skill), 58284a0 (ingest skill), c0757db (deprecate legacy skill)
+refs:
+  - hooks/session-start (step 2: loader injection via hookSpecificOutput.additionalContext)
+  - skills/using-karpathy-wiki/SKILL.md (the loader body that gets injected)
+  - skills/karpathy-wiki-capture/SKILL.md (main agent on-demand)
+  - skills/karpathy-wiki-ingest/SKILL.md (spawned ingester only)
+  - skills/karpathy-wiki/SKILL.md (legacy, marked DEPRECATED in v2.4)
+  - ~/wiki/concepts/claude-code-skill-autoload-mechanisms.md (revisit criteria + implementation sketch)
+```
+
+**SHIPPED in v2.4 Leg 1 (2026-05-06).** The session-start hook reads `skills/using-karpathy-wiki/SKILL.md` and emits its body wrapped in `<EXTREMELY_IMPORTANT>` tags as `hookSpecificOutput.additionalContext`, so the agent reads the wiki rules in every conversation regardless of whether it chooses to invoke. The legacy `skills/karpathy-wiki/SKILL.md` was split into three focused skills (`using-karpathy-wiki` loader, `karpathy-wiki-capture` for the main agent, `karpathy-wiki-ingest` for the spawned ingester) so subagents and ingesters get only the surface they need. Subagent fork-bomb guard already in place from 0.2.4 prevents the loader from re-firing inside dispatched subagents.
