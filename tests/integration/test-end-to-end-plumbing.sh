@@ -85,6 +85,8 @@ test_drift_filenames_with_spaces_handled_correctly() {
 
   # Drop a raw file with spaces in its name (no manifest entry yet).
   echo "test content" > "${WIKI}/raw/File With Spaces In Name.md"
+  # v2.4: backdate so the 5-second mtime defer doesn't apply.
+  touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/File With Spaces In Name.md"
 
   # Run hook (NOT inside an ingester).
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
@@ -124,6 +126,8 @@ test_drift_capture_body_clears_200_byte_floor() {
   setup
 
   echo "drift body content" > "${WIKI}/raw/drift-body-test.md"
+  # v2.4: backdate so the 5-second mtime defer doesn't apply.
+  touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/drift-body-test.md"
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
   sleep 1
 
@@ -158,6 +162,8 @@ test_drift_idempotent_under_concurrent_session_starts() {
   setup
 
   echo "drift-source" > "${WIKI}/raw/concurrent-test.md"
+  # v2.4: backdate so the 5-second mtime defer doesn't apply.
+  touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/concurrent-test.md"
 
   # Fire 5 hooks concurrently and wait for them all.
   local i
