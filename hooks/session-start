@@ -77,8 +77,13 @@ if [[ -f "${LOADER_PATH}" ]]; then
     # Cursor: snake_case, top-level.
     printf '{"additional_context":"%s"}' "${session_context}"
   elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -z "${COPILOT_CLI:-}" ]]; then
-    # Claude Code: nested under hookSpecificOutput.
-    printf '{"hookSpecificOutput":{"additionalContext":"%s"}}' "${session_context}"
+    # Claude Code: nested under hookSpecificOutput. As of the schema update
+    # rolled out around 2026-05, hookEventName is REQUIRED inside
+    # hookSpecificOutput — sessions error out otherwise:
+    #   "Hook JSON output validation failed — hookSpecificOutput is missing
+    #    required field 'hookEventName'"
+    # Cursor and Copilot/SDK shapes do NOT need this field.
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}' "${session_context}"
   else
     # Copilot CLI (sets COPILOT_CLI=1) or unknown harness — SDK standard.
     printf '{"additionalContext":"%s"}' "${session_context}"
