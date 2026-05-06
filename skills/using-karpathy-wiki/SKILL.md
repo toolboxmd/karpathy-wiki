@@ -20,15 +20,41 @@ When you write a capture, run an ingest, or answer from the wiki, prefix your re
 
 This is the ONLY wiki-mechanics text the user sees. Do not narrate orientation, capture authoring, spawn mechanics, or state-machine progress. Do all the wiki work silently after the announce line.
 
+## Instruction priority
+
+If the user's `CLAUDE.md` / `AGENTS.md` or an explicit user instruction conflicts with the rules below, follow the user. The wiki rules override the default system prompt where they conflict, but **never** override the user's direct instructions.
+
 ## Iron laws
 
 ```
 NO WIKI WRITE IN THE FOREGROUND
 NO PAGE EDIT WITHOUT READING THE PAGE FIRST
 NO SKIPPING A CAPTURE BECAUSE "IT DOESN'T LOOK WIKI-SHAPED"
+NO ANSWERING ANY USER QUESTION WITHOUT ORIENTING FIRST
 ```
 
 Captures go to `<wiki>/.wiki-pending/<timestamp>-<slug>.md`. A detached `claude -p` ingester reads the capture and writes the wiki page in the background.
+
+## Orient before answering — the read protocol
+
+For ANY user message that is asking a QUESTION (vs requesting a code edit, file operation, or pure command), you must orient on the wiki BEFORE drafting the answer. Pre-classifying a question as "general knowledge" or "not wiki-relevant" is the forbidden rationalization Iron Rule 4 was written to forbid.
+
+**Cost framing.** Orientation is a once-per-session investment:
+
+- First wiki-eligible question of the session: read `<wiki>/schema.md` and the relevant `<wiki>/<category>/_index.md` (or root `<wiki>/index.md` for cross-category questions). Two file reads, ~10-30 KB total.
+- Subsequent questions in the same session: the schema and index are already in your working memory; the marginal check is a candidate-count scan against the (already-read) `_index.md`. Near-zero cost.
+
+Load `karpathy-wiki-read/SKILL.md` for the deterministic 6-step ladder (orient → count candidates → inline-read OR subagent OR web-search → cite). Do NOT skip the load because "this question seems trivial" — the iron rule is unconditional.
+
+**Resist-table for the read protocol** (see also the capture-side resist-table in `karpathy-wiki-capture/SKILL.md`):
+
+| Rationalization | Reality |
+|---|---|
+| "This is general knowledge / I know this from training" | Pre-classifying questions as wiki-irrelevant is the forbidden rationalization. The wiki's scope is whatever has been captured. You don't know without checking. Orient. |
+| "This question is trivial; reading two files is overkill" | Orientation is once per session. After the first orient, the marginal cost on the next question is near-zero (a re-scan of the already-read `_index.md`). The "trivial question" carve-out is the same drift that dropped the read protocol in v2.4. |
+| "Pure syntax question, the wiki won't cover this" | You cannot know without checking. If `_index.md` has zero matches, the read skill's Step F handles it (web search + capture the gap). The orient itself is what proves there are no candidates. |
+| "User asked me to fix a bug, not answer a question" | Code-edit requests don't trigger the read protocol; question-shaped requests do. If unsure (e.g. "why isn't this working" — could be a question OR a debug request), orient. |
+| "I already oriented earlier this session, I'll skip this time" | Correct! Re-use the schema and index you already have. Run only the candidate-count check on the new question's terms. The protocol's deterministic part (Step B) is the only thing that re-runs per question. |
 
 ## TRIGGER — when to capture
 
@@ -66,7 +92,7 @@ mv <subagent-report-path> <wiki>/inbox/<basename>
 wiki ingest-now <wiki>          # or wait for next SessionStart
 ```
 
-For "what does the wiki know about X" questions: load `karpathy-wiki-capture/SKILL.md` and read its orientation section. Do NOT load `karpathy-wiki-ingest/SKILL.md` (that's for the spawned ingester only).
+For ANY user question (including "what does the wiki know about X" questions, but also any other question per Iron Rule 4): load `karpathy-wiki-read/SKILL.md` and run the deterministic 6-step ladder. Do NOT load `karpathy-wiki-ingest/SKILL.md` — that's for the spawned ingester only and contains write-side machinery the main agent never needs.
 
 ## Mode change
 
@@ -83,6 +109,7 @@ Confirm the change in one line; do not over-narrate.
 The full operational details — capture format, body-size floors, spawn mechanics, ingester orientation, page format, manifest protocol, commit conventions — live in the on-demand skills:
 
 - `skills/karpathy-wiki-capture/SKILL.md` — load when you are about to write a capture.
+- `skills/karpathy-wiki-read/SKILL.md` — load when you are about to answer a user question (Iron Rule 4).
 - `skills/karpathy-wiki-ingest/SKILL.md` — loaded by the spawned ingester via its prompt; the main agent never reads this.
 
 If you do not know what to do at a particular step, load the on-demand skill — do not invent.
