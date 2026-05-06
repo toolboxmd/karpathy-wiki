@@ -20,9 +20,15 @@ bash "${INIT}" main "${MAIN}" >/dev/null
 sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${MAIN}/.wiki-config"
 rm -f "${MAIN}/.wiki-config.bak"
 
+# Hermetic $HOME — required so bin/wiki capture's silent-bootstrap branch
+# (added in 0.2.7) doesn't read the developer's real ~/wiki when this test
+# unsets WIKI_POINTER_FILE.
+FAKE_HOME="${TESTDIR}/home"
+mkdir -p "${FAKE_HOME}"
+export HOME="${FAKE_HOME}"
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
-export HOME_FOR_ORPHANS="${TESTDIR}/home"
+export HOME_FOR_ORPHANS="${FAKE_HOME}"
 export WIKI_ORPHANS_DIR="${HOME_FOR_ORPHANS}/.wiki-orphans"
 export CLAUDE_HEADLESS=1  # Force headless mode in tests
 

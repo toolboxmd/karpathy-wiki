@@ -111,7 +111,28 @@ case "${sub}" in
         # Success — proceed with returned wikis
         ;;
       10)
-        # Pointer missing
+        # Pointer missing.
+        #
+        # Silent auto-bootstrap (0.2.7): pre-existing wiki users (people who
+        # built ~/wiki/ before the pointer mechanism shipped) shouldn't see
+        # a prompt or get an orphan on their first post-upgrade capture.
+        # If $HOME/wiki is a structurally-correct main wiki, infer the
+        # answer from on-disk state and silently write the pointer, then
+        # re-exec capture so the resolver runs cleanly with the new pointer.
+        # If any guard fails, fall through to the existing headless-orphan /
+        # interactive-prompt flow unchanged.
+        bootstrap_candidate="${HOME}/wiki"
+        bootstrap_pointer="${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}"
+        if [[ ! -e "${bootstrap_pointer}" \
+              && -f "${bootstrap_candidate}/.wiki-config" \
+              && -f "${bootstrap_candidate}/schema.md" \
+              && -f "${bootstrap_candidate}/index.md" \
+              && -d "${bootstrap_candidate}/.wiki-pending" ]] \
+           && grep -q '^role = "main"' "${bootstrap_candidate}/.wiki-config"; then
+          printf '%s\n' "${bootstrap_candidate}" > "${bootstrap_pointer}"
+          echo >&2 "wiki capture: bootstrapped ${bootstrap_pointer} → ${bootstrap_candidate}"
+          exec bash "${BASH_SOURCE[0]}" capture --title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}"
+        fi
         if [[ "${is_headless}" == 1 ]]; then
           if [[ -f "$(pwd)/.wiki-config" ]]; then
             # Cwd has its own config — proceed with cwd's wiki only,
