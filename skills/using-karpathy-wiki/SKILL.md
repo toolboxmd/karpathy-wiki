@@ -46,7 +46,7 @@ For ANY user message that is asking a QUESTION (vs requesting a code edit, file 
 
 Load `karpathy-wiki-read/SKILL.md` for the deterministic 6-step ladder (orient → count candidates → inline-read OR subagent OR web-search → cite). Do NOT skip the load because "this question seems trivial" — the iron rule is unconditional.
 
-**Resist-table for the read protocol** (see also the capture-side resist-table in `karpathy-wiki-capture/SKILL.md`):
+**Resist-table for the read protocol** (capture-side resist-table is below, after TRIGGER):
 
 | Rationalization | Reality |
 |---|---|
@@ -80,6 +80,18 @@ Also TRIGGER (orientation + citation): the user asks "what do we know about X" /
 - Questions clearly outside any wiki's scope.
 
 Do NOT skip based on tone or shape. "This looks like casual chat", "there's no code here", "this isn't a wiki context" are forbidden rationalizations. If new factual information appeared, capture. Tone is not the trigger.
+
+**Resist-table for capture triggers.** When you're about to skip a capture, check these red flags. Skipped captures are invisible — the user cannot observe them, so the discipline is yours alone.
+
+| Rationalization | Reality |
+|---|---|
+| "The user will remember this" | The user will not remember. That's the whole point. |
+| "It's too trivial for the wiki" | If a TRIGGER fires, capture. Lint and the ingester filter noise later. |
+| "I'll capture it later" | Later means never. Capture now — invocation is milliseconds. |
+| "I'm in the middle of another task" | Capture is non-blocking; `bin/wiki capture` writes a file and returns. The ingester runs detached. |
+| "The user didn't ask me to save this" | Triggers fire automatically. No explicit user request is required — that's the loader's contract. |
+| "I don't have a memory tool available" | This skill IS the memory tool. The loader's presence is the trigger. |
+| "The file is already in a good place" | Filing ≠ capturing. Location is not organization. The capture extracts the durable concept from the file's context; the file alone doesn't. |
 
 ## What to do when a trigger fires
 
