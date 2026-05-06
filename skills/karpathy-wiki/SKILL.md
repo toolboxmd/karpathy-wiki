@@ -1,15 +1,14 @@
 ---
 name: karpathy-wiki
 description: |
-  Load at the start of EVERY conversation. Entry is non-negotiable — once loaded, the skill's rules apply for the whole session.
+  DEPRECATED in v2.4 — split into three focused skills:
+  - `using-karpathy-wiki` (auto-loaded by SessionStart hook; loader)
+  - `karpathy-wiki-capture` (main agent, on-demand)
+  - `karpathy-wiki-ingest` (spawned ingester only)
 
-  TRIGGER when (immediate capture): any research agent or research subagent completes or returns a file; new factual information is found (web search result, docs, external fact surfaced in conversation); session resolves a confusion; a gotcha, quirk, or non-obvious behavior is observed; a pattern is validated (approaches compared, one picked with reasons); an architectural decision is made with rationale; user pastes a URL or document to study; `raw/` has unprocessed files; user says "add to wiki" / "remember this" / "wiki it" / "save this"; two claims contradict each other.
+  This skill's body is preserved for the v2.4 transition. The body content has been migrated to the three new skills above; new agents should not invoke this skill directly. Removal is scheduled for a separate cleanup commit after v2.4 ships and the new skills are verified working in the wild.
 
-  TRIGGER when (orientation + citation): the user asks "what do we know about X" / "how do we handle Y" / "what did we decide about Z" / "have we seen this before", or any question the wiki might cover.
-
-  SKIP: routine file edits, syntax lookups, one-off debugging with trivial root causes, time-sensitive data that must be fetched fresh, or questions clearly outside any wiki's scope.
-
-  Do NOT skip based on tone or shape — "this looks like casual chat", "there's no code here", "this isn't a wiki context" are forbidden rationalizations. If new factual info appeared, capture. Tone is not the trigger.
+  TRIGGER (legacy redirect): Same triggers as `using-karpathy-wiki`. If you are reading this skill, follow `using-karpathy-wiki/SKILL.md` instead.
 metadata:
   hermes:
     config:
