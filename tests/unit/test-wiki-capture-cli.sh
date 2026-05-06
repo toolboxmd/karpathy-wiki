@@ -65,13 +65,15 @@ mkdir -p "${SCRATCH}"
 [[ -d "${WIKI_ORPHANS_DIR}" ]] || fail "no orphan dir created"
 ls "${WIKI_ORPHANS_DIR}/" | grep -q '\.md$' || fail "no orphan file in $WIKI_ORPHANS_DIR/"
 
-# Case 6: headless + unconfigured cwd + valid pointer → auto-select main-only
+# Case 6: headless + unconfigured cwd + valid pointer → abort with orphan
+# (0.2.9 — was silent auto-select main-only pre-0.2.9; now the user must
+# explicitly choose project|main|both via `wiki use`).
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 SCRATCH2="${TESTDIR}/scratch2"
 mkdir -p "${SCRATCH2}"
-( cd "${SCRATCH2}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "AutoMain" --kind chat-only --suggested-action create ) >/dev/null \
-  || fail "headless + valid pointer + unconfigured should auto-select main-only"
-[[ -f "${SCRATCH2}/.wiki-mode" ]] || fail "auto-select main-only did not write .wiki-mode"
-[[ "$(cat "${SCRATCH2}/.wiki-mode")" == "main-only" ]] || fail ".wiki-mode != main-only"
+( cd "${SCRATCH2}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "AutoMain" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
+  && fail "headless + valid pointer + unconfigured should abort, not silently auto-select main-only"
+[[ ! -f "${SCRATCH2}/.wiki-mode" ]] || fail "abort path must not write .wiki-mode (was: $(cat "${SCRATCH2}/.wiki-mode" 2>/dev/null))"
+ls "${WIKI_ORPHANS_DIR}/" | grep -q '\.md$' || fail "no orphan written for unconfigured-cwd abort"
 
 echo "PASS: bin/wiki capture body input + headless fallback + orphan preservation"

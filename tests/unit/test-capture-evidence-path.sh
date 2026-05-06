@@ -50,6 +50,10 @@ echo "${MAIN}" > "${FAKE_HOME}/.wiki-pointer"
 
 WORKDIR="${TMP}/work"
 mkdir -p "${WORKDIR}"
+# 0.2.9: bin/wiki capture aborts on unconfigured headless cwd. Configure
+# the workdir explicitly so the cases below exercise the evidence-path
+# branch, not the unconfigured-cwd abort branch.
+echo "main-only" > "${WORKDIR}/.wiki-mode"
 
 run_capture() {
   # Args: extra capture flags via positional. Body via stdin.

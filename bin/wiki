@@ -192,22 +192,32 @@ case "${sub}" in
         fi
         ;;
       11)
-        # Cwd unconfigured
+        # Cwd unconfigured.
         if [[ "${is_headless}" == 1 ]]; then
-          # Read pointer to decide fallback
+          # Read pointer to decide fallback message.
           ptr=$(cat "${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}" 2>/dev/null | tr -d '[:space:]')
           if [[ -z "${ptr}" || "${ptr}" == "none" ]]; then
-            orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
-              --title "${title}" \
-              --reason "headless: cwd unconfigured AND pointer = none/missing" \
-              --body-file "${body_buf}")"
-            echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
-            exit 1
+            reason="headless: cwd unconfigured AND pointer = none/missing"
+          else
+            # 0.2.9: previously silently auto-selected main-only and wrote
+            # <cwd>/.wiki-mode. That stole a choice (project|main|both) the
+            # user never got to make. Now we abort the same way the other
+            # three abort paths do — body to orphans, nudge on stderr, exit
+            # non-zero. The agent surfaces the choice to the user, the user
+            # runs `wiki use ...`, the agent re-captures.
+            reason="headless: cwd unconfigured; user must choose mode (wiki use project|main|both)"
           fi
-          # Auto-select main-only
-          echo "main-only" > "$(pwd)/.wiki-mode"
-          echo >&2 "wiki capture: headless auto-selected main-only for cwd"
-          resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0
+          orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
+            --title "${title}" \
+            --reason "${reason}" \
+            --body-file "${body_buf}")"
+          echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
+          echo >&2 "wiki capture: cwd unconfigured. Run one of:"
+          echo >&2 "  wiki use project   # captures stay in this repo (./wiki/)"
+          echo >&2 "  wiki use main      # captures go to the main wiki"
+          echo >&2 "  wiki use both      # fork to both"
+          echo >&2 "Then re-capture (pipe the body again or use --body-file ${orphan})."
+          exit 1
         else
           # Interactive: prompt user for project | main | both
           # (Implementation: read from /dev/tty, persist via wiki-use.sh,

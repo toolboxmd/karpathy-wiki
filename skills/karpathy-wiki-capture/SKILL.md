@@ -126,6 +126,30 @@ Confirm in one line. The mode is persisted in `<cwd>/.wiki-config`
 (project or both) or `<cwd>/.wiki-mode` (main-only). See
 `references/capture-schema.md` and the v2.4 spec for details.
 
+## Cwd unconfigured (0.2.9)
+
+If `bin/wiki capture` aborts with stderr containing `cwd unconfigured`
++ a `wiki use project|main|both` nudge, the cwd has no `.wiki-config`
+or `.wiki-mode`. The body is preserved at the orphan path printed in
+the same stderr. Do NOT silently re-route or auto-pick — surface the
+choice to the user verbatim:
+
+> "This directory isn't configured for the wiki yet. Should this
+> capture go to: (a) a project wiki at `./wiki/` (scoped to this
+> repo), (b) the main wiki at `~/wiki/` (cross-project), or (c) both?"
+
+After the user picks, run `wiki use project|main|both` and re-capture
+either by re-piping the body or by passing the orphan path:
+
+```bash
+bin/wiki capture --title "..." --kind chat-only \
+  --suggested-action create --body-file <orphan-path>
+```
+
+Pre-0.2.9 the CLI silently auto-selected `main-only` and wrote
+`<cwd>/.wiki-mode`, stealing the choice from the user. The new abort
+makes the choice explicit.
+
 ## Order matters: reply first, then capture
 
 Reply to the user FIRST. The user is waiting; capture mechanics are

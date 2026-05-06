@@ -51,8 +51,7 @@ out=$(echo "${body}" | \
   WIKI_POINTER_FILE="${FAKE_HOME}/.wiki-pointer" \
   WIKI_ORPHANS_DIR="${TMP}/orphans" \
   WIKI_CAPTURE=1 \
-  bash -c "cd '${WORKDIR}' && '${WIKI}' capture --title 'T' --kind chat-only --suggested-action create" 2>&1 || true)
-rc=$?
+  bash -c "cd '${WORKDIR}' && '${WIKI}' capture --title 'T' --kind chat-only --suggested-action create" 2>&1) && rc=0 || rc=$?
 
 # Must exit non-zero (today's bug: silent auto-select makes it exit 0).
 if [[ "${rc}" == 0 ]]; then

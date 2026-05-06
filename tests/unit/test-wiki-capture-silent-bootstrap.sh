@@ -43,22 +43,26 @@ BODY=$(printf 'A real chat-only body that comfortably exceeds 1500 bytes.\n%.0s'
 
 # ---------------------------------------------------------------------------
 # Case 1 (the headline scenario): pointer missing, but $HOME/wiki is a
-# structurally-correct main wiki → silent bootstrap fires → capture succeeds
-# without any orphan written.
+# structurally-correct main wiki. Silent bootstrap fires → ~/.wiki-pointer
+# gets written. Per 0.2.9 the capture ITSELF aborts with an orphan because
+# the cwd is unconfigured (the user must still pick project|main|both via
+# `wiki use`); pre-0.2.9 this auto-selected main-only silently. The
+# bootstrap value is preserved (the pointer survives across runs); only
+# the silent mode-selection is removed.
 # ---------------------------------------------------------------------------
 SCRATCH1="${TESTDIR}/scratch1"
 mkdir -p "${SCRATCH1}"
 ( cd "${SCRATCH1}" && echo "${BODY}" | bash "${WIKI_BIN}" capture \
-    --title "PointerBootstrap" --kind chat-only --suggested-action create ) >/dev/null \
-  || fail "case 1: silent bootstrap should make capture succeed"
+    --title "PointerBootstrap" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
+  && fail "case 1 (post-0.2.9): bootstrap + unconfigured cwd should abort with orphan"
 [[ -f "${WIKI_POINTER_FILE}" ]] \
-  || fail "case 1: ~/.wiki-pointer should have been silently created"
+  || fail "case 1: ~/.wiki-pointer should have been silently created by the bootstrap"
 [[ "$(cat "${WIKI_POINTER_FILE}")" == "${FAKE_HOME}/wiki" ]] \
   || fail "case 1: pointer content should be ${FAKE_HOME}/wiki, got '$(cat "${WIKI_POINTER_FILE}")'"
-ls "${FAKE_HOME}/wiki/.wiki-pending/" | grep -q '\.md$' \
-  || fail "case 1: capture should have landed in main wiki .wiki-pending/"
-[[ ! -d "${WIKI_ORPHANS_DIR}" ]] \
-  || fail "case 1: no orphan should have been written when bootstrap succeeds"
+[[ ! -f "${SCRATCH1}/.wiki-mode" ]] \
+  || fail "case 1: abort path must not write .wiki-mode (was: $(cat "${SCRATCH1}/.wiki-mode" 2>/dev/null))"
+ls "${WIKI_ORPHANS_DIR}/" 2>/dev/null | grep -q '\.md$' \
+  || fail "case 1: body should be preserved as orphan"
 
 # ---------------------------------------------------------------------------
 # Case 2: pointer missing AND no $HOME/wiki at all → fall through to
