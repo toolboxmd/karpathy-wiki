@@ -40,14 +40,21 @@ fill every field, link into the referencing plan/commit/concept page.
 ## 0.2.9: in-repo project-wiki — prompt user for tracking choice
 
 ```yaml
-status: open
+status: partial
 priority: p1
 effort: low
 labels: [0.2.9, auto-init, ux, real-session-finding]
+shipped_in_part:
+  - 84e77b2  # bin/wiki capture: headless + cwd unconfigured now aborts
+             # with orphan + nudge instead of silent main-only auto-select.
+             # Covers the capture-time half of the silent-default problem.
+             # The init-time half (wiki-init.sh branch 2 inside an
+             # existing git tree) is still open below.
 refs:
   - scripts/wiki-init.sh:173-177  # nested-git auto-prevention
   - skills/using-karpathy-wiki/SKILL.md  # auto-init "no prompts" rule
   - tmp/skill-v1-6ce0c77.md:42-57  # original auto-init cascade
+  - bin/wiki:194-225  # capture-time abort path (shipped 84e77b2)
 ```
 
 When auto-init branch 2 fires (cwd is inside an existing git-tracked
