@@ -118,11 +118,16 @@ New per-wiki state file:
 <wiki>/.ingest-issues.jsonl               # append-only, machine-readable
 ```
 
-New per-cwd marker file (created when user picks main-only or both):
+New per-cwd marker file (created only when user picks main-only):
 
 ```
-<cwd>/.wiki-mode                          # contents: "main-only" or "both"
+<cwd>/.wiki-mode                          # contents: "main-only" (only legal value in v2.4)
 ```
+
+Note: forking to main is encoded as `fork_to_main = true` on
+`.wiki-config`, NOT as a `.wiki-mode = both` value. There is no
+`.wiki-mode = both`. See "Three-state model" and "Marker layout"
+below.
 
 New per-user pointer file:
 
@@ -170,10 +175,31 @@ the SessionStart hook:
 `hookSpecificOutput.additionalContext` containing the loader's body
 wrapped in `<EXTREMELY_IMPORTANT>` tags.
 
-The loader-injection step runs **before** the existing drift-scan and
-drain steps. The `WIKI_CAPTURE` fork-bomb guard already at the top of
-the hook (skips the hook entirely when running inside a spawned
-ingester) handles subagent re-entry.
+#### Hook execution order (canonical)
+
+The hook body runs steps in this order:
+
+1. **Subagent / ingester fork-bomb guard.** If `WIKI_CAPTURE` OR
+   `CLAUDE_AGENT_PARENT` is set, exit 0 immediately. Subagent and
+   spawned-ingester contexts skip the hook entirely.
+2. **Loader injection.** Emit
+   `hookSpecificOutput.additionalContext` containing the loader's
+   body wrapped in `<EXTREMELY_IMPORTANT>` tags. This step runs
+   regardless of whether a wiki exists at cwd — the loader covers
+   both "wiki here" and "no wiki here" cases (the loader's prose
+   tells the agent what to do in either state).
+3. **Wiki resolution (walk-up).** Call `wiki_root_from_cwd`
+   (existing behavior, walks up from cwd). If no wiki found, the
+   hook is done — return without running steps 4-6.
+4. **Drift scan** of `<wiki>/inbox/` and `<wiki>/raw/` (extended
+   from existing behavior).
+5. **Drain** pending captures.
+6. **Reclaim** stale `.processing` files.
+
+Steps 4-6 only run when a wiki was found at step 3. Step 2 always
+runs (modulo step 1's guard). The loader is the agent-facing
+contract; the drift-scan + drain are wiki-housekeeping that only
+makes sense when a wiki exists.
 
 #### Hook resolution scope (carve-out from v2.4 cwd-only rule)
 
@@ -187,31 +213,24 @@ from cwd) for its own resolution, because:
   wiki to drift-scan and drain; cwd-only would silently disable
   drift-scan for these users — a behavior regression with no
   migration aid.
-- The hook's job is observability, not authoring. There's no fork
-  decision to make at session start; the hook scans whatever single
-  wiki it's currently associated with.
-
-Concretely, the hook continues to call `wiki_root_from_cwd` (existing
-behavior, walk-up). If found, it scans that wiki's `inbox/` and
-`raw/`. If not found, the hook exits silently (existing behavior, no
-change).
+- The hook's job (steps 3-6) is observability, not authoring.
+  There's no fork decision to make at session start; the hook scans
+  whatever single wiki the walk-up locates.
 
 #### Loader injection guard
 
-The loader is emitted as `additionalContext` only when ALL of these
-hold:
+The loader is emitted (step 2 above) only when BOTH of these hold:
 
 - `WIKI_CAPTURE` env var is unset (we are NOT inside a spawned
   ingester).
 - `CLAUDE_AGENT_PARENT` env var is unset (we are NOT a subagent
   dispatched by another agent).
 
-If either is set, the hook emits no `additionalContext` at all
-(simpler than emitting a stripped-down version with only
-`<SUBAGENT-STOP>`). Subagent contexts therefore never see the
-loader; the `<SUBAGENT-STOP>` block in the loader body is a defensive
-backstop for cases where the hook environment doesn't propagate
-`CLAUDE_AGENT_PARENT` correctly.
+If either is set, step 1's early exit fires before step 2 runs, so
+the hook emits no `additionalContext` at all. Subagent contexts
+therefore never see the loader; the `<SUBAGENT-STOP>` block in the
+loader body is a defensive backstop for cases where the hook
+environment doesn't propagate `CLAUDE_AGENT_PARENT` correctly.
 
 The `WIKI_CAPTURE` env var is set by `wiki-spawn-ingester.sh` on the
 headless worker's environment. `CLAUDE_AGENT_PARENT` is the
@@ -220,13 +239,16 @@ Code doesn't natively set this env var, the plugin's Agent-tool
 wrapper sets it on subagent dispatch (out of v2.4 scope, but the env
 var remains the contract).
 
-If the cwd has no wiki (and is not under one), the hook still emits
-the loader for general agent awareness — the loader's prose handles
-the "no wiki here" case by saying "if a wiki-worthy moment arises in
-this directory, run `bin/wiki capture` to be prompted for setup."
-This catches the case where a user starts an agent in a fresh
-project intending to use the wiki: the agent has the loader rules
-loaded and knows what to do when a trigger fires.
+#### No-wiki case (rationale for always-emit-loader)
+
+The loader is emitted at step 2 even when no wiki exists at or
+under cwd. This is intentional: a user starting an agent in a fresh
+project intending to use the wiki has the loader rules loaded and
+knows what to do when a trigger fires. The loader's body explicitly
+covers the "no wiki here" case ("if a wiki-worthy moment arises in
+this directory, run `bin/wiki capture` to be prompted for setup").
+The drift-scan and drain steps (4-6) skip cleanly because there's
+no wiki to scan.
 
 ### Skill split
 
@@ -373,8 +395,12 @@ read $HOME/.wiki-pointer:
   - missing                       → exit 10
   - contains "none"               → main_wiki = ""
   - contains <path>:
-    - <path>/.wiki-config exists  → main_wiki = <path>
-    - else                        → exit 10 (broken pointer; re-bootstrap)
+    - <path>/.wiki-config missing → exit 10 (broken pointer; re-bootstrap)
+    - <path>/.wiki-config role != "main" → exit 10 (pointer target not a main wiki)
+    - <path> missing schema.md / index.md / .wiki-pending/ → exit 14
+                                  (half-built main wiki at pointer target;
+                                   needs `wiki-init.sh main <path>` re-run)
+    - else                        → main_wiki = <path>
 
 # Read cwd config(s). Both files present is itself a conflict.
 config_present  = exists(cwd/.wiki-config)
@@ -589,14 +615,20 @@ Headless fallback rules, picked to be safe-by-default:
   use main-only as default; write `<cwd>/.wiki-mode = main-only`. Log
   warning *"headless mode auto-selected main-only for cwd; user can
   override with `wiki use project|both`."*
-- Resolver exit 12 (config requests fork but no main) → abort with
-  explicit error and orphan-preservation. The user's `.wiki-config`
-  needs editing.
-- Resolver exit 13 (conflicting markers) → abort with explicit
-  error and orphan-preservation. Requires manual reconciliation.
-- Resolver exit 14 (half-built wiki) → abort with explicit error
-  pointing at the missing files; orphan-preserve the body. The
-  user's wiki directory is not v2.4-shaped and needs a re-init.
+- Resolver exit 12 (cwd requires a main wiki — `.wiki-mode =
+  main-only` OR `.wiki-config` with `fork_to_main = true` — but
+  `~/.wiki-pointer` is `none` or invalid) → abort with explicit
+  error and orphan-preservation. The user's pointer needs setting
+  or the per-cwd config needs editing.
+- Resolver exit 13 (conflicting markers — both `.wiki-config` AND
+  `.wiki-mode` present at cwd) → abort with explicit error and
+  orphan-preservation. Requires manual reconciliation (`rm` one of
+  the markers).
+- Resolver exit 14 (half-built wiki — either cwd or pointer-target
+  missing required files) → abort with explicit error naming the
+  missing files and the path; orphan-preserve the body. The user's
+  wiki directory is not v2.4-shaped and needs `wiki-init.sh` re-run
+  on the affected path.
 
 The orphan preservation step is what prevents capture loss in
 headless contexts: the body is never thrown away, only set aside for
@@ -653,10 +685,11 @@ project wiki here,' 'main only,' 'switch to both'), run
 
 `wiki-init.sh project <path>` is extended to accept a missing main
 argument. When invoked without a main, it writes `.wiki-config` with
-`role = "project"` but **no `main` field**. The propagation mechanism
-(out-of-scope for v2.4) treats absent `main` as "no propagation
-target." This makes "project-only" a first-class state, not a
-degraded form of "project + main."
+`role = "project"` but **no `main` field**. The future cross-wiki
+propagation mechanism (`wiki link-instances`, deferred to v2.5+)
+will treat absent `main` as "no propagation target." This makes
+"project-only" a first-class state in v2.4, not a degraded form of
+"project + main."
 
 The existing `wiki-init.sh` validation in `scripts/wiki-init.sh:33-35`
 is changed: project mode no longer requires a main path. A new error
@@ -817,9 +850,11 @@ recovery skips).
 
 Crash recovery: a crash between step 1 and step 4 leaves a file in
 `.raw-staging/`. On next SessionStart, the recovery scan ignores it
-(reserved directory). A periodic cleanup (`wiki status` or a future
-`wiki doctor`) can prune `.raw-staging/` files older than 1 hour as
-abandoned.
+(reserved directory). Cleanup of abandoned staging files (older than
+1 hour) is a future `wiki doctor` responsibility, not `wiki status`
+(`wiki status` is read-only by design — command/query separation).
+Until `wiki doctor` ships, abandoned staging files accumulate
+harmlessly; manual `rm` is safe.
 
 #### Recovery rule (user accidents)
 
@@ -915,12 +950,18 @@ wiki ingest-now [<wiki-path>]
 - **No argument:** uses cwd-resolved wiki via the same resolver
   (`wiki-resolve.sh`) as `wiki capture`. Interactive prompts allowed.
   If the resolver returns multiple wikis (`fork_to_main = true`),
-  drift-scan runs against EACH. Headless context applies the
-  headless fallback rule.
+  drift-scan runs against EACH.
+  - **Headless context (no body to orphan-preserve):** if the
+    resolver exits 10/11/12/13/14 in headless mode, `wiki ingest-now`
+    prints the diagnostic and exits non-zero (no body exists to
+    preserve, unlike `wiki capture`). The user must reconcile and
+    re-run.
 - **Explicit `<wiki-path>`:** scans only that wiki, no resolver
   involvement, no prompting. Argument must be an absolute path or
   resolvable to one; the script verifies `<wiki-path>/.wiki-config`
-  exists and is non-empty before scanning.
+  exists and is non-empty before scanning. If the wiki is half-built
+  (missing schema/index/pending), exits non-zero with the same
+  diagnostic resolver exit 14 produces.
 
 The two forms cover both ergonomics (no-arg in the user's shell) and
 scripting (explicit path for cron jobs, automation, post-fork retry
@@ -1600,7 +1641,9 @@ main agent: `wiki ingest-now <wiki>`
 | Failure | Behavior |
 |---|---|
 | `~/.wiki-pointer` missing on first capture (interactive) | bootstrap prompt fires (Q1: yes/no main wiki; Q2: where); pointer written; capture proceeds |
-| `~/.wiki-pointer` missing (headless) | pointer written with `none`; warning logged to `~/.wiki-orphans/.ingest.log`; capture proceeds with main = none |
+| `~/.wiki-pointer` missing (headless) AND cwd has `.wiki-config` | proceed with cwd's wiki only; pointer is irrelevant when local config is sufficient |
+| `~/.wiki-pointer` missing (headless) AND cwd unconfigured | abort capture; body preserved at `~/.wiki-orphans/<timestamp>-<slug>.md`. Pointer is NOT silently set to `none`; that is a user decision |
+| `~/.wiki-pointer` half-built (target exists but missing required files) | resolver exit 14; capture aborts with diagnostic naming the missing files at the main-wiki path |
 | `~/.wiki-pointer` valid but path is broken (symlink to deleted dir) | resolver exits 10; bootstrap re-prompts; user can repoint or set to none |
 | Multiple candidate main wikis at depth ≤ 2 in $HOME | silent migration declines; bootstrap prompts user to choose |
 | Cwd unconfigured (interactive) | per-cwd prompt fires (1/2/3); marker written; capture proceeds |
@@ -1640,7 +1683,8 @@ Per `superpowers:writing-skills` RED-GREEN-REFACTOR discipline.
 
 - `wiki-resolve.sh` — exit-code table covering all branches:
   - pointer missing → 10
-  - pointer = none + cwd has `.wiki-config` → 0, returns cwd wiki
+  - pointer = none + cwd has `.wiki-config` (`fork_to_main = false`) → 0, returns cwd wiki
+  - pointer = none + cwd has `.wiki-config` (`fork_to_main = true`) → 12 (fork requires main)
   - pointer = none + cwd unconfigured → 11 (with no main option in subsequent prompt)
   - pointer valid + cwd has `.wiki-config` (`role = "project-pointer"`) → 0, returns resolved path
   - pointer valid + cwd `.wiki-mode = main-only` → 0, returns main
@@ -1770,10 +1814,16 @@ safety (revised)" above. Concretely:
      present). This is the upgrade backfill path — pre-v2.4 users
      run `wiki-init.sh main <existing-path>` once to add the new
      pieces without disturbing existing content.
-8. **Reserved-set update.** `scripts/wiki_yaml.py` and
-   `scripts/wiki-relink.py` reserved sets gain `inbox` and
-   `.raw-staging`. The legacy `Clippings` entry is retired (see
-   "Breaking changes" above).
+8. **Reserved-set update.** `scripts/wiki_yaml.py` (`RESERVED` set
+   at line 30) gains `inbox`. `scripts/wiki-relink.py` (line 80)
+   gains `inbox`. The legacy `Clippings` entry is retired from
+   both (see "Breaking changes" above).
+   - `.raw-staging` does NOT need to be added explicitly to
+     `wiki-relink.py` — that file's reserved check already auto-
+     skips any path component starting with `.`. It DOES need to
+     be added to `wiki_yaml.py` if its `RESERVED` set isn't dot-
+     aware (verify at implementation time; if dot-aware, this is
+     also a no-op).
 9. **`bin/wiki` extended** with `capture`, `ingest-now`, `use`,
    `issues`, `init-main` subcommands. `bin/wiki status` and `bin/wiki
    doctor` (existing) unchanged. The existing
@@ -1788,18 +1838,29 @@ safety (revised)" above. Concretely:
 ```bash
 # 1. Update plugin to v2.4 (whatever that mechanism is).
 
-# 2. Move any files in Clippings/ to inbox/.
-mv ~/wiki/Clippings/* ~/wiki/inbox/ 2>/dev/null || true
-rmdir ~/wiki/Clippings/ 2>/dev/null || true
-
-# 3. Re-run wiki-init.sh on each existing wiki to backfill.
+# 2. Re-run wiki-init.sh on each existing wiki to backfill the new
+#    pieces (inbox/, .raw-staging/, README). Idempotent — won't
+#    touch existing files.
 bash <plugin>/scripts/wiki-init.sh main ~/wiki
 # (repeat for each project wiki: bash ... project <path> ~/wiki)
+
+# 3. Move any files from old Clippings/ into the new inbox/.
+#    inbox/ now exists from step 2. Run only if Clippings/ has files.
+if compgen -G "~/wiki/Clippings/*" >/dev/null; then
+  mv ~/wiki/Clippings/* ~/wiki/inbox/    # NOT silenced — fail loudly
+  rmdir ~/wiki/Clippings/                # only if now empty
+fi
 
 # 4. First agent session in any cwd will trigger the bootstrap
 #    prompt to write ~/.wiki-pointer (silent migration if your main
 #    is the unique one under $HOME).
 ```
+
+Step ordering matters: step 2 (init backfill) MUST run before step 3
+(Clippings move) because `inbox/` does not exist on a pre-v2.4 wiki
+until init creates it. The `mv` in step 3 is NOT silenced (no
+`|| true`) — a failed move means data could be lost, and the user
+must see the error and fix it manually.
 
 ### Rollback
 
@@ -1998,7 +2059,9 @@ v2.4 ships when:
       re-run).
 - [ ] **(Automated)** `scripts/wiki_yaml.py` and
       `scripts/wiki-relink.py` reserved sets contain `inbox` and
-      do not contain `Clippings`.
+      do not contain `Clippings`. `.raw-staging` is reserved (either
+      via explicit listing or via the existing dot-prefix auto-skip
+      in `wiki-relink.py`).
 - [ ] **(Automated)** Subagent-report move-and-ingest workflow:
       `mv <file> <wiki>/inbox/ && wiki ingest-now <wiki>` →
       page committed; main agent never wrote a capture body.
@@ -2023,6 +2086,16 @@ v2.4 ships when:
 - [ ] **(Automated)** Both-mode partial failure: project succeeds,
       main fails to spawn → `wiki status` reports asymmetric
       outcome; user can `wiki ingest-now <failed-wiki>` to retry.
+- [ ] **(Automated)** Resolver exits 14 with diagnostic naming the
+      missing files when (a) cwd `.wiki-config` references a wiki
+      missing schema/index/.wiki-pending OR (b) `~/.wiki-pointer`
+      target exists but is similarly half-built. `bin/wiki capture`
+      reports the missing files explicitly and orphan-preserves the
+      body.
+- [ ] **(Automated)** Loader is emitted in `additionalContext` when
+      cwd has no wiki AND no parent has a wiki, demonstrating that
+      step 2 (loader injection) runs before step 3 (wiki-found
+      check) in the SessionStart hook.
 - [ ] **(Automated)** All new scripts have unit tests written
       before the script (TDD discipline; verified by reviewing
       commit history of leg's commit cluster).
