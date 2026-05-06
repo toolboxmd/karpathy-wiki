@@ -37,6 +37,100 @@ fill every field, link into the referencing plan/commit/concept page.
 
 ---
 
+## 0.2.9: in-repo project-wiki — prompt user for tracking choice
+
+```yaml
+status: open
+priority: p1
+effort: low
+labels: [0.2.9, auto-init, ux, real-session-finding]
+refs:
+  - scripts/wiki-init.sh:173-177  # nested-git auto-prevention
+  - skills/using-karpathy-wiki/SKILL.md  # auto-init "no prompts" rule
+  - tmp/skill-v1-6ce0c77.md:42-57  # original auto-init cascade
+```
+
+When auto-init branch 2 fires (cwd is inside an existing git-tracked
+repo, `$HOME/wiki/.wiki-config` exists, agent is about to create
+`./wiki/` linked to the main wiki), the agent should prompt the user
+for the tracking choice. Currently the spec says "no prompts, no
+confirmations" — fine for the bare-cwd case, but inside an active
+repo this silently dumps `./wiki/` (9 files: index.md, schema.md,
+log.md, .wiki-config, .gitignore, .manifest.json, plus dirs and
+.obsidian/app.json) into the parent repo's working tree.
+
+`scripts/wiki-init.sh:173-177` already prevents the nested-git case
+(skips `git init` if cwd is already in a work tree). That's correct
+— don't change it. But the user should still be asked: track
+the wiki under the parent repo, gitignore it, or some other choice.
+
+Real-session evidence: 2026-05-06, `building-agentskills/` repo.
+A user typing `wiki init` had the wrong skill route (separate bug —
+see entry below), and the surrounding investigation surfaced the
+in-repo silent-init concern.
+
+Spec patch (target file: `skills/using-karpathy-wiki/SKILL.md`,
+auto-init section):
+
+> When branch 2 fires AND the cwd is inside a git work tree that
+> is NOT the wiki itself, ask the user before creating `./wiki/`:
+> tracked by the parent repo, gitignored, or alternative location.
+> Document that `wiki-init.sh` already prevents the nested-git
+> failure mode so the user knows what's at stake.
+
+Out of scope here: changing the bare-cwd / first-wiki-worthy-moment
+path. Auto-init must stay invisible there. This entry only adds a
+prompt for the in-active-repo branch.
+
+---
+
+## 0.2.9: investigate — does explicit user-typed `wiki init` need a spec rule?
+
+```yaml
+status: needs-decision
+priority: p3
+effort: low
+labels: [0.2.9, investigation, real-session-finding, deliberate-test]
+refs:
+  - skills/using-karpathy-wiki/SKILL.md  # implicit auto-init only
+  - tmp/skill-v1-6ce0c77.md:174-181  # v1 forbidden-command list
+```
+
+Real-session test (2026-05-06, `building-agentskills/`): user typed
+`wiki init` as a deliberate probe. The agent pattern-matched on the
+word "wiki" and ran the wiki-status skill instead. Investigation
+surfaced two related questions:
+
+1. Should `using-karpathy-wiki/SKILL.md` document what to do when
+   the user types a forbidden command name as natural language?
+2. v1 had an explicit forbidden-command list (*"There is no `wiki
+   init`, no `wiki ingest`, no `wiki query`, no `wiki flush`, no
+   `wiki promote`"*) — the current split skills dropped it.
+
+The user (project owner) decision: **stay invisible**. Auto-init
+should not be triggered by user-typed verbs. The agent's job on
+`wiki init` (free text) is to recognize it isn't a slash command,
+ask what the user actually wants, and not silently route to a
+nearby skill.
+
+This entry's purpose: track the open question of whether the loader
+needs a clarifying note ("if the user types something that looks
+like a wiki command but isn't, just ask"), or whether leaving the
+spec silent on this is correct (auto-init invisibility takes
+precedence; agent-side pattern-matching bugs aren't a spec issue).
+
+Resolve by either:
+- Adding a one-liner to `using-karpathy-wiki/SKILL.md` ("user-typed
+  verbs that look like wiki commands but aren't slash commands: ask,
+  don't route"), OR
+- Closing as "spec stays silent; agent pattern-matching is a model
+  issue, not a skill issue."
+
+Decide before the next loader edit; do not bundle with the in-repo
+prompt entry above.
+
+---
+
 ## 0.2.8: `bin/wiki orient` CLI shortcut for the read-protocol Step A
 
 ```yaml
