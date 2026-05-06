@@ -11,20 +11,139 @@ You are a detached `claude -p` ingester invoked by
 capture into wiki pages and commit. The main agent does NOT read this
 skill — it's loaded by your spawn prompt.
 
-## Orientation
+## Deep orientation
 
-Before any wiki write, read these in order:
+Before any wiki write, run this 9-step orientation protocol. The goal:
+your view of the wiki is shaped by the actual page content, not by
+titles alone.
 
-1. `<wiki>/schema.md` — current categories, taxonomy, thresholds.
-2. `<wiki>/index.md` (or `<wiki>/<category>/_index.md` per category) — what pages exist.
-3. Last ~10 entries of `<wiki>/log.md` — recent activity.
+### Steps 1-3: read the wiki's current state
 
-Only then decide what to do. Without orientation you will duplicate
-existing pages, miss relevant cross-references, or violate the schema.
+1. Read `<wiki>/schema.md` — current categories, taxonomy, thresholds.
+2. Read `<wiki>/index.md` (or `<wiki>/<category>/_index.md` per category) — what pages exist with one-line summaries.
+3. Read the last ~10 entries of `<wiki>/log.md` — recent activity.
 
-(Leg 4 of v2.4 extends this with deep orientation: read 0-7 candidate
-pages in full before deciding what to write. The basic three-step
-orientation above is the minimum.)
+### Steps 4-7: pick and read 0-7 candidate pages
+
+4. **Extract candidate signals from the capture.** From the body and
+   frontmatter, gather:
+   - Words and phrases from the capture title (lowercase, split on
+     non-alphanumerics).
+   - Frontmatter `tags:` list (if any).
+   - For `chat-only` and `chat-attached` captures: meaningful nouns and
+     proper-noun phrases from the body. Use judgment — you're an LLM,
+     not a regex; pick names, identifiers, technical terms, version
+     numbers.
+   - For `raw-direct` captures: filename basename + the file's first
+     200 lines.
+
+5. **Score candidates against the index.** A page is a candidate if ANY
+   extracted signal:
+   - Substring-matches its title (case-insensitive), OR
+   - Matches a tag (exact, case-insensitive), OR
+   - Appears in its `_index.md` one-line summary.
+
+   This is a deterministic substring + tag match — no embeddings, no
+   semantic similarity. See "Why no embeddings / vector search" below
+   for the rationale.
+
+6. **Pick up to 7 candidates** ordered by:
+   - Signal-match count (descending — more matches = stronger candidate).
+   - Title length (ascending — shorter titles rank higher for the same
+     match count; they tend to be more general / canonical).
+   - Tie-break: alphabetical by title.
+
+7. **Read all picked candidates in full.** Zero is a valid count for a
+   small or fresh wiki — see "Cold start" below.
+
+### Steps 8-9: decide and report observations
+
+8. **Decide**: create new page, augment an existing page, or no-op
+   (the capture's content is already covered by an existing page).
+   Write your decision rationale into the commit message later.
+
+9. **Issue reporting (during steps 5-7).** While reading the index and
+   the candidate pages, observe issues. Append each as one JSONL line
+   to `<wiki>/.ingest-issues.jsonl` via `bash scripts/wiki-issue-log.sh`.
+   Do NOT fix issues inline; report only — `wiki doctor` consumes the
+   log later.
+
+   Example invocation:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-issue-log.sh" \
+     --wiki "${WIKI_ROOT}" \
+     --ingester-run "${RUN_ID}" \
+     --capture "${WIKI_CAPTURE#${WIKI_ROOT}/}" \
+     --page "concepts/auth.md" \
+     --type broken-cross-link \
+     --severity warn \
+     --detail "Links to /concepts/legacy.md which does not exist." \
+     --suggested-action "Remove link or create stub"
+   ```
+
+   Issue types to watch for (the `--type` enum in `wiki-issue-log.sh`):
+   - **broken-cross-link**: page links to `/path/foo.md` but that file
+     does not exist.
+   - **contradiction**: page makes a claim that contradicts another
+     page you're reading or the capture itself.
+   - **schema-drift**: page has `type: concept` (singular) but
+     directory is `concepts/`; page lacks required frontmatter; page
+     uses retired categories.
+   - **stale-claim**: page says "as of 2025-12 library X is at version
+     Y" and the capture or another source clearly indicates a newer
+     version.
+   - **tag-drift**: same concept tagged two different ways across
+     pages.
+   - **quality-concern**: page's `quality.overall < 3.0` was rated by
+     ingester (not human).
+   - **orphan**: page exists but is not linked from any `_index.md` or
+     other page.
+   - **other**: anything else worth noting.
+
+   Severity:
+   - **error**: blocks ingestion (rare — only if reading the schema or
+     a candidate page fails outright).
+   - **warn**: default. Issue noted; ingestion proceeds.
+   - **info**: observational; usually for tag-drift or quality-concern.
+
+   Each issue gets one JSONL line, ≤ 4096 bytes total. Over-length
+   `--detail` is auto-truncated by the helper.
+
+### Cold start: wikis with ≤ 7 pages
+
+When the candidate list from step 6 is empty or near-empty (the index
+has fewer than 8 pages total), step 7 reads few or no pages. The role
+guardrail in `<wiki>/.wiki-config` becomes the PRIMARY lens, not a
+backup tripwire:
+
+- **`role: project` or `role: project-pointer`**: write specifics
+  about THIS codebase / instance / situation. Document the symptom,
+  the pinpoint, what code path triggered it. Do NOT generalize.
+- **`role: main`**: write general patterns reusable across projects.
+  Do NOT name specific apps or instances; abstract them.
+
+In the cold-start state the index has insufficient gravity to shape
+the page; the role hint carries the lens. Defer cross-linking to a
+future ingester run when more pages exist.
+
+### Why no embeddings / vector search
+
+The substring + tag match in step 5 is deterministic, scriptable,
+testable, and cheap. Embedding-based candidate selection is the
+"smart" upgrade but explicitly out of scope per CLAUDE.md ("do not
+add: vector search — defer until genuine scaling pain"). The
+substring/tag approach degrades gracefully — at large scale it hits
+more candidates than 7, but the ranking still produces a usable
+top-7. When that breaks, vector search becomes worth its complexity;
+not before.
+
+### Cost
+
+3-7 extra file reads per ingestion (zero on cold-start wikis). Each
+page is typically 5-20 KB. The ingester is already reading the
+capture and the schema; this is the same order of magnitude. No
+measurable spawn-time impact.
 
 ## Role guardrail
 
@@ -37,9 +156,14 @@ Read `<wiki>/.wiki-config` to determine the wiki's role:
   patterns reusable across projects. Do NOT name specific apps or
   instances.
 
+The role field is the primary lens during cold start (≤ 7 pages in
+the wiki) and a sanity tripwire in mature wikis (the index pull is
+the primary lens once enough pages exist). See "Deep orientation —
+Cold start" above.
+
 If the index pulls strongly toward instance-style or pattern-style
 writing (you read 5+ existing pages of one shape), trust the pull.
-The role hint is a backup tripwire — *"if you find yourself
+The role hint then becomes a tripwire — *"if you find yourself
 generalizing in a project wiki / specifying in a main wiki, stop."*
 
 ## Capture format

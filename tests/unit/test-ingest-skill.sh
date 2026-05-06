@@ -16,7 +16,8 @@ head -10 "${SKILL}" | grep -q '^name: karpathy-wiki-ingest' || fail "frontmatter
 head -10 "${SKILL}" | grep -q '^description:' || fail "frontmatter missing description"
 
 # Required sections — orientation, page format, manifest, commit
-grep -q -i '^## Orientation' "${SKILL}" || fail "missing Orientation section"
+# v2.4 Leg 4: heading became "## Deep orientation"; either form is acceptable.
+grep -q -E -i '^## (Deep )?Orientation' "${SKILL}" || fail "missing Orientation section"
 grep -q -i 'manifest' "${SKILL}" || fail "missing manifest section"
 grep -q -i 'commit' "${SKILL}" || fail "missing commit section"
 
