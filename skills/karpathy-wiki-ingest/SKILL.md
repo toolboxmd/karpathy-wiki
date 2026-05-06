@@ -86,8 +86,26 @@ A thin-capture rejection is a feature, not a failure.
 
 3. **Read the capture body.**
 
-4. **Copy evidence, write manifest entry with correct origin:**
-   - If `capture_kind` is `raw-direct` or `chat-attached` (legacy `evidence_type` `file` or `mixed`): `cp` the evidence file to `<wiki>/raw/<basename>` preserving basename.
+4. **Copy evidence with write-staging discipline (v2.4):**
+
+   Atomic write to `raw/` requires the staging dance (skip steps 1–2 and 7
+   if `evidence_type` is `conversation` AND the capture has no real path):
+
+   1. Copy the evidence file to `<wiki>/.raw-staging/<basename>` (NOT directly to `raw/`).
+   2. Compute the new sha256.
+   3. Acquire `<wiki>/.locks/manifest.lock` via `bash scripts/wiki-manifest-lock.sh ...` for the manifest write + rename block.
+   4. Re-read the manifest under the lock. If `raw/<basename>` already exists with the same sha256, this is a duplicate — skip (apply the sha256 short-circuit below).
+   5. Update the manifest entry for `raw/<basename>` (origin, sha, copied_at, last_ingested, referenced_by).
+   6. Write the manifest atomically (`.manifest.json.tmp` + `os.rename`) — `wiki-manifest.py build` already does this.
+   7. Atomically rename `<wiki>/.raw-staging/<basename>` → `<wiki>/raw/<basename>` (POSIX rename is atomic on the same filesystem).
+   8. Release the lock.
+   9. If the source file is in `<wiki>/inbox/<basename>` (raw-direct via inbox queue), `rm` it.
+
+   Crash recovery: if the ingester crashes between steps 1 and 7, a file
+   lingers in `.raw-staging/`. The SessionStart recovery scan SKIPS
+   `.raw-staging/` (it's a reserved dot-prefixed directory). Future cleanup
+   is `wiki doctor`'s responsibility.
+
    - In ALL cases (including `chat-only` / legacy `conversation`): write or update the manifest entry for the raw file in `<wiki>/.manifest.json`:
      ```json
      {
