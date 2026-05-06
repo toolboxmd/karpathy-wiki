@@ -1,14 +1,19 @@
 #!/bin/bash
 # SessionStart hook for karpathy-wiki.
 #
-# Responsibilities:
-#   1. Detect if cwd (or a parent) contains a wiki; exit 0 silently if not.
-#   2. Run drift check on raw/ — if new/modified sources, create captures.
-#   3. Drain pending captures: spawn one detached ingester per capture.
-#   4. Reclaim stale .processing files.
-#   5. Emit ZERO model-visible context (stdout stays empty or '{}').
+# Execution order (v2.4):
+#   1. Subagent / ingester fork-bomb guard (WIKI_CAPTURE or CLAUDE_AGENT_PARENT
+#      → exit 0; no loader, no drift, no drain).
+#   2. Loader injection (always, regardless of wiki presence): emit the
+#      using-karpathy-wiki body as hookSpecificOutput.additionalContext so the
+#      agent sees the wiki rules in every conversation.
+#   3. Resolve wiki from cwd; if none, exit 0 (loader already emitted).
+#   4. Drift check on raw/ — if new/modified sources, create drift captures.
+#   5. Drain pending captures: spawn one detached ingester per capture.
+#   6. Reclaim stale .processing files.
 #
-# Per superpowers-style-guide.md, we write to files (.ingest.log), never echo.
+# Drift/drain logging goes to .ingest.log (not stdout). The only stdout the
+# hook emits is the loader JSON in step 2.
 
 # NOTE: no `set -e` — we want best-effort execution; a failing drift-check
 # should not prevent drain. Use `set -uo pipefail` for safer var handling.
@@ -179,6 +184,6 @@ _reclaim_stale() {
 }
 _reclaim_stale || log_warn "session-start: stale reclaim failed (non-fatal)"
 
-# Emit empty context per superpowers style guide (issue #1220 cost lesson).
-# Exit 0. Do NOT echo anything.
+# Loader JSON (if any) was emitted in step 2; drift/drain/reclaim only log
+# to .ingest.log. Nothing else to stdout.
 exit 0
