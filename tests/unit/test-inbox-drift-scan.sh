@@ -27,12 +27,17 @@ touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago'
 ( cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}" >/dev/null 2>&1 ) || true
 
 # Assert a raw-direct capture appeared in .wiki-pending/
-ls "${WIKI}/.wiki-pending/" | grep -q '^drift-' \
-  || fail "no drift- capture appeared in .wiki-pending/"
+# (Glob matches both .md and .md.processing — the spawn-ingester running
+# downstream may have renamed the file while we weren't looking.)
+capture=""
+for f in "${WIKI}/.wiki-pending"/drift-*; do
+  [[ -f "${f}" ]] || continue
+  capture="${f}"
+  break
+done
+[[ -n "${capture}" ]] || fail "no drift- capture appeared in .wiki-pending/"
 
 # Inspect the capture frontmatter for capture_kind: raw-direct
-capture=$(ls "${WIKI}/.wiki-pending/drift-"*.md 2>/dev/null | head -1)
-[[ -n "${capture}" ]] || fail "no drift- capture matches glob"
 grep -q 'capture_kind: "raw-direct"' "${capture}" \
   || fail "drift capture missing capture_kind: raw-direct"
 grep -q "evidence: \"${WIKI}/inbox/note.md\"" "${capture}" \
