@@ -281,10 +281,14 @@ skills point at it.
   receives loader. Verified by reading `<EXTREMELY_IMPORTANT>` tag
   presence in the first turn's context (manual inspection per RED-GREEN
   discipline).
-- Subagent dispatch (e.g., `Explore` agent): receives `<SUBAGENT-STOP>`
-  block, skips skill load.
-- Ingester (spawned `claude -p` with `WIKI_CAPTURE` set): SessionStart
-  hook short-circuits; loader is NOT injected; ingester loads
+- Subagent dispatch (e.g., `Explore` agent, `CLAUDE_AGENT_PARENT`
+  set): SessionStart hook short-circuits at step 1; **no
+  `additionalContext` emitted** at all (per the canonical hook
+  order). The `<SUBAGENT-STOP>` block at the top of the loader body
+  is a defensive backstop for cases where the env var doesn't
+  propagate, NOT the primary mechanism.
+- Ingester (spawned `claude -p` with `WIKI_CAPTURE` set): same
+  step-1 short-circuit; loader is NOT injected; ingester loads
   `karpathy-wiki-ingest` via its spawn prompt.
 
 ---
@@ -602,11 +606,27 @@ user channel before prompting. Detection rules (any one means
 - The agent's spawn context indicates subagent (we read
   `CLAUDE_AGENT_PARENT` if set; presence means subagent).
 
-Headless fallback rules, picked to be safe-by-default:
+Headless fallback rules, picked to be safe-by-default. Note that
+the resolver itself exits 10 immediately when the pointer is missing
+(it does not inspect cwd in that branch); the cwd-state distinctions
+below are evaluated by `bin/wiki capture`'s wrapper AFTER the
+resolver returns exit 10, by re-reading `cwd/.wiki-config`. This
+keeps the resolver simple (one job per exit code) and the fallback
+logic colocated in `bin/wiki capture`.
 
-- Resolver exit 10 (pointer missing) AND cwd has `.wiki-config` (cwd
-  is itself a configured wiki) → proceed with cwd's wiki only;
-  pointer is irrelevant when the local config is sufficient.
+- Resolver exit 10 (pointer missing) AND cwd has `.wiki-config`
+  (cwd is itself a configured wiki) AND the config has
+  `fork_to_main = false` (or absent, defaulting false) → proceed
+  with cwd's wiki only; pointer is irrelevant when the local config
+  is sufficient and the user did not request fork.
+- Resolver exit 10 (pointer missing) AND cwd has `.wiki-config`
+  with `fork_to_main = true` → abort the capture; preserve body at
+  `$HOME/.wiki-orphans/<timestamp>-<slug>.md`. Behaves as exit 12
+  (fork requested but no main configured); we do NOT silently drop
+  the fork directive. Diagnostic: *"cwd's `.wiki-config` requests
+  `fork_to_main = true` but `~/.wiki-pointer` is missing. Set the
+  pointer (`wiki init-main`) or change the cwd config
+  (`fork_to_main = false`)."*
 - Resolver exit 10 (pointer missing) AND cwd unconfigured → abort
   the capture; preserve body at `$HOME/.wiki-orphans/<timestamp>-<slug>.md`.
   Do NOT silently write `~/.wiki-pointer = none`; that is a user
@@ -1762,12 +1782,11 @@ v2.4:
 > **v2.4 is a breaking change for users of the `Clippings/` directory
 > convention.** The `Clippings/` directory is no longer reserved by
 > the validator/discovery; v2.4 standardizes on a single `inbox/`
-> drop zone. Before upgrading, run:
->
-> ```bash
-> mv <wiki>/Clippings/* <wiki>/inbox/   # if you have files there
-> rmdir <wiki>/Clippings/                # optional cleanup
-> ```
+> drop zone. After upgrading the plugin, follow the "Upgrade
+> procedure" below: it runs `wiki-init.sh` first (which creates
+> `inbox/`), then moves any `Clippings/*` files into the now-existing
+> `inbox/`. Do NOT attempt the move before re-running init —
+> `inbox/` doesn't exist on a v2.3 wiki.
 >
 > No auto-migrator ships in v2.4 (the user base is small enough that
 > a manual `mv` is acceptable; an auto-migrator carries its own
