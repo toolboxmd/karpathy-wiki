@@ -17,8 +17,20 @@ check() {
   fi
 }
 
-check "SKILL.md under 500 lines" \
-  bash -c "[[ \$(wc -l < '${REPO}/skills/karpathy-wiki/SKILL.md') -lt 500 ]]"
+check "loader skill under 200 lines" \
+  bash -c "[[ \$(wc -l < '${REPO}/skills/using-karpathy-wiki/SKILL.md') -lt 200 ]]"
+
+check "capture skill under 250 lines" \
+  bash -c "[[ \$(wc -l < '${REPO}/skills/karpathy-wiki-capture/SKILL.md') -lt 250 ]]"
+
+check "read skill under 250 lines" \
+  bash -c "[[ \$(wc -l < '${REPO}/skills/karpathy-wiki-read/SKILL.md') -lt 250 ]]"
+
+check "ingest skill under 500 lines" \
+  bash -c "[[ \$(wc -l < '${REPO}/skills/karpathy-wiki-ingest/SKILL.md') -lt 500 ]]"
+
+check "legacy skills/karpathy-wiki/SKILL.md deleted (0.2.7 cleanup)" \
+  bash -c "[[ ! -e '${REPO}/skills/karpathy-wiki/SKILL.md' ]]"
 
 check "hooks.json has SessionStart matcher" \
   bash -c "grep -q 'startup|clear|compact' '${REPO}/hooks/hooks.json'"
@@ -29,8 +41,8 @@ check "hooks.json has Stop section" \
 check "no WIKI_MAIN env var references" \
   bash -c "! grep -r 'WIKI_MAIN' '${REPO}/scripts' '${REPO}/skills' '${REPO}/hooks' 2>/dev/null"
 
-check "no SKILL_DIR placeholder remains in SKILL.md" \
-  bash -c "! grep -q 'SKILL_DIR' '${REPO}/skills/karpathy-wiki/SKILL.md'"
+check "no SKILL_DIR placeholder remains in any current SKILL.md" \
+  bash -c "! grep -lq 'SKILL_DIR' '${REPO}/skills/using-karpathy-wiki/SKILL.md' '${REPO}/skills/karpathy-wiki-capture/SKILL.md' '${REPO}/skills/karpathy-wiki-read/SKILL.md' '${REPO}/skills/karpathy-wiki-ingest/SKILL.md'"
 
 check "AGENTS.md is a symlink" \
   bash -c "[[ -L '${REPO}/AGENTS.md' ]]"

@@ -1,6 +1,10 @@
 #!/bin/bash
 # Integration test for v2.4 Leg 1: loader injected, skills split correctly,
-# old skill still loads, hook behavior consistent across contexts.
+# hook behavior consistent across contexts.
+#
+# 0.2.7: legacy skills/karpathy-wiki/SKILL.md was deleted (deprecation
+# transition over); the read skill was added. Updated assertions reflect
+# the four-skill layout.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,21 +13,21 @@ HOOK="${REPO_ROOT}/hooks/session-start"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# 1. All four skill files exist
+# 1. All four current skill files exist; the legacy skill is gone.
 for f in \
   skills/using-karpathy-wiki/SKILL.md \
   skills/karpathy-wiki-capture/SKILL.md \
   skills/karpathy-wiki-capture/references/capture-schema.md \
+  skills/karpathy-wiki-read/SKILL.md \
   skills/karpathy-wiki-ingest/SKILL.md \
-  skills/karpathy-wiki-ingest/references/page-conventions.md \
-  skills/karpathy-wiki/SKILL.md
+  skills/karpathy-wiki-ingest/references/page-conventions.md
 do
   [[ -f "${REPO_ROOT}/${f}" ]] || fail "missing: ${f}"
 done
 
-# 2. Old skill description marks itself deprecated
-grep -q 'DEPRECATED in v2.4' "${REPO_ROOT}/skills/karpathy-wiki/SKILL.md" \
-  || fail "old skill description not updated"
+# 2. Legacy skill is removed (0.2.7 cleanup).
+[[ ! -e "${REPO_ROOT}/skills/karpathy-wiki/SKILL.md" ]] \
+  || fail "legacy skills/karpathy-wiki/SKILL.md still present (should be deleted in 0.2.7)"
 
 # 3. Hook execution order: env-guard → loader → wiki-resolution
 # Check by inspecting hook source (no need to mock the runtime — the
