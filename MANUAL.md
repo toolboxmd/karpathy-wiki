@@ -1,8 +1,24 @@
-# karpathy-wiki user manual (v0.2.7)
+# karpathy-wiki user manual (v0.2.8)
 
-A short reference for the karpathy-wiki plugin as it ships in v0.2.7. Covers setup, the five common scenarios, and what the plugin handles automatically vs requires explicit config.
+A short reference for the karpathy-wiki plugin as it ships in v0.2.8. Covers setup, the five common scenarios, and what the plugin handles automatically vs requires explicit config.
 
 For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
+
+## What changed in 0.2.8
+
+12 hardening items from a 3-reviewer adversarial pass on v0.2.7. See `docs/specs/0.2.8.md` for the per-item RED/GREEN ladder and `docs/reviews/2026-05-06-v0.2.7-synthesis.md` for the decision record.
+
+- **`bin/wiki capture --evidence-path <abs>`** — chat-attached and raw-direct captures now require an absolute path; the value lands verbatim in `evidence:` frontmatter (was hardcoded to the literal `"conversation"` for all kinds).
+- **Resolver walk-up + cross-project leak fix** — `wiki-resolve.sh` now walks up from cwd to find the project's `.wiki-config`, while `wiki_root_from_cwd` stops at `$HOME` so a project subdir doesn't accidentally route to `~/wiki/`.
+- **Validator gate in `wiki-commit.sh`** — moved the "every touched page must pass the validator" iron rule out of skill prose and into code. Commit refuses if any staged content page fails validation.
+- **Capture-side resist-table** — restored to the loader (lost in the v2.4 split). Counters rationalizations like "the user will remember this" / "I'll capture it later" / "the file is already in a good place."
+- **Spawn prompt fix** — points spawned ingester at `skills/karpathy-wiki-ingest/SKILL.md` (was ambiguous after the split deleted the legacy monolith).
+- **Lock-window fix** in `_raw_recovery` — capture emit now happens inside the manifest lock alongside the raw → inbox move.
+- **`wiki status` content-set filter** — `total pages` and below-3.5 quality counts now exclude `_index.md`, root index, raw/, and reserved dirs (was silently inflated by the unfiltered glob).
+- **Schema-proposals dir created at init** — `wiki-init.sh` now creates `.wiki-pending/schema-proposals/` so the ingester's threshold-fire path doesn't crash on first use.
+- **Doc rot cleanup** — README points at the actual `.claude-plugin/marketplace.json`; ingest skill says `python3` (not `bash`) for `wiki-manifest.py`; TODO.md refs to the deleted legacy skill annotated.
+
+Tests: 58 + 8 RED tests pass.
 
 ## What changed in 0.2.7
 

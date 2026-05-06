@@ -78,9 +78,9 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**v0.2.7 — work in progress.** Claude Code primary; multi-platform JSON shapes emitted defensively but untested on Cursor / Copilot CLI / Codex / OpenCode / Gemini. Active development on a single-user wiki; not yet packaged for general consumption.
+**v0.2.8 — work in progress.** Claude Code primary; multi-platform JSON shapes emitted defensively but untested on Cursor / Copilot CLI / Codex / OpenCode / Gemini. Active development on a single-user wiki; not yet packaged for general consumption.
 
-**What works today (v2.4 + 0.2.7 read-protocol restoration):**
+**What works today (v2.4 + 0.2.7 read-protocol restoration + 0.2.8 hardening):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
 - Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
 - Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.
@@ -95,8 +95,8 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 
 **What's deferred (see `TODO.md`):**
-- `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred to 0.2.8 — observe whether prose-only fix produces reliable behavior first).
-- `allowed-tools` scoping on the four skills (deferred to 0.2.8 — orthogonal to read-protocol restoration).
+- `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred — observe whether prose-only fix produces reliable behavior first).
+- `allowed-tools` scoping on the four skills (deferred — orthogonal to read-protocol restoration).
 - `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
 - Stop-hook gate for turn-closure enforcement (`hooks/stop` is currently a stub).
 - `.ingest.log` → `.ingest.jsonl` migration (dual-artifact pattern, scheduled for v2.5).
