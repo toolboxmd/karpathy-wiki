@@ -50,7 +50,7 @@ fi
 
 # Build the ingest prompt.
 # The skill prose defines what this prompt means operationally.
-prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${processing}. Follow the karpathy-wiki skill's INGEST operation exactly."
+prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${processing}. Load and follow skills/karpathy-wiki-ingest/SKILL.md exactly."
 
 # Explicit env passthrough (Anthropic API keys, etc.).
 # Headless workers don't inherit interactive-session env by default on some platforms.
