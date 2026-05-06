@@ -33,9 +33,22 @@ migrate: one-time migration for v2 -> v2-hardening:
 
 import hashlib
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _atomic_write_json(path: Path, payload: str) -> None:
+    """Write `payload` to `path` atomically: write to .tmp, then os.rename.
+
+    POSIX guarantees rename is atomic when source and destination are on
+    the same filesystem. A concurrent reader sees either the old file or
+    the new file, never a partial write.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload)
+    os.rename(tmp, path)
 
 
 def _hash_file(path: Path) -> str:
@@ -87,8 +100,9 @@ def cmd_build(wiki_root: Path) -> int:
         if not entry["origin"]:
             entry["origin"] = prev.get("source", "")  # legacy key
         out[rel] = entry
-    (wiki_root / ".manifest.json").write_text(
-        json.dumps(out, indent=2, sort_keys=True) + "\n"
+    _atomic_write_json(
+        wiki_root / ".manifest.json",
+        json.dumps(out, indent=2, sort_keys=True) + "\n",
     )
     return 0
 
@@ -204,8 +218,9 @@ def cmd_migrate(wiki_root: Path) -> int:
         entry["referenced_by"] = alive
 
     # Write unified.
-    (wiki_root / ".manifest.json").write_text(
-        json.dumps(merged, indent=2, sort_keys=True) + "\n"
+    _atomic_write_json(
+        wiki_root / ".manifest.json",
+        json.dumps(merged, indent=2, sort_keys=True) + "\n",
     )
 
     # Delete legacy inner (if it existed).
