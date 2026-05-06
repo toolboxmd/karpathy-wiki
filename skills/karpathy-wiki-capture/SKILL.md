@@ -66,32 +66,7 @@ Per `references/capture-schema.md`:
 | `chat-attached` | 1000 b | The conversation-delta — what the conversation added that the file doesn't cover. The file is the bulk; you owe the delta in full. |
 | `raw-direct` | none | You don't write raw-direct bodies. The SessionStart hook or `wiki ingest-now` auto-generates them when a file appears in `inbox/`. |
 
-If the ingester rejects your capture (`needs-more-detail: true`),
-expand the body in place and re-spawn. Do NOT ignore the rejection.
-
-## Subagent reports — DO NOT write a capture body
-
-When a research subagent returns a file with durable findings, the
-report IS the capture. Move the file to `<wiki>/inbox/`:
-
-```bash
-mv <subagent-report-path> <wiki>/inbox/<basename>
-wiki ingest-now <wiki>          # or wait for next SessionStart
-```
-
-`wiki ingest-now` triggers the same drift-scan + drain that
-SessionStart runs, but on demand. Use this when the user is still in
-the active session and wants the report ingested before they close
-the terminal.
-
-Subagent-report bodies frequently exceed several KB; rewriting them
-as a `chat-only` capture body wastes tokens AND produces an inferior
-wiki page (the body summarizes what the file already says).
-
-## Body sufficiency — what to put in `chat-only` captures
-
-A `chat-only` capture body must clear the 1500-byte floor with content,
-not filler. Required:
+A `chat-only` body must clear 1500 bytes with content, not filler. Required:
 
 - Every durable CLAIM — fact, number, version, commit, percentage, decision.
 - Every CONCRETE DETAIL the ingester cannot guess — exact URLs, package names, error messages, command snippets, code examples (5-15 lines), numeric thresholds, version ranges.
@@ -100,9 +75,25 @@ not filler. Required:
 - SOURCES — doc URLs, arxiv IDs, GitHub repos with star counts as-of the session.
 
 NOT in the body:
+
 - Pleasantries, meta-commentary, "let me check", "good question".
 - Process over output: wrong turns, reasoning trail, "I thought X but then Y". Keep the resolution; drop the detour.
 - The user's questions verbatim — they're context, not content. Capture the ANSWER, not the question.
+
+If the ingester rejects your capture (`needs-more-detail: true`), expand the body in place and re-spawn. Do NOT ignore the rejection.
+
+## Subagent reports — DO NOT write a capture body
+
+When a research subagent returns a file with durable findings, the report IS the capture. Move the file to `<wiki>/inbox/`:
+
+```bash
+mv <subagent-report-path> <wiki>/inbox/<basename>
+wiki ingest-now <wiki>          # or wait for next SessionStart
+```
+
+`wiki ingest-now` triggers the same drift-scan + drain that SessionStart runs, but on demand. Use this when the user is still in the active session and wants the report ingested before they close the terminal.
+
+Subagent-report bodies frequently exceed several KB; rewriting them as a `chat-only` capture body wastes tokens AND produces an inferior wiki page (the body summarizes what the file already says).
 
 ## Mode change
 
