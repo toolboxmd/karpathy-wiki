@@ -39,6 +39,40 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
+# Validator gate (0.2.8 #3): the iron rule that "every touched page must
+# pass the validator before commit" used to live as prose in the ingest
+# skill. Enforce it here in code: validate every staged .md page that
+# lives under a category dir (i.e. user-authored content pages, not
+# captures, raw evidence, manifest/log files, or _index.md indexes).
+validator="${SCRIPT_DIR}/wiki-validate-page.py"
+if [[ -x "${validator}" ]]; then
+  failed=0
+  failed_pages=()
+  while IFS= read -r staged; do
+    [[ -n "${staged}" ]] || continue
+    [[ "${staged}" == *.md ]] || continue
+    # Skip non-content paths.
+    case "${staged}" in
+      .wiki-pending/*|raw/*|inbox/*|.raw-staging/*) continue ;;
+      _index.md|*/_index.md|index.md|README.md|log.md|schema.md) continue ;;
+    esac
+    # Skip deletions.
+    [[ -f "${wiki}/${staged}" ]] || continue
+    if ! python3 "${validator}" --wiki-root "${wiki}" "${wiki}/${staged}" >&2; then
+      failed=$((failed + 1))
+      failed_pages+=("${staged}")
+    fi
+  done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+  if [[ "${failed}" -gt 0 ]]; then
+    log_error "commit: validator failed for ${failed} page(s); refusing commit"
+    for p in "${failed_pages[@]}"; do
+      log_error "commit:   ${p}"
+    done
+    exit 1
+  fi
+fi
+
 git commit -m "${msg}" >/dev/null 2>&1 || {
   log_error "commit: git commit failed"
   exit 1

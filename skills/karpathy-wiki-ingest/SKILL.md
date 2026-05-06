@@ -395,7 +395,7 @@ The validator checks:
 - `sources:` is a flat list of strings (no nested mappings).
 - Every `quality.*` field is present and in range.
 
-If the validator exits non-zero for any page, fix the mechanical issue and re-validate. Do NOT commit a wiki state where the validator fails. The ingester MUST NOT call `wiki-commit.sh` (step 11) until every touched page passes the validator. Wire the validator's exit code into the commit decision; do not paper over it with a log line.
+If the validator exits non-zero for any page, fix the mechanical issue and re-validate. The commit script enforces this in code (0.2.8 #3): `wiki-commit.sh` runs `wiki-validate-page.py` on every staged content page and refuses to commit if any page fails. If the commit step refuses, fix the failing page and re-attempt the commit — do not bypass by skipping `wiki-commit.sh`.
 
 If a contradiction surfaces, add `contradictions:` frontmatter pointing to the conflicting page — do NOT resolve it during ingest. (Contradictions are a judgement call, not a validator violation.)
 
