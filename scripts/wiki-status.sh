@@ -20,7 +20,7 @@ role="$(wiki_config_get "${wiki}" role)"
 pending="$(wiki_capture_count_pending "${wiki}")"
 processing="$(find "${wiki}/.wiki-pending" -maxdepth 1 -name "*.processing" 2>/dev/null | wc -l | tr -d ' ')"
 locks="$(find "${wiki}/.locks" -maxdepth 1 -name "*.lock" 2>/dev/null | wc -l | tr -d ' ')"
-total_pages="$(find "${wiki}" -type f -name "*.md" -not -path "*/.wiki-pending/*" 2>/dev/null | wc -l | tr -d ' ')"
+total_pages=0  # filled below from discovered category counts (content set only)
 
 last_ingest="never"
 if [[ -f "${wiki}/.manifest.json" ]]; then
@@ -62,6 +62,13 @@ discovered_json="$(python3 "${SCRIPT_DIR_LOCAL}/wiki-discover.py" --wiki-root "$
   exit 1
 }
 
+# Total pages = sum of per-category content counts (already excludes
+# _index.md, reserved dirs, and dot-dirs in wiki-discover.py).
+total_pages="$(echo "${discovered_json}" | python3 -c "
+import json, sys
+print(sum(json.load(sys.stdin)['counts'].values()))
+")"
+
 # Quality rollup: count pages with overall < 3.5 (walks all discovered categories)
 below_35=0
 while IFS= read -r page; do
@@ -77,7 +84,7 @@ import json, sys
 d = json.load(sys.stdin)
 print('\n'.join(d['categories']))
 " | while read -r cat; do
-    find "${wiki}/${cat}" -type f -name "*.md" 2>/dev/null
+    find "${wiki}/${cat}" -type f -name "*.md" -not -name "_index.md" 2>/dev/null
   done
 )
 

@@ -32,7 +32,12 @@ def _is_category(name: str) -> bool:
 
 
 def _walk_category(root: Path) -> tuple[int, int]:
-    """Return (count_of_md_files, max_depth) for a category root.
+    """Return (count_of_content_md_files, max_depth) for a category root.
+
+    Counts content pages only — _index.md files are excluded because they
+    are auto-generated category indexes, not user-authored content. Their
+    presence-or-absence is a structural property of the category, not a
+    page in the wiki's content set.
 
     depth 1 means files directly under the category (e.g. concepts/foo.md).
     depth 2 means one level of subdir (e.g. projects/a/foo.md).
@@ -43,6 +48,9 @@ def _walk_category(root: Path) -> tuple[int, int]:
         # Skip files in reserved or dotted subdirectories at any depth.
         rel_parts = path.relative_to(root).parts
         if any(p in RESERVED or p.startswith(".") for p in rel_parts[:-1]):
+            continue
+        # Skip auto-generated category indexes.
+        if path.name == "_index.md":
             continue
         count += 1
         depth = len(rel_parts)  # filename is the last part
