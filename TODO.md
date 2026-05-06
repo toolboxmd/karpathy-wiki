@@ -1,7 +1,7 @@
 ---
 title: karpathy-wiki — TODO / backlog
 status: living-document
-last_reviewed: 2026-05-06  # post-v2.4 Leg 4 ship; next audit due after 5-10 more real-session ingests
+last_reviewed: 2026-05-06  # post-0.2.7 read-protocol restoration; next audit due after 5-10 more real-session reads + ingests
 convention:
   "One ## section per issue. Each section has its own YAML frontmatter block at
   the top."
@@ -34,6 +34,88 @@ fill every field, link into the referencing plan/commit/concept page.
 - `revisit_when` — short sentence naming the concrete condition under which this
   becomes priority-bumped. Required for `status: deferred | blocked`.
 - `refs` — backlinks to plan docs, commits, wiki pages, GitHub issues.
+
+---
+
+## 0.2.8: `bin/wiki orient` CLI shortcut for the read-protocol Step A
+
+```yaml
+status: deferred
+priority: p2
+effort: low
+labels: [0.2.8, read-protocol, follow-up]
+revisit_when:
+  "0.2.7 has been in the wild for a release cycle and we have evidence
+  about whether the prose-only read protocol produces reliable behavior.
+  If agents reliably orient via the prose ladder, ship the conservative
+  flavor of `bin/wiki orient` to make orientation cheaper. If agents
+  drift on the prose, the CLI shortcut alone won't fix it — first
+  sharpen the loader's resist-table."
+refs:
+  - skills/karpathy-wiki-read/SKILL.md (Step A — orient)
+  - skills/using-karpathy-wiki/SKILL.md (Iron Rule 4 + resist-table)
+```
+
+The 0.2.7 read protocol restores orientation as a prose procedure: the
+agent reads `<wiki>/schema.md` and the relevant `<wiki>/<category>/_index.md`
+itself. Two file reads per first-orient. Once-per-session amortization
+makes this cheap, but it relies on the agent following the prose.
+
+`bin/wiki orient` would automate the orient step. Two flavors:
+
+- **Conservative**: `bin/wiki orient` (no args) prints schema +
+  category indexes + recent log entries. Agent still reads candidate
+  pages itself. Collapses two file reads into one CLI call. Lower
+  drift surface than the aggressive version because the agent still
+  reads the candidates.
+- **Aggressive**: `bin/wiki orient "<query>"` does the substring/tag
+  match server-side and prints the top candidate paths + summaries.
+  Agent jumps straight to Step C. Higher drift risk: the agent might
+  skip the index reading and over-trust the server-side match.
+
+Ship conservative first. Promote to aggressive only if real-session
+evidence shows the conservative version produces reliable orientation
+without the agent skipping it.
+
+---
+
+## 0.2.8: `allowed-tools` scoping on the four skills
+
+```yaml
+status: deferred
+priority: p2
+effort: medium
+labels: [0.2.8, security, blast-radius]
+revisit_when:
+  "0.2.8 planning starts. Orthogonal to read-protocol restoration; was
+  deliberately not folded into 0.2.7 to keep the read-protocol commits
+  independently revertable from security-scoping commits. Should ship
+  alongside `bin/wiki orient` — the new CLI gives the read skill a
+  cleaner `allowed-tools` entry."
+refs:
+  - skills/using-karpathy-wiki/SKILL.md (loader — no scoping; remains permissive)
+  - skills/karpathy-wiki-capture/SKILL.md (capture — scope `bin/wiki capture` + `mv` to `inbox/`)
+  - skills/karpathy-wiki-read/SKILL.md (read — scope `bin/wiki orient` + Read/Grep/Glob/WebFetch/WebSearch/Task)
+  - skills/karpathy-wiki-ingest/SKILL.md (ingest — scope `scripts/wiki-*` + python3 + git)
+```
+
+Today no `karpathy-wiki-*` skill declares `allowed-tools`, so each
+skill runs with full tool access when active. The blast radius is
+correct in practice (each skill only invokes what it needs) but not
+harness-enforced. `allowed-tools` makes the scope explicit and
+enforced by Claude Code at call time.
+
+Per-skill draft:
+
+| Skill | `allowed-tools` |
+|---|---|
+| `using-karpathy-wiki` | none — loader, not actor; per upstream pattern, loaders don't restrict |
+| `karpathy-wiki-capture` | `Bash(bin/wiki capture:*)`, `Bash(mv * <wiki>/inbox/*)`, `Read`, `Write(/tmp/*)` |
+| `karpathy-wiki-read` | `Bash(bin/wiki orient:*)`, `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Task` |
+| `karpathy-wiki-ingest` | `Bash(scripts/wiki-*:*)`, `Bash(python3 scripts/wiki-*.py:*)`, `Read`, `Edit`, `Write`, `Bash(git ...)`, `Bash(flock ...)` |
+
+The ingester's broad write permissions are scoped to its own spawned
+`claude -p` process — main-agent permissions are unaffected.
 
 ---
 
@@ -343,6 +425,62 @@ captures "what was once on the list." When a TODO item ships:
 2. Change `status: shipped`.
 3. Add `shipped_in:` field pointing at the closing commit SHA.
 4. Keep the original body paragraph for posterity.
+
+## 0.2.7: read-from-wiki protocol restored (post-v2.4 regression fix)
+
+```yaml
+status: shipped
+priority: p0
+effort: medium
+labels: [0.2.7, read-protocol, regression-fix]
+shipped_in: TBD  # filled in by the closing commit
+refs:
+  - skills/using-karpathy-wiki/SKILL.md (Iron Rule 4 + resist-table)
+  - skills/karpathy-wiki-read/SKILL.md (new on-demand skill)
+  - skills/karpathy-wiki-capture/SKILL.md (body-sufficiency dedup)
+  - hooks/session-start (multi-platform JSON output)
+```
+
+The v2.4 split (`using-karpathy-wiki` + `karpathy-wiki-capture` +
+`karpathy-wiki-ingest`) silently dropped the read-from-wiki protocol.
+The legacy v2.3 skill had Iron Rule 6 ("Never answer a wiki-eligible
+question from training data without running orientation first") plus
+the orientation procedure ("read schema.md, index.md, last 10 entries
+of log.md"). Capture-authoring moved to one skill, ingest-orientation
+moved to another, and read-orientation was lost.
+
+User caught the regression: agents stopped checking the wiki before
+answering. 0.2.7 restores it, but BETTER than the legacy:
+
+- New Iron Rule 4 in the loader: "NO ANSWERING ANY USER QUESTION
+  WITHOUT ORIENTING FIRST." Orient-once-per-session amortization
+  framing makes the cost honest (two file reads on the first
+  question, near-zero on subsequent).
+- New `karpathy-wiki-read` skill with a deterministic 6-step
+  ladder (A-F). No agent judgement at branch points: candidate
+  count thresholds (0 → cold/web; 1-5 → inline; 6+ → Explore
+  subagent).
+- Resist-table covers the "trivial / general knowledge / pure
+  syntax" rationalizations that produced the v2.4 silent drop.
+- Subagent dispatch (Step E) for breadth questions; main-agent
+  inline read for targeted ones. Maps to the user's
+  `~/.claude/CLAUDE.md` Task Delegation rule.
+- Cite contract: every wiki-grounded answer cites the page paths
+  it drew from. Uncited claims must be flagged "(from training
+  data)."
+- Web search + capture-the-gap (Step D and Step F) replaces the
+  legacy "answer from training data with caveat" — the wiki grows
+  toward questions it failed to answer.
+
+Also shipped in 0.2.7 (orthogonal but bundled):
+
+- Multi-platform SessionStart hook output (Cursor / Claude Code
+  / Copilot CLI / SDK-standard). Mirrors obra/superpowers v5.1.0.
+- Body-sufficiency section dedup in `karpathy-wiki-capture`.
+- Legacy `skills/karpathy-wiki/SKILL.md` deleted (deprecated in v2.4,
+  removed now per upstream pattern of "split → delete in same release").
+- `CLAUDE.md` "If you are an AI agent" section (mirrors upstream's
+  contributor guidelines for AI-slop PR prevention).
 
 ## Re-run the Opus auditor after real-session usage accumulates
 

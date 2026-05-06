@@ -53,11 +53,12 @@ Replace `/Users/<you>/dev/karpathy-wiki` with your actual repo path. Then run `/
 
 ## How it works
 
-The skill is split into three focused parts, each loaded only when its moment arrives:
+The skill is split into four focused parts, each loaded only when its moment arrives:
 
-- `skills/using-karpathy-wiki/SKILL.md` — loader, auto-injected into every session by the SessionStart hook (via `hookSpecificOutput.additionalContext`). Defines triggers and points at the other two.
+- `skills/using-karpathy-wiki/SKILL.md` — loader, auto-injected into every session by the SessionStart hook (via `hookSpecificOutput.additionalContext` for Claude Code; `additional_context` for Cursor; `additionalContext` for Copilot CLI / SDK-standard). Defines iron laws, triggers, and points at the other three.
 - `skills/karpathy-wiki-capture/SKILL.md` — main agent, on-demand. Capture-authoring protocol: format, body floor, `bin/wiki capture` invocation.
-- `skills/karpathy-wiki-ingest/SKILL.md` — spawned `claude -p` ingester only. Orientation protocol, page format, validator contract, manifest protocol, commit protocol.
+- `skills/karpathy-wiki-read/SKILL.md` — main agent, on-demand. Deterministic 6-step orientation ladder for finding wiki coverage of a user question (orient → count candidates → inline-read OR Explore subagent OR web search → cite). Loaded for any user question, per Iron Rule 4.
+- `skills/karpathy-wiki-ingest/SKILL.md` — spawned `claude -p` ingester only. Deep orientation protocol, page format, validator contract, manifest protocol, commit protocol.
 
 Two hooks live at repo level:
 
@@ -75,14 +76,15 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**v0.2.6 — work in progress.** Claude Code only. Active development on a single-user wiki; not yet packaged for general consumption.
+**v0.2.7 — work in progress.** Claude Code primary; multi-platform JSON shapes emitted defensively but untested on Cursor / Copilot CLI / Codex / OpenCode / Gemini. Active development on a single-user wiki; not yet packaged for general consumption.
 
-**What works today (v2.4):**
+**What works today (v2.4 + 0.2.7 read-protocol restoration):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
 - Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
 - Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.
 - Validator enforces `type: <plural-category>` matching `path.parts[0]` and rejects pages at depth ≥5.
-- Three-skill split with auto-loaded `using-karpathy-wiki` loader (SessionStart `hookSpecificOutput.additionalContext` pattern). Subagents and spawned ingesters get only the surface they need.
+- **Read-from-wiki protocol** (restored in 0.2.7 after v2.4 split silently dropped it). Iron Rule 4 forbids answering any user question without orientation; new `karpathy-wiki-read` skill defines a deterministic 6-step ladder (orient → candidate count → inline-read for ≤5 candidates / Explore subagent for 6+ / web search + capture-the-gap for cold results) with a hard cite contract on every wiki-grounded answer.
+- Four-skill split with auto-loaded `using-karpathy-wiki` loader. Multi-platform SessionStart hook output: `hookSpecificOutput.additionalContext` for Claude Code, `additional_context` for Cursor, `additionalContext` for Copilot CLI / SDK-standard. Subagents and spawned ingesters get only the surface they need.
 - Project-wiki auto-resolution at capture time via `wiki-resolve.sh` (5 exit codes). `wiki use project|main|both` lets the user override; `wiki init-main` bootstraps `~/.wiki-pointer`.
 - Raw-direct ingest: drop a file into `<wiki>/inbox/` and the next SessionStart ingests it directly (no fabricated wrapper). Files accidentally dropped in `raw/` are recovered to `inbox/` under the manifest lock.
 - Deep orientation (steps 1-9) in the ingester; issues surfaced to `.ingest-issues.jsonl` and the `wiki issues` / `wiki status` commands.
@@ -91,10 +93,12 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 
 **What's deferred (see `TODO.md`):**
+- `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred to 0.2.8 — observe whether prose-only fix produces reliable behavior first).
+- `allowed-tools` scoping on the four skills (deferred to 0.2.8 — orthogonal to read-protocol restoration).
 - `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
 - Stop-hook gate for turn-closure enforcement (`hooks/stop` is currently a stub).
 - `.ingest.log` → `.ingest.jsonl` migration (dual-artifact pattern, scheduled for v2.5).
-- Cross-platform support (Codex, OpenCode, Cursor, Hermes, Gemini).
+- Test coverage for non-Claude-Code platforms (Cursor / Copilot CLI / Codex / OpenCode / Gemini).
 
 The shipped surface is enough for daily personal use; rough edges remain. PRs welcome once the repo opens for external contributions.
 
