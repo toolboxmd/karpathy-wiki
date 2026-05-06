@@ -44,17 +44,245 @@ case "${sub}" in
     echo "wiki doctor: not implemented in MVP. For now, ask the agent to run a deep lint of the wiki."
     exit 1
     ;;
+  capture)
+    # bin/wiki capture — single entry point for chat-driven captures.
+    # Reads body from stdin OR --body-file, validates, runs resolver,
+    # handles prompts/headless fallback, writes capture(s), spawns ingester(s).
+
+    title=""
+    kind=""
+    suggested_action="create"
+    body_file=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --title) title="$2"; shift 2 ;;
+        --kind) kind="$2"; shift 2 ;;
+        --suggested-action) suggested_action="$2"; shift 2 ;;
+        --body-file) body_file="$2"; shift 2 ;;
+        *) echo >&2 "wiki capture: unknown arg: $1"; exit 1 ;;
+      esac
+    done
+    [[ -n "${title}" ]] || { echo >&2 "wiki capture: --title required"; exit 1; }
+    [[ -n "${kind}" ]] || { echo >&2 "wiki capture: --kind required (chat-only|chat-attached|raw-direct)"; exit 1; }
+
+    # Body input: --body-file OR stdin (must be a pipe/file, not TTY)
+    body_buf="$(mktemp)"
+    trap 'rm -f "${body_buf}"' EXIT
+    if [[ -n "${body_file}" ]]; then
+      [[ -f "${body_file}" ]] || { echo >&2 "wiki capture: body file missing: ${body_file}"; exit 1; }
+      cp "${body_file}" "${body_buf}"
+    elif [[ ! -t 0 ]]; then
+      cat > "${body_buf}"
+    else
+      echo >&2 "wiki capture: no body provided. Pipe on stdin or use --body-file <path>."
+      exit 1
+    fi
+    body_size=$(wc -c < "${body_buf}")
+    if [[ "${body_size}" -gt 262144 ]]; then
+      echo >&2 "wiki capture: body is ${body_size} bytes (max 256 KB). Use raw-direct ingest: mv <file> <wiki>/inbox/ && wiki ingest-now."
+      exit 1
+    fi
+
+    # Validate body against kind floor
+    case "${kind}" in
+      chat-only)      floor=1500 ;;
+      chat-attached)  floor=1000 ;;
+      raw-direct)     floor=0 ;;
+      *) echo >&2 "wiki capture: unknown --kind '${kind}'"; exit 1 ;;
+    esac
+    if [[ "${body_size}" -lt "${floor}" ]]; then
+      echo >&2 "wiki capture: body is ${body_size} bytes; floor for kind=${kind} is ${floor}. Expand the body."
+      exit 1
+    fi
+
+    # Run resolver
+    resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || resolver_exit=$?
+
+    # Headless detection: any of WIKI_CAPTURE / CLAUDE_HEADLESS=1 / no TTY+no CLAUDE_AGENT_INTERACTIVE / CLAUDE_AGENT_PARENT.
+    is_headless=0
+    if [[ -n "${WIKI_CAPTURE:-}" || "${CLAUDE_HEADLESS:-0}" == "1" || -n "${CLAUDE_AGENT_PARENT:-}" ]]; then
+      is_headless=1
+    elif [[ ! -t 0 && -z "${CLAUDE_AGENT_INTERACTIVE:-}" ]]; then
+      is_headless=1
+    fi
+
+    case "${resolver_exit}" in
+      0)
+        # Success — proceed with returned wikis
+        ;;
+      10)
+        # Pointer missing
+        if [[ "${is_headless}" == 1 ]]; then
+          if [[ -f "$(pwd)/.wiki-config" ]]; then
+            # Cwd has its own config — proceed with cwd's wiki only,
+            # if and only if fork_to_main is false. (true → exit 12 path.)
+            if grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
+              orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
+                --title "${title}" \
+                --reason "headless: cwd .wiki-config requests fork_to_main=true but pointer is missing" \
+                --body-file "${body_buf}")"
+              echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
+              exit 1
+            fi
+            # Re-run resolver: it will succeed on cwd alone now.
+            resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || true
+          else
+            orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
+              --title "${title}" \
+              --reason "headless: pointer missing AND cwd unconfigured" \
+              --body-file "${body_buf}")"
+            echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
+            exit 1
+          fi
+        else
+          # Interactive: bootstrap pointer, then re-run capture
+          bash "${REPO_ROOT}/scripts/wiki-init-main.sh"
+          exec bash "${BASH_SOURCE[0]}" capture --title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}"
+        fi
+        ;;
+      11)
+        # Cwd unconfigured
+        if [[ "${is_headless}" == 1 ]]; then
+          # Read pointer to decide fallback
+          ptr=$(cat "${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}" 2>/dev/null | tr -d '[:space:]')
+          if [[ -z "${ptr}" || "${ptr}" == "none" ]]; then
+            orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
+              --title "${title}" \
+              --reason "headless: cwd unconfigured AND pointer = none/missing" \
+              --body-file "${body_buf}")"
+            echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
+            exit 1
+          fi
+          # Auto-select main-only
+          echo "main-only" > "$(pwd)/.wiki-mode"
+          echo >&2 "wiki capture: headless auto-selected main-only for cwd"
+          resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0
+        else
+          # Interactive: prompt user for project | main | both
+          # (Implementation: read from /dev/tty, persist via wiki-use.sh,
+          # then re-run resolver.)
+          echo
+          echo "This directory isn't configured for the wiki yet. How should captures here flow?"
+          echo "  1) project — create a project wiki at ./wiki/, captures stay local."
+          echo "  2) main    — captures go to the main wiki (the default)."
+          echo "  3) both    — fork: write the same capture into both wikis."
+          echo
+          read -r -p "Reply with 1, 2, or 3: " choice </dev/tty
+          case "${choice}" in
+            1) bash "${REPO_ROOT}/scripts/wiki-use.sh" project ;;
+            2) bash "${REPO_ROOT}/scripts/wiki-use.sh" main ;;
+            3) bash "${REPO_ROOT}/scripts/wiki-use.sh" both ;;
+            *) echo >&2 "wiki capture: invalid choice '${choice}'; aborting"; exit 1 ;;
+          esac
+          resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0
+        fi
+        ;;
+      12|13|14)
+        # Configuration error / conflict / half-built
+        case "${resolver_exit}" in
+          12) reason="resolver exit 12: cwd requires main wiki but pointer is none/missing" ;;
+          13) reason="resolver exit 13: cwd has BOTH .wiki-config and .wiki-mode (conflict)" ;;
+          14) reason="resolver exit 14: half-built wiki (cwd or pointer target missing required files)" ;;
+        esac
+        orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
+          --title "${title}" \
+          --reason "${reason}" \
+          --body-file "${body_buf}")"
+        echo >&2 "wiki capture: aborted; ${reason}; body preserved at ${orphan}"
+        exit 1
+        ;;
+      *)
+        echo >&2 "wiki capture: resolver returned unexpected exit ${resolver_exit}"
+        exit 1
+        ;;
+    esac
+
+    # At this point resolver_out has one or more target wiki paths (one per line).
+    if [[ -z "${resolver_out}" ]]; then
+      echo >&2 "wiki capture: resolver returned no targets despite exit 0"
+      exit 1
+    fi
+
+    # Build frontmatter + body for each target wiki and spawn ingester
+    ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+    slug="$(slugify "${title}")"
+    fork_id="fk-$(date +%s)-$$"
+    target_count=0
+    while IFS= read -r target_wiki; do
+      [[ -n "${target_wiki}" ]] || continue
+      target_count=$((target_count + 1))
+      capture_path="${target_wiki}/.wiki-pending/${ts}-${slug}.md"
+
+      # Resolve evidence_type from kind
+      case "${kind}" in
+        chat-only)     evidence_type="conversation"; evidence="conversation" ;;
+        chat-attached) evidence_type="mixed"; evidence="conversation" ;;
+        raw-direct)    evidence_type="file"; evidence="conversation" ;;
+      esac
+
+      {
+        echo "---"
+        echo "title: \"${title}\""
+        echo "evidence: \"${evidence}\""
+        echo "evidence_type: \"${evidence_type}\""
+        echo "capture_kind: \"${kind}\""
+        echo "suggested_action: \"${suggested_action}\""
+        echo "suggested_pages: []"
+        echo "captured_at: \"${ts}\""
+        echo "captured_by: \"in-session-agent\""
+        echo "propagated_from: null"
+        echo "---"
+        echo
+        cat "${body_buf}"
+      } > "${capture_path}"
+
+      bash "${REPO_ROOT}/scripts/wiki-spawn-ingester.sh" "${target_wiki}" "${capture_path}" &
+      disown 2>/dev/null || true
+    done <<< "${resolver_out}"
+
+    # Write fork-coordination record if multi-target
+    if [[ "${target_count}" -gt 1 ]]; then
+      forks_log="${HOME}/.wiki-forks.jsonl"
+      mkdir -p "$(dirname "${forks_log}")"
+      printf '{"fork_id":"%s","captured_at":"%s","title":"%s","wikis":%s}\n' \
+        "${fork_id}" "${ts}" "${title}" \
+        "$(echo "${resolver_out}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
+        >> "${forks_log}"
+    fi
+
+    echo "wiki capture: ${target_count} target(s) — ${title}"
+    ;;
+  init-main)
+    bash "${REPO_ROOT}/scripts/wiki-init-main.sh" "$@"
+    ;;
+  use)
+    bash "${REPO_ROOT}/scripts/wiki-use.sh" "$@"
+    ;;
+  ingest-now)
+    # Leg 3 implements this; placeholder for now
+    if [[ -f "${REPO_ROOT}/scripts/wiki-ingest-now.sh" ]]; then
+      bash "${REPO_ROOT}/scripts/wiki-ingest-now.sh" "$@"
+    else
+      echo >&2 "wiki ingest-now: not implemented (Leg 3 ships this)."
+      exit 1
+    fi
+    ;;
   help|--help|-h)
     cat <<EOF
 usage: wiki <subcommand>
 
 subcommands:
-  status     Read-only health report
-  doctor     Deep lint + fix (post-MVP)
-  help       This message
-
-Everything else — capture, ingest, query — is automatic or via natural
-language to the agent. No wiki init / wiki ingest / wiki query commands.
+  capture        Write a chat-driven capture (the agent's canonical entry point)
+                   wiki capture --title T --kind chat-only|chat-attached --suggested-action <act> [--body-file <path>]
+                   Body via stdin (pipe) OR --body-file. Max 256 KB.
+  ingest-now     Drift-scan + drain inbox/ on demand (Leg 3)
+                   wiki ingest-now [<wiki-path>]
+  use            Change per-cwd wiki mode
+                   wiki use project|main|both
+  init-main      Bootstrap ~/.wiki-pointer (interactive)
+  status         Read-only health report
+  doctor         Deep lint + fix (post-MVP)
+  help           This message
 EOF
     ;;
   *)
