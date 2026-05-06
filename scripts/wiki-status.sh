@@ -142,3 +142,59 @@ cat <<EOF
 categories exceeding depth 4: ${exceeding}
 category count vs soft-ceiling 8: ${cat_count} (ceiling 8)
 EOF
+
+# Issues summary (v2.4)
+issues_log="${wiki}/.ingest-issues.jsonl"
+if [[ -f "${issues_log}" && -s "${issues_log}" ]]; then
+  echo
+  echo "## Issues reported by ingesters (last 30 days)"
+  python3 - "${issues_log}" <<'PYEOF'
+import json, sys
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
+cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+counts = Counter()
+malformed = 0
+
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            continue
+        ts = obj.get("reported_at", "")
+        try:
+            t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t < cutoff:
+            continue
+        counts[obj.get("issue_type", "other")] += 1
+
+if not counts:
+    print("  (none in the last 30 days)")
+else:
+    LABEL = {
+        "broken-cross-link": "broken cross-link",
+        "contradiction":     "contradiction",
+        "schema-drift":      "schema drift",
+        "stale-claim":       "stale claim",
+        "tag-drift":         "tag drift",
+        "quality-concern":   "quality concern",
+        "orphan":            "orphan",
+        "other":             "other",
+    }
+    for itype, n in counts.most_common():
+        plural = "s" if n != 1 else ""
+        print(f"  {n} {LABEL.get(itype, itype)}{plural}")
+    print("  Run `wiki issues` for details.")
+
+if malformed:
+    print(f"  ({malformed} malformed line(s) skipped)")
+PYEOF
+fi
