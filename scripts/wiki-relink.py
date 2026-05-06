@@ -77,7 +77,7 @@ def main() -> int:
     for md in root.rglob("*.md"):
         # Skip files in reserved/dotted dirs
         rel_parts = md.relative_to(root).parts
-        if any(p in {"raw", "index", "archive", "Clippings"} or p.startswith(".") for p in rel_parts[:-1]):
+        if any(p in {"raw", "index", "archive", "inbox"} or p.startswith(".") for p in rel_parts[:-1]):
             continue
         if rewrite_in_file(md, moves, root):
             changed += 1

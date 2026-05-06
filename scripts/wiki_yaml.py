@@ -27,7 +27,7 @@ _NESTED_MAP_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)")
 # Directory names that are NEVER treated as wiki categories. Used by
 # wiki-discover.py, wiki-fix-frontmatter.py, wiki-build-index.py to skip
 # infrastructure dirs at any depth in the wiki tree.
-RESERVED: set[str] = {"raw", "index", "archive", "Clippings"}
+RESERVED: set[str] = {"raw", "index", "archive", "inbox"}
 
 
 def extract_frontmatter(text: str) -> Optional[str]:

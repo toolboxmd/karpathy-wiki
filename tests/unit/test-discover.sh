@@ -10,7 +10,7 @@ setup() {
   WIKI="${TMP}/wiki"
   mkdir -p "${WIKI}/concepts" "${WIKI}/entities" "${WIKI}/queries" "${WIKI}/ideas" \
            "${WIKI}/raw" "${WIKI}/.wiki-pending" "${WIKI}/.locks" "${WIKI}/.obsidian" \
-           "${WIKI}/Clippings"
+           "${WIKI}/inbox"
   touch "${WIKI}/.wiki-config"
 }
 teardown() { rm -rf "${TMP}"; }
@@ -25,7 +25,7 @@ test_categories_listed() {
 test_reserved_skipped() {
   setup
   out="$(python3 "${DISCOVER}" --wiki-root "${WIKI}")"
-  echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'raw' not in d['categories'] and 'Clippings' not in d['categories'] and '.obsidian' not in d['categories'], d"
+  echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'raw' not in d['categories'] and 'inbox' not in d['categories'] and '.obsidian' not in d['categories'], d"
   teardown
 }
 
@@ -74,7 +74,7 @@ test_json_shape_has_required_keys() {
 test_reserved_set_exposed() {
   setup
   out="$(python3 "${DISCOVER}" --wiki-root "${WIKI}")"
-  echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'raw' in d['reserved'] and 'Clippings' in d['reserved']"
+  echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'raw' in d['reserved'] and 'inbox' in d['reserved']"
   teardown
 }
 

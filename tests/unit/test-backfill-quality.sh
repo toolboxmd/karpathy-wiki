@@ -118,14 +118,14 @@ EOF
 
 test_backfill_skips_reserved_directories() {
   local tmp; tmp="$(mktemp -d)"
-  mkdir -p "${tmp}/wiki/concepts" "${tmp}/wiki/Clippings" "${tmp}/wiki/raw"
+  mkdir -p "${tmp}/wiki/concepts" "${tmp}/wiki/inbox" "${tmp}/wiki/raw"
   touch "${tmp}/wiki/.wiki-config"
-  cat > "${tmp}/wiki/Clippings/Post.md" <<'EOF'
-some clipping content with no frontmatter
+  cat > "${tmp}/wiki/inbox/Post.md" <<'EOF'
+some inbox content with no frontmatter
 EOF
   python3 "${REPO_ROOT}/scripts/wiki-backfill-quality.py" --wiki-root "${tmp}/wiki"
-  if grep -q "rated_by:" "${tmp}/wiki/Clippings/Post.md" 2>/dev/null; then
-    echo "FAIL: backfill modified Clippings/"
+  if grep -q "rated_by:" "${tmp}/wiki/inbox/Post.md" 2>/dev/null; then
+    echo "FAIL: backfill modified inbox/"
     rm -rf "${tmp}"
     exit 1
   fi
