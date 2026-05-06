@@ -58,7 +58,7 @@ fi
 mkdir -p "${wiki}"
 
 # Directories (always ensure present)
-for d in concepts entities queries ideas raw inbox .wiki-pending .locks .obsidian .raw-staging; do
+for d in concepts entities queries ideas raw inbox .wiki-pending .wiki-pending/schema-proposals .locks .obsidian .raw-staging; do
   mkdir -p "${wiki}/${d}"
 done
 
