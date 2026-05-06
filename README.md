@@ -4,6 +4,8 @@ A Claude Code skill for auto-maintained LLM wikis — based on [Andrej Karpathy'
 
 Instead of re-deriving answers from raw documents every time (RAG), the LLM incrementally builds and maintains a wiki — a structured, interlinked collection of markdown files. The wiki compounds with every source you add and every question you ask.
 
+For day-to-day usage and the workflow walkthrough, see [MANUAL.md](MANUAL.md).
+
 ## What it does
 
 As you work with Claude Code, any durable knowledge — research findings, resolved confusions, validated patterns, gotchas, architectural decisions — gets written as a small capture file and processed by a detached background worker into a persistent wiki. The wiki is git-versioned. Your flow is never interrupted.
