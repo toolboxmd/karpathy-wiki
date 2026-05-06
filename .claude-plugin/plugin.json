@@ -1,6 +1,6 @@
 {
   "name": "karpathy-wiki",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Auto-maintained LLM wiki based on Andrej Karpathy's pattern.",
   "author": {
     "name": "lukaszmaj"
