@@ -53,17 +53,43 @@ case "${sub}" in
     kind=""
     suggested_action="create"
     body_file=""
+    evidence_path=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --title) title="$2"; shift 2 ;;
         --kind) kind="$2"; shift 2 ;;
         --suggested-action) suggested_action="$2"; shift 2 ;;
         --body-file) body_file="$2"; shift 2 ;;
+        --evidence-path) evidence_path="$2"; shift 2 ;;
         *) echo >&2 "wiki capture: unknown arg: $1"; exit 1 ;;
       esac
     done
     [[ -n "${title}" ]] || { echo >&2 "wiki capture: --title required"; exit 1; }
     [[ -n "${kind}" ]] || { echo >&2 "wiki capture: --kind required (chat-only|chat-attached|raw-direct)"; exit 1; }
+
+    # Evidence-path validation. Iron rule (per skill): capture's `evidence`
+    # field is the canonical source path, or the literal "conversation"
+    # only when capture_kind=chat-only with no real path. The manifest
+    # `origin` field reads this verbatim, so chat-attached and raw-direct
+    # MUST carry a real path.
+    case "${kind}" in
+      chat-only)
+        if [[ -n "${evidence_path}" ]]; then
+          echo >&2 "wiki capture: --evidence-path is not valid for --kind chat-only"
+          exit 1
+        fi
+        ;;
+      chat-attached|raw-direct)
+        if [[ -z "${evidence_path}" ]]; then
+          echo >&2 "wiki capture: --evidence-path <abs> is required for --kind ${kind}"
+          exit 1
+        fi
+        if [[ "${evidence_path}" != /* ]]; then
+          echo >&2 "wiki capture: --evidence-path must be absolute, got: ${evidence_path}"
+          exit 1
+        fi
+        ;;
+    esac
 
     # Body input: --body-file OR stdin (must be a pipe/file, not TTY)
     body_buf="$(mktemp)"
@@ -131,7 +157,9 @@ case "${sub}" in
            && grep -q '^role = "main"' "${bootstrap_candidate}/.wiki-config"; then
           printf '%s\n' "${bootstrap_candidate}" > "${bootstrap_pointer}"
           echo >&2 "wiki capture: bootstrapped ${bootstrap_pointer} → ${bootstrap_candidate}"
-          exec bash "${BASH_SOURCE[0]}" capture --title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}"
+          reexec_args=(--title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}")
+          [[ -n "${evidence_path}" ]] && reexec_args+=(--evidence-path "${evidence_path}")
+          exec bash "${BASH_SOURCE[0]}" capture "${reexec_args[@]}"
         fi
         if [[ "${is_headless}" == 1 ]]; then
           if [[ -f "$(pwd)/.wiki-config" ]]; then
@@ -158,7 +186,9 @@ case "${sub}" in
         else
           # Interactive: bootstrap pointer, then re-run capture
           bash "${REPO_ROOT}/scripts/wiki-init-main.sh"
-          exec bash "${BASH_SOURCE[0]}" capture --title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}"
+          reexec_args=(--title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}")
+          [[ -n "${evidence_path}" ]] && reexec_args+=(--evidence-path "${evidence_path}")
+          exec bash "${BASH_SOURCE[0]}" capture "${reexec_args[@]}"
         fi
         ;;
       11)
@@ -234,11 +264,13 @@ case "${sub}" in
       target_count=$((target_count + 1))
       capture_path="${target_wiki}/.wiki-pending/${ts}-${slug}.md"
 
-      # Resolve evidence_type from kind
+      # Resolve evidence_type from kind. Iron rule: `evidence` is the
+      # canonical source path (or the literal "conversation" only when
+      # kind=chat-only with no attached file).
       case "${kind}" in
         chat-only)     evidence_type="conversation"; evidence="conversation" ;;
-        chat-attached) evidence_type="mixed"; evidence="conversation" ;;
-        raw-direct)    evidence_type="file"; evidence="conversation" ;;
+        chat-attached) evidence_type="mixed"; evidence="${evidence_path}" ;;
+        raw-direct)    evidence_type="file"; evidence="${evidence_path}" ;;
       esac
 
       {

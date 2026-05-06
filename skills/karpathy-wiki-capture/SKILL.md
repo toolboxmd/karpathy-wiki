@@ -17,8 +17,19 @@ All chat-driven captures go through ONE command:
 ```bash
 echo "$BODY" | bin/wiki capture \
   --title "<one-line title>" \
-  --kind chat-only|chat-attached \
+  --kind chat-only \
   --suggested-action create|update|augment
+```
+
+For chat-attached (a real file accompanies the conversation), pass the
+absolute path of that file via `--evidence-path`:
+
+```bash
+echo "$BODY" | bin/wiki capture \
+  --title "<one-line title>" \
+  --kind chat-attached \
+  --suggested-action create|update|augment \
+  --evidence-path /absolute/path/to/source/file.ext
 ```
 
 Or for long bodies:
@@ -30,6 +41,12 @@ bin/wiki capture \
   --suggested-action create \
   --body-file /tmp/body.md
 ```
+
+`--evidence-path` is REQUIRED for `--kind chat-attached` and
+`--kind raw-direct`, REJECTED for `--kind chat-only`. The path lands
+verbatim in the capture's `evidence:` frontmatter and propagates to
+the manifest's `origin` field — the iron-rule contract that lets the
+ingester trace every wiki page back to its source.
 
 `bin/wiki capture` handles wiki resolution (which wiki the capture goes
 to), prompts the user for setup if needed, writes the capture file,
