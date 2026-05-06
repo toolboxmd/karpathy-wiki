@@ -267,6 +267,9 @@ case "${sub}" in
       exit 1
     fi
     ;;
+  issues)
+    bash "${REPO_ROOT}/scripts/wiki-issues.sh" --wiki "$(wiki_root)" "$@"
+    ;;
   help|--help|-h)
     cat <<EOF
 usage: wiki <subcommand>
@@ -277,6 +280,8 @@ subcommands:
                    Body via stdin (pipe) OR --body-file. Max 256 KB.
   ingest-now     Drift-scan + drain inbox/ on demand (Leg 3)
                    wiki ingest-now [<wiki-path>]
+  issues         Show ingester-reported issues (grouped, severity-ordered)
+                   wiki issues
   use            Change per-cwd wiki mode
                    wiki use project|main|both
   init-main      Bootstrap ~/.wiki-pointer (interactive)
