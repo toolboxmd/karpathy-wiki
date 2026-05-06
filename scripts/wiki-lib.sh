@@ -47,16 +47,35 @@ slugify() {
 wiki_root_from_cwd() {
   # Walks up from cwd looking for a dir containing .wiki-config.
   # Prints absolute path or exits 1.
+  #
+  # Walk-up rules (paired #11/#9 fix, 0.2.8):
+  #   - At leaf cwd: probe BOTH ${dir}/.wiki-config AND ${dir}/wiki/.wiki-config.
+  #     The nested-wiki/ probe lets a user `cd ~/proj` and have their
+  #     ~/proj/wiki/ project wiki resolve.
+  #   - During walk-up: probe ONLY ${dir}/.wiki-config. Probing
+  #     ${dir}/wiki/.wiki-config at every level lets cwd inside an unrelated
+  #     project leak into ${HOME}/wiki/ (cross-project leak).
+  #   - Stop walking when ${dir} == ${HOME}. The user's home dir itself is
+  #     not a project root; if the main wiki lives at ${HOME}/wiki/ it must
+  #     be reached via the explicit pointer, not by accidental walk-up.
   local dir
   dir="$(pwd)"
-  while [[ "${dir}" != "/" ]]; do
+
+  # Leaf probe: nested wiki/ allowed.
+  if [[ -f "${dir}/.wiki-config" ]]; then
+    echo "${dir}"
+    return 0
+  fi
+  if [[ -f "${dir}/wiki/.wiki-config" ]]; then
+    echo "${dir}/wiki"
+    return 0
+  fi
+
+  # Walk up. Stop at $HOME (exclusive) and at /.
+  dir="$(dirname "${dir}")"
+  while [[ "${dir}" != "/" && "${dir}" != "${HOME}" ]]; do
     if [[ -f "${dir}/.wiki-config" ]]; then
       echo "${dir}"
-      return 0
-    fi
-    # Also check if cwd has a wiki/ subdir with .wiki-config
-    if [[ -f "${dir}/wiki/.wiki-config" ]]; then
-      echo "${dir}/wiki"
       return 0
     fi
     dir="$(dirname "${dir}")"

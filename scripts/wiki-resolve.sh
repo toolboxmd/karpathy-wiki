@@ -12,9 +12,14 @@
 #   13 — both .wiki-config AND .wiki-mode present at cwd (conflict)
 #   14 — half-built wiki (cwd or pointer target missing required files)
 #
-# Cwd-only resolution: walks NO parents. The SessionStart hook handles
-# its own walk-up via wiki_root_from_cwd; this resolver is for
-# user-driven CLI commands (bin/wiki capture, bin/wiki ingest-now).
+# Walks up from cwd looking for the first dir containing .wiki-config or
+# .wiki-mode (project-config marker). Stops at ${HOME} (exclusive) and at
+# /. If no marker is found in the walk-up range, falls back to pwd and
+# returns exit 11 (unconfigured).
+#
+# Walk-up is bounded to the user tree so a project wiki at ~/proj/A is
+# discovered from ~/proj/A/sub/dir/, but a cwd inside an unrelated project
+# does not leak into ${HOME}/wiki/ (paired #11/#9 fix, 0.2.8).
 #
 # Override $WIKI_POINTER_FILE for testing (default: ~/.wiki-pointer).
 
@@ -58,11 +63,23 @@ case "${pointer_content}" in
     ;;
 esac
 
-# Read cwd state.
+# Walk up from pwd looking for a dir with .wiki-config or .wiki-mode.
+# Stop at ${HOME} (exclusive) and at /. cwd_base is where we found a
+# marker (or pwd if no marker found in range — falls through to exit 11).
+cwd_base="$(pwd)"
+_scan="$(pwd)"
+while [[ "${_scan}" != "/" && "${_scan}" != "${HOME}" ]]; do
+  if [[ -f "${_scan}/.wiki-config" || -f "${_scan}/.wiki-mode" ]]; then
+    cwd_base="${_scan}"
+    break
+  fi
+  _scan="$(dirname "${_scan}")"
+done
+
 config_present=0
 mode_present=0
-[[ -f "$(pwd)/.wiki-config" ]] && config_present=1
-[[ -f "$(pwd)/.wiki-mode" ]] && mode_present=1
+[[ -f "${cwd_base}/.wiki-config" ]] && config_present=1
+[[ -f "${cwd_base}/.wiki-mode" ]] && mode_present=1
 
 # Conflict: both files present.
 if [[ "${config_present}" == 1 && "${mode_present}" == 1 ]]; then
@@ -73,12 +90,12 @@ wiki_root=""
 fork=0
 
 if [[ "${config_present}" == 1 ]]; then
-  config="$(pwd)/.wiki-config"
+  config="${cwd_base}/.wiki-config"
   role=$(grep '^role = ' "${config}" | head -1 | sed 's/^role = "\(.*\)"/\1/')
 
   case "${role}" in
     main|project)
-      wiki_root="$(pwd)"
+      wiki_root="${cwd_base}"
       # Validate structure
       for required in schema.md index.md .wiki-pending; do
         if [[ ! -e "${wiki_root}/${required}" ]]; then
@@ -89,11 +106,11 @@ if [[ "${config_present}" == 1 ]]; then
     project-pointer)
       sub=$(grep '^wiki = ' "${config}" | head -1 | sed 's/^wiki = "\(.*\)"/\1/')
       [[ -n "${sub}" ]] || exit 14
-      # Resolve relative path against cwd
+      # Resolve relative path against cwd_base (the dir holding .wiki-config)
       if [[ "${sub}" == /* ]]; then
         wiki_root="${sub}"
       else
-        wiki_root="$(pwd)/${sub#./}"
+        wiki_root="${cwd_base}/${sub#./}"
       fi
       # Validate structure
       [[ -f "${wiki_root}/.wiki-config" ]] || exit 14
@@ -115,7 +132,7 @@ if [[ "${config_present}" == 1 ]]; then
   fi
 
 elif [[ "${mode_present}" == 1 ]]; then
-  mode_value=$(head -1 "$(pwd)/.wiki-mode" | tr -d '[:space:]')
+  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | tr -d '[:space:]')
   case "${mode_value}" in
     main-only)
       [[ -n "${main_wiki}" ]] || exit 12
