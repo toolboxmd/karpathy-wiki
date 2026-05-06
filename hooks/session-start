@@ -14,11 +14,16 @@
 # should not prevent drain. Use `set -uo pipefail` for safer var handling.
 set -uo pipefail
 
-# Fork-bomb guard. Spawned ingesters are themselves `claude -p` sessions, which
-# trigger SessionStart again. Without this guard, drift+drain re-runs inside
-# every ingester, each spawning N more, exploding to thousands of processes.
+# v2.4 step 1: subagent / ingester fork-bomb guard.
+# Skip the entire hook (no loader, no drift-scan, no drain) when:
+#   - WIKI_CAPTURE is set (we are inside a spawned ingester; spawned ingesters
+#     are themselves `claude -p` sessions which trigger SessionStart again —
+#     without this guard, drift+drain re-runs inside every ingester, each
+#     spawning N more, exploding to thousands of processes).
+#   - CLAUDE_AGENT_PARENT is set (we are a subagent dispatched by another
+#     agent; the wiki rules apply to the main agent only).
 # WIKI_CAPTURE is set by wiki-spawn-ingester.sh on the headless worker's env.
-if [[ -n "${WIKI_CAPTURE:-}" ]]; then
+if [[ -n "${WIKI_CAPTURE:-}" || -n "${CLAUDE_AGENT_PARENT:-}" ]]; then
   exit 0
 fi
 
@@ -27,9 +32,39 @@ REPO_ROOT="$(cd "${HOOK_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
-# Locate wiki from cwd.
+# v2.4 step 2: loader injection (always runs, regardless of wiki presence).
+# Reads skills/using-karpathy-wiki/SKILL.md and emits its body wrapped in
+# <EXTREMELY_IMPORTANT> tags as hookSpecificOutput.additionalContext, so
+# the agent sees the karpathy-wiki rules in every conversation.
+LOADER_PATH="${REPO_ROOT}/skills/using-karpathy-wiki/SKILL.md"
+if [[ -f "${LOADER_PATH}" ]]; then
+  loader_content="$(cat "${LOADER_PATH}")"
+
+  # Escape the loader content for JSON embedding.
+  # Each ${s//old/new} is a single C-level pass — fast for large strings.
+  escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+  }
+
+  loader_escaped="$(escape_for_json "${loader_content}")"
+  context_prefix='<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Below is the full content of the using-karpathy-wiki loader skill — auto-loaded into every conversation. For all other karpathy-wiki skills (capture, ingest), use the Skill tool when their moment arrives:**\n\n'
+  context_suffix='\n</EXTREMELY_IMPORTANT>'
+
+  # Claude Code expects hookSpecificOutput.additionalContext (nested).
+  printf '{"hookSpecificOutput":{"additionalContext":"%s%s%s"}}' \
+    "${context_prefix}" "${loader_escaped}" "${context_suffix}"
+fi
+
+# v2.4 step 3: wiki resolution (existing walk-up behavior).
+# Steps 4-6 (drift-scan, drain, reclaim) only run if a wiki is found.
 wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
-[[ -n "${wiki}" ]] || exit 0  # No wiki; nothing to do.
+[[ -n "${wiki}" ]] || exit 0  # No wiki; loader already emitted, nothing else to do.
 
 log_info "session-start: wiki=${wiki}"
 

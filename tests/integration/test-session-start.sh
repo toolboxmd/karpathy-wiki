@@ -18,16 +18,34 @@ setup() {
 
 teardown() { rm -rf "${TESTDIR}"; }
 
-test_hook_emits_empty_context_on_clean_wiki() {
+test_hook_emits_loader_context_in_normal_session() {
   setup
   local output
-  output="$(cd "${WIKI}" && bash "${HOOK}")"
-  # Per superpowers-style-guide, hooks must emit zero model-visible context.
-  # Empty output or just {} is acceptable; anything else is a regression.
-  if [[ -z "${output}" ]] || [[ "${output}" == "{}" ]]; then
-    echo "PASS: test_hook_emits_empty_context_on_clean_wiki"
+  output="$(cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}")"
+  # v2.4: hook emits the using-karpathy-wiki loader as additionalContext in
+  # normal sessions. Drift/drain still write to .ingest.log (not stdout).
+  if echo "${output}" | grep -q 'additionalContext' \
+     && echo "${output}" | grep -q 'EXTREMELY_IMPORTANT' \
+     && echo "${output}" | grep -q 'using-karpathy-wiki'; then
+    echo "PASS: test_hook_emits_loader_context_in_normal_session"
   else
-    echo "FAIL: hook emitted context on clean wiki: '${output}'"
+    echo "FAIL: hook did not emit loader additionalContext: '${output:0:200}...'"
+    teardown; exit 1
+  fi
+  teardown
+}
+
+test_hook_emits_empty_context_in_subagent_or_ingester() {
+  setup
+  local output_capture output_subagent
+  output_capture="$(cd "${WIKI}" && WIKI_CAPTURE=1 bash "${HOOK}")"
+  output_subagent="$(cd "${WIKI}" && env -u WIKI_CAPTURE CLAUDE_AGENT_PARENT=1 bash "${HOOK}")"
+  # In subagent/ingester contexts the hook must emit no model-visible context.
+  if [[ -z "${output_capture}" || "${output_capture}" == "{}" ]] \
+     && [[ -z "${output_subagent}" || "${output_subagent}" == "{}" ]]; then
+    echo "PASS: test_hook_emits_empty_context_in_subagent_or_ingester"
+  else
+    echo "FAIL: hook leaked context in guarded contexts: capture='${output_capture:0:120}' subagent='${output_subagent:0:120}'"
     teardown; exit 1
   fi
   teardown
@@ -76,7 +94,8 @@ test_hook_exits_fast() {
   teardown
 }
 
-test_hook_emits_empty_context_on_clean_wiki
+test_hook_emits_loader_context_in_normal_session
+test_hook_emits_empty_context_in_subagent_or_ingester
 test_hook_spawns_ingester_for_pending
 test_hook_exits_fast
 echo "ALL PASS"
