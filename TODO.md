@@ -131,13 +131,13 @@ prompt entry above.
 
 ---
 
-## 0.2.8: `bin/wiki orient` CLI shortcut for the read-protocol Step A
+## Future: `bin/wiki orient` CLI shortcut for the read-protocol Step A
 
 ```yaml
 status: deferred
 priority: p2
 effort: low
-labels: [0.2.8, read-protocol, follow-up]
+labels: [read-protocol, follow-up]
 revisit_when:
   "0.2.7 has been in the wild for a release cycle and we have evidence
   about whether the prose-only read protocol produces reliable behavior.
@@ -173,19 +173,19 @@ without the agent skipping it.
 
 ---
 
-## 0.2.8: `allowed-tools` scoping on the four skills
+## Future: `allowed-tools` scoping on the four skills
 
 ```yaml
 status: deferred
 priority: p2
 effort: medium
-labels: [0.2.8, security, blast-radius]
+labels: [security, blast-radius]
 revisit_when:
-  "0.2.8 planning starts. Orthogonal to read-protocol restoration; was
-  deliberately not folded into 0.2.7 to keep the read-protocol commits
-  independently revertable from security-scoping commits. Should ship
-  alongside `bin/wiki orient` — the new CLI gives the read skill a
-  cleaner `allowed-tools` entry."
+  "Next read-protocol-cycle planning. Orthogonal to read-protocol
+  restoration; was deliberately not folded into 0.2.7 to keep the
+  read-protocol commits independently revertable from security-scoping
+  commits. Should ship alongside `bin/wiki orient` — the new CLI gives
+  the read skill a cleaner `allowed-tools` entry."
 refs:
   - skills/using-karpathy-wiki/SKILL.md (loader — no scoping; remains permissive)
   - skills/karpathy-wiki-capture/SKILL.md (capture — scope `bin/wiki capture` + `mv` to `inbox/`)
@@ -213,13 +213,13 @@ The ingester's broad write permissions are scoped to its own spawned
 
 ---
 
-## 0.2.8: cold-no-wiki question path — Iron Rule 4 + no resolvable wiki
+## Future: cold-no-wiki question path — Iron Rule 4 + no resolvable wiki
 
 ```yaml
 status: open
 priority: p2
 effort: low
-labels: [0.2.8, read-protocol, cold-start, ux]
+labels: [read-protocol, cold-start, ux]
 revisit_when:
   "Surfaces in real sessions where a user asks a question in a directory
   with no wiki AND no ~/.wiki-pointer (so the read protocol's Step A has
@@ -246,7 +246,7 @@ The capture path handles this case via the interactive `wiki-init-main.sh` promp
 
 **Proposed fix.** When the read skill's Step A finds no resolvable wiki, the agent should — in the same announce line as the answer — surface a one-line note suggesting `wiki init-main`, so the user is prompted to set up a main wiki the first time the cold-no-wiki path fires. After the user runs it, subsequent questions get the full read protocol with capture-the-gap working.
 
-Two flavors to consider during the 0.2.8 brainstorm:
+Two flavors to consider during the next read-protocol brainstorm:
 
 - **Prose-only:** karpathy-wiki-read/SKILL.md adds a Step A.0 that says "if no wiki resolvable, the answer should include a one-line nudge: *'(No wiki configured here — run `wiki init-main` to start capturing.)'*" Cheap. Relies on the agent following the prose.
 - **Structural:** add a `bin/wiki ensure-main` (or similar) that the read skill calls at Step A. The CLI either resolves a wiki path (success) OR prints the nudge text + exits non-zero. The agent uses the exit code to decide whether to include the nudge.
