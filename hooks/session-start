@@ -351,10 +351,16 @@ except Exception:
   mv "${abs_src}" "${target}"
   log_warn "session-start: raw-recovery | unmanifested file moved raw/ → inbox/: ${basename}"
 
-  _manifest_lock_release
-
-  # Emit raw-direct capture for the recovered file.
+  # Emit raw-direct capture for the recovered file BEFORE releasing the
+  # lock. The contract is: manifest-check + mv + capture-emit form one
+  # atomic unit. Releasing the lock first opens a window where a
+  # concurrent SessionStart could observe the file in inbox/ during its
+  # inbox-scan and race to emit a competing capture (currently masked by
+  # the deterministic capture-filename hash + atomic-create, but the lock
+  # window is the durable invariant).
   _emit_raw_direct_capture "${target}"
+
+  _manifest_lock_release
 }
 _drift_scan || log_warn "session-start: drift scan failed (non-fatal)"
 
