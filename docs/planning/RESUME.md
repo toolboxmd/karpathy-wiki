@@ -97,7 +97,7 @@ The user will run the final end-to-end smoke test (Task 28) in a real Claude Cod
 
 ## Where original plans came from (already archived in this repo)
 
-Everything under `docs/planning/` was copied from `/Users/lukaszmaj/dev/bigbrain/` during the planning phase. Originals remain there for reference. The conversation transcript from the planning session is at `docs/planning/transcripts/2026-04-22-design-session.jsonl` locally but is gitignored (not on GitHub).
+Everything under `docs/planning/` was copied from `/Users/lukaszmaj/dev/bigbrain/` during the planning phase. Originals remain there for reference.
 
 ## If something feels off
 
