@@ -371,7 +371,7 @@ revisit_when:
   pre-stop-turn check didn't fire."
 refs:
   - docs/planning/2026-04-24-karpathy-wiki-v2.1-missed-capture-patch.md#deferred-to-later
-  - skills/karpathy-wiki/SKILL.md (turn-closure prose at "Turn closure — before
+  - skills/karpathy-wiki-capture/SKILL.md (turn-closure prose at "Turn closure — before
     you stop")
 ```
 
@@ -398,7 +398,7 @@ revisit_when:
   below 3.5 quality."
 refs:
   - bin/wiki (currently exits 1 with "not implemented")
-  - skills/karpathy-wiki/SKILL.md "Quality ratings" section (defines the
+  - skills/karpathy-wiki-ingest/SKILL.md "Quality ratings" section (defines the
     contract doctor must satisfy)
   - docs/planning/2026-04-22-karpathy-wiki-v2.md (scope-cut to stub in v1)
 ```
@@ -711,7 +711,6 @@ refs:
 Items deferred from v2.3:
 
 - **Automated retroactive global link migration** — v2.3 only rewrote inbound links to the 4 moved pages; ~50+ other relative links throughout the wiki stayed in their existing form. A bulk migration script that converts every `../foo.md` to `/category/foo.md` would polish the wiki but is non-urgent.
-- **Skill-bundling sync mechanism** — currently `/skills/karpathy-wiki/scripts/` is a symlink to `../../scripts/`, which works for development but breaks if the plugin is installed via `claude plugin install` (which resolves the symlink to a real copy). A proper sync mechanism (build step, symlink-aware install, single canonical location) would be cleaner. v2.3 ships hand-copy + symlink + CI guard; v2.4 picks the right machinery.
 - **`wiki create-category <name>` CLI** — v2.3 contract is `mkdir`. If friction surfaces from heavy use, a small CLI wrapper that does `mkdir + name validation + initial _index.md skeleton` is straightforward.
 - **Cosmetic reorg of historical migration scripts to `scripts/historical/`** — `wiki-migrate-v2-hardening.sh`, `wiki-migrate-v2.2.sh`, `wiki-migrate-v2.3.sh` accumulate. Moving them to `scripts/historical/` (or similar) keeps the active scripts dir clean.
 - **`wiki doctor` real implementation** — still a stub. Now with the recursive `_index.md` tree, the smartest-model re-rate path is unblocked; orphan repair and tag-synonym consolidation also become cleaner.
@@ -733,7 +732,7 @@ refs:
   - scripts/wiki-init-main.sh (silent migration + bootstrap prompts)
   - scripts/wiki-use.sh (per-cwd mode switch: project|main|both)
   - bin/wiki capture (calls resolver before writing to .wiki-pending/)
-  - skills/karpathy-wiki/SKILL.md (lines 74-91: "When no wiki exists" auto-init algorithm — now executable)
+  - skills/karpathy-wiki/SKILL.md (lines 74-91: "When no wiki exists" auto-init algorithm — file deleted in v0.2.7; now executable via wiki-resolve.sh)
   - scripts/wiki-lib.sh (lines 47-65: wiki_root_from_cwd walks up looking for .wiki-config)
   - scripts/wiki-init.sh (supports project mode: `wiki-init.sh project ./wiki ~/wiki`)
 ```
@@ -790,8 +789,8 @@ refs:
   - scripts/wiki-manifest-lock.sh (cross-platform lock + atomic manifest rename)
   - scripts/wiki-ingest-now.sh (on-demand drift+drain)
   - bin/wiki ingest-now (CLI entry point)
-  - skills/karpathy-wiki/SKILL.md (line 121: "user adds a file to raw/" trigger)
-  - skills/karpathy-wiki/SKILL.md (line 502: Iron Rule 5 "Never modify files in raw/")
+  - skills/karpathy-wiki/SKILL.md (line 121: "user adds a file to raw/" trigger — file deleted in v0.2.7; trigger now in skills/using-karpathy-wiki/SKILL.md)
+  - skills/karpathy-wiki/SKILL.md (line 502: Iron Rule 5 "Never modify files in raw/" — file deleted in v0.2.7)
 ```
 
 **SHIPPED in v2.4 Leg 3 (2026-05-06).** Files dropped into `inbox/` (the new unified drop zone, replacing reserved `Clippings/`) are auto-ingested without a fabricated wrapper capture: the SessionStart hook emits a `capture_kind: raw-direct` capture pointing at the absolute file path; the ingester reads the file directly and generates a wiki page. Files accidentally dropped in `raw/` are recovered to `inbox/` under the manifest lock. Original gap analysis preserved below.
@@ -841,7 +840,7 @@ refs:
   - skills/using-karpathy-wiki/SKILL.md (the loader body that gets injected)
   - skills/karpathy-wiki-capture/SKILL.md (main agent on-demand)
   - skills/karpathy-wiki-ingest/SKILL.md (spawned ingester only)
-  - skills/karpathy-wiki/SKILL.md (legacy, marked DEPRECATED in v2.4)
+  - skills/karpathy-wiki/SKILL.md (legacy, deleted in v0.2.7 after split)
   - ~/wiki/concepts/claude-code-skill-autoload-mechanisms.md (revisit criteria + implementation sketch)
 ```
 

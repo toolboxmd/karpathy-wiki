@@ -51,7 +51,7 @@ Then register the plugin with Claude Code by adding two entries to `~/.claude/se
 
 Replace `/Users/<you>/dev/karpathy-wiki` with your actual repo path. Then run `/reload-plugins` in any Claude Code session. Hooks, commands, and the SKILL are auto-discovered from the plugin manifest — no manual hook wiring required.
 
-> **Note on local install:** Claude Code's plugin system requires plugins to come from a registered marketplace, even for local-directory sources. The `extraKnownMarketplaces` entry above declares this repo IS a (single-plugin) marketplace; `marketplace.json` at the repo root makes that real. A bare `~/.claude/plugins/karpathy-wiki` symlink is NOT enough — Claude Code won't load slash commands from it.
+> **Note on local install:** Claude Code's plugin system requires plugins to come from a registered marketplace, even for local-directory sources. The `extraKnownMarketplaces` entry above declares this repo IS a (single-plugin) marketplace; `.claude-plugin/marketplace.json` makes that real. A bare `~/.claude/plugins/karpathy-wiki` symlink is NOT enough — Claude Code won't load slash commands from it.
 
 ## How it works
 
