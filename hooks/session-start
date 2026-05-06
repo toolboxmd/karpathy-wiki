@@ -39,8 +39,16 @@ source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
 # v2.4 step 2: loader injection (always runs, regardless of wiki presence).
 # Reads skills/using-karpathy-wiki/SKILL.md and emits its body wrapped in
-# <EXTREMELY_IMPORTANT> tags as hookSpecificOutput.additionalContext, so
-# the agent sees the karpathy-wiki rules in every conversation.
+# <EXTREMELY_IMPORTANT> tags as additional-context, so the agent sees the
+# karpathy-wiki rules in every conversation.
+#
+# v0.2.7: three-platform JSON output mirroring obra/superpowers v5.1.0.
+# Cursor hooks expect additional_context (snake_case).
+# Claude Code hooks expect hookSpecificOutput.additionalContext (nested).
+# Copilot CLI (v1.0.11+) and others expect additionalContext (top-level, SDK
+# standard). Claude Code reads BOTH additional_context and hookSpecificOutput
+# without deduplication, so we must emit only the field the current platform
+# consumes.
 LOADER_PATH="${REPO_ROOT}/skills/using-karpathy-wiki/SKILL.md"
 if [[ -f "${LOADER_PATH}" ]]; then
   loader_content="$(cat "${LOADER_PATH}")"
@@ -58,12 +66,23 @@ if [[ -f "${LOADER_PATH}" ]]; then
   }
 
   loader_escaped="$(escape_for_json "${loader_content}")"
-  context_prefix='<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Below is the full content of the using-karpathy-wiki loader skill — auto-loaded into every conversation. For all other karpathy-wiki skills (capture, ingest), use the Skill tool when their moment arrives:**\n\n'
+  context_prefix='<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Below is the full content of the using-karpathy-wiki loader skill — auto-loaded into every conversation. For all other karpathy-wiki skills (capture, read, ingest), use the Skill tool when their moment arrives:**\n\n'
   context_suffix='\n</EXTREMELY_IMPORTANT>'
+  session_context="${context_prefix}${loader_escaped}${context_suffix}"
 
-  # Claude Code expects hookSpecificOutput.additionalContext (nested).
-  printf '{"hookSpecificOutput":{"additionalContext":"%s%s%s"}}' \
-    "${context_prefix}" "${loader_escaped}" "${context_suffix}"
+  # Branch on harness signal. Order matters: Cursor sets BOTH
+  # CURSOR_PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT, so the Cursor check has to
+  # come first.
+  if [[ -n "${CURSOR_PLUGIN_ROOT:-}" ]]; then
+    # Cursor: snake_case, top-level.
+    printf '{"additional_context":"%s"}' "${session_context}"
+  elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -z "${COPILOT_CLI:-}" ]]; then
+    # Claude Code: nested under hookSpecificOutput.
+    printf '{"hookSpecificOutput":{"additionalContext":"%s"}}' "${session_context}"
+  else
+    # Copilot CLI (sets COPILOT_CLI=1) or unknown harness — SDK standard.
+    printf '{"additionalContext":"%s"}' "${session_context}"
+  fi
 fi
 
 # v2.4 step 3: wiki resolution (existing walk-up behavior).
