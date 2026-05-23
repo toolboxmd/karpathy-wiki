@@ -377,12 +377,19 @@ _drain_pending() {
   done
   [[ "${count}" -eq 0 ]] && return 0
 
-  log_info "session-start: draining ${count} pending captures"
+  # Cap drain parallelism: only spawn first N captures per SessionStart.
+  # Prevents fork-bomb (47 pending → 47 parallel `claude -p` → 47 find $HOME).
+  # Remaining captures drain on next SessionStart.
+  local max_per_session=2
+  local spawned=0
+  log_info "session-start: draining ${count} pending captures (cap=${max_per_session}/session)"
   for f in "${wiki}/.wiki-pending"/*.md; do
     [[ -f "${f}" ]] || continue
     [[ "${f}" == *.processing ]] && continue
+    [[ "${spawned}" -ge "${max_per_session}" ]] && break
     bash "${REPO_ROOT}/scripts/wiki-spawn-ingester.sh" "${wiki}" "${f}" &
     disown 2>/dev/null || true
+    spawned=$((spawned + 1))
   done
 }
 _drain_pending || log_warn "session-start: drain failed (non-fatal)"

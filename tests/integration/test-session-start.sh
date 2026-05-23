@@ -80,6 +80,29 @@ test_hook_spawns_ingester_for_pending() {
   teardown
 }
 
+test_hook_caps_drain_parallelism() {
+  setup
+  # Drop 5 pending captures.
+  for i in 1 2 3 4 5; do
+    cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
+       "${WIKI}/.wiki-pending/2026-04-22T14-30-pending-${i}.md"
+  done
+  (cd "${WIKI}" && bash "${HOOK}") >/dev/null
+  sleep 1
+  # Drain cap is 2/session: max 2 captures claimed, >=3 still pending as .md.
+  local claimed_count pending_count
+  claimed_count=$(find "${WIKI}/.wiki-pending" -name "*.processing" -type f | wc -l | tr -d ' ')
+  pending_count=$(find "${WIKI}/.wiki-pending" -maxdepth 1 -name "*.md" -type f ! -name "*.processing" | wc -l | tr -d ' ')
+  if [[ "${claimed_count}" -le 2 ]] && [[ "${pending_count}" -ge 3 ]]; then
+    echo "PASS: test_hook_caps_drain_parallelism (claimed=${claimed_count}, pending=${pending_count})"
+  else
+    echo "FAIL: drain cap broken: claimed=${claimed_count} (want <=2), pending=${pending_count} (want >=3)"
+    ls "${WIKI}/.wiki-pending/"
+    teardown; exit 1
+  fi
+  teardown
+}
+
 test_hook_exits_fast() {
   setup
   local start end elapsed
@@ -97,5 +120,6 @@ test_hook_exits_fast() {
 test_hook_emits_loader_context_in_normal_session
 test_hook_emits_empty_context_in_subagent_or_ingester
 test_hook_spawns_ingester_for_pending
+test_hook_caps_drain_parallelism
 test_hook_exits_fast
 echo "ALL PASS"

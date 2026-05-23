@@ -50,7 +50,14 @@ fi
 
 # Build the ingest prompt.
 # The skill prose defines what this prompt means operationally.
-prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${processing}. Load and follow skills/karpathy-wiki-ingest/SKILL.md exactly."
+# Use the absolute SKILL.md path (resolved from SCRIPT_DIR) so the spawned
+# ingester never falls back to scanning $HOME with `find` to locate the
+# operational contract. Relative `skills/karpathy-wiki-ingest/SKILL.md` is
+# unresolvable when `claude -p` starts with cwd outside the wiki repo, which
+# triggers exhaustive `find $HOME -name SKILL.md ...` scans inside every
+# spawned ingester (10–30s of disk thrash per ingester, scaled by drain size).
+REPO_ROOT="${SCRIPT_DIR%/scripts}"
+prompt="Ingest this capture into the wiki. Wiki root: ${wiki}. Capture file: ${processing}. Load and follow ${REPO_ROOT}/skills/karpathy-wiki-ingest/SKILL.md exactly."
 
 # Explicit env passthrough (Anthropic API keys, etc.).
 # Headless workers don't inherit interactive-session env by default on some platforms.
