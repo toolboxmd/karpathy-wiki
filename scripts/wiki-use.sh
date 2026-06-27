@@ -24,7 +24,8 @@ read_main_wiki() {
     echo "none"
     return
   fi
-  cat "${POINTER_FILE}" | tr -d '[:space:]'
+  # Trim surrounding whitespace only; preserve interior spaces in the path.
+  cat "${POINTER_FILE}" | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 write_project_pointer_config() {
