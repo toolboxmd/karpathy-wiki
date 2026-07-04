@@ -44,9 +44,40 @@ slugify() {
     | sed 's/^-//;s/-$//'
 }
 
+_wiki_deref_pointer() {
+  # If <dir>/.wiki-config has role "project-pointer", print the pointed wiki
+  # path (the config's `wiki = "..."` value, resolved against <dir>);
+  # otherwise print <dir> unchanged.
+  #
+  # A project-pointer config marks a PROJECT ROOT, not a wiki. Callers that
+  # treated the pointer dir as the wiki measured the wrong directory —
+  # wiki-status reported no manifest / no git / empty index, and the
+  # session-start/stop hooks ran their drift-scan and drain as silent no-ops.
+  # Parsing mirrors wiki-resolve.sh's project-pointer case (grep + sed, no
+  # python dependency). Target validation stays with the caller so a
+  # half-built pointer target fails loudly instead of silently re-pointing.
+  local dir="$1"
+  local config="${dir}/.wiki-config"
+  local role sub
+  role="$(grep '^role = ' "${config}" 2>/dev/null | head -1 | sed 's/^role = "\(.*\)"/\1/')"
+  if [[ "${role}" == "project-pointer" ]]; then
+    sub="$(grep '^wiki = ' "${config}" 2>/dev/null | head -1 | sed 's/^wiki = "\(.*\)"/\1/')"
+    [[ -n "${sub}" ]] || sub="./wiki"
+    if [[ "${sub}" == /* ]]; then
+      echo "${sub}"
+    else
+      echo "${dir}/${sub#./}"
+    fi
+    return 0
+  fi
+  echo "${dir}"
+}
+
 wiki_root_from_cwd() {
   # Walks up from cwd looking for a dir containing .wiki-config.
-  # Prints absolute path or exits 1.
+  # Prints absolute path or exits 1. A found config with role
+  # "project-pointer" is dereferenced to its pointed wiki (see
+  # _wiki_deref_pointer) — the pointer dir itself is never a wiki.
   #
   # Walk-up rules (paired #11/#9 fix, 0.2.8):
   #   - At leaf cwd: probe BOTH ${dir}/.wiki-config AND ${dir}/wiki/.wiki-config.
@@ -63,11 +94,11 @@ wiki_root_from_cwd() {
 
   # Leaf probe: nested wiki/ allowed.
   if [[ -f "${dir}/.wiki-config" ]]; then
-    echo "${dir}"
+    _wiki_deref_pointer "${dir}"
     return 0
   fi
   if [[ -f "${dir}/wiki/.wiki-config" ]]; then
-    echo "${dir}/wiki"
+    _wiki_deref_pointer "${dir}/wiki"
     return 0
   fi
 
@@ -75,7 +106,7 @@ wiki_root_from_cwd() {
   dir="$(dirname "${dir}")"
   while [[ "${dir}" != "/" && "${dir}" != "${HOME}" ]]; do
     if [[ -f "${dir}/.wiki-config" ]]; then
-      echo "${dir}"
+      _wiki_deref_pointer "${dir}"
       return 0
     fi
     dir="$(dirname "${dir}")"
