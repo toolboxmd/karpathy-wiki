@@ -27,8 +27,12 @@ set -uo pipefail
 #     spawning N more, exploding to thousands of processes).
 #   - CLAUDE_AGENT_PARENT is set (we are a subagent dispatched by another
 #     agent; the wiki rules apply to the main agent only).
+#   - WIKI_SWEEP_INSIDE is set (we are the `claude -p` worker of a session
+#     sweep; wiki-sweep.sh sets it on that child's env). Same cascade as the
+#     ingester case: observed 2026-07-14 as 663 `claude -p` processes in 90s
+#     because this sentinel was missing here.
 # WIKI_CAPTURE is set by wiki-spawn-ingester.sh on the headless worker's env.
-if [[ -n "${WIKI_CAPTURE:-}" || -n "${CLAUDE_AGENT_PARENT:-}" ]]; then
+if [[ -n "${WIKI_CAPTURE:-}" || -n "${CLAUDE_AGENT_PARENT:-}" || -n "${WIKI_SWEEP_INSIDE:-}" ]]; then
   exit 0
 fi
 
