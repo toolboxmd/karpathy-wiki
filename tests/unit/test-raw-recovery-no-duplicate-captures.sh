@@ -1,5 +1,5 @@
 #!/bin/bash
-# RED: two parallel SessionStarts on the same wiki with the same
+# RED: two parallel source scans on the same wiki with the same
 # unmanifested file in raw/ must produce at most one capture for that file.
 #
 # Bug (0.2.8 #8): hooks/session-start::_raw_recovery acquires the manifest
@@ -24,12 +24,12 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-HOOK="${REPO_ROOT}/hooks/session-start"
+SCAN="${REPO_ROOT}/scripts/wiki-scan.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-[[ -f "${HOOK}" ]] || fail "hook missing"
+[[ -x "${SCAN}" ]] || fail "scanner missing"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -44,19 +44,14 @@ printf '%s\n' "raw orphan content" > "${RAW_FILE}"
 # Backdate by 60s — Linux/macOS portable.
 touch -t "$(date -v-60S +%Y%m%d%H%M.%S 2>/dev/null || date -d '60 seconds ago' +%Y%m%d%H%M.%S)" "${RAW_FILE}"
 
-# Run the hook twice in parallel from inside the wiki cwd. The hook resolves
-# its target wiki via wiki_root_from_cwd. Drop the loader-injection stdout
-# (we don't care about JSON output here).
-run_hook() {
-  ( cd "${WIKI}" && \
-    env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT \
-        CLAUDE_PLUGIN_ROOT="${REPO_ROOT}" \
-        bash "${HOOK}" >/dev/null 2>&1 )
+# Run the scanner twice in parallel.
+run_scan() {
+  bash "${SCAN}" "${WIKI}" >/dev/null 2>&1
 }
 
-run_hook &
+run_scan &
 PID1=$!
-run_hook &
+run_scan &
 PID2=$!
 
 wait "${PID1}" "${PID2}" 2>/dev/null || true
@@ -97,7 +92,7 @@ echo "Runtime check: parallel SessionStarts produce exactly one raw-recovery cap
 # (deterministic capture filenames + atomic create), so the runtime test
 # can pass even with the race window open. The structural test verifies
 # the iron rule: lock-window covers manifest-check + mv + capture-emit.
-python3 - "${HOOK}" <<'PY'
+python3 - "${SCAN}" <<'PY'
 import re, sys
 src = open(sys.argv[1]).read()
 m = re.search(r'_raw_recovery\(\)\s*\{(.*?)\n\}\n', src, re.DOTALL)

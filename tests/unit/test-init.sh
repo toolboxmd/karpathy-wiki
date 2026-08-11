@@ -32,21 +32,30 @@ test_init_main_writes_correct_role() {
   grep -q '^role = "main"' "${TESTDIR}/wiki/.wiki-config" || {
     echo "FAIL: role != main"; teardown; exit 1
   }
+  if rg -q 'platform|headless_command|settings|fork_to_main|main =' "${TESTDIR}/wiki/.wiki-config"; then
+    echo "FAIL: tracked config contains operational fields"; teardown; exit 1
+  fi
+  [[ ! -e "${TESTDIR}/wiki/.wiki-config.local" ]] || {
+    echo "FAIL: init invented a per-user provider profile"; teardown; exit 1
+  }
+  grep -Fxq '.wiki-config.local' "${TESTDIR}/wiki/.gitignore" || {
+    echo "FAIL: local runtime config is not ignored"; teardown; exit 1
+  }
   echo "PASS: test_init_main_writes_correct_role"
   teardown
 }
 
-test_init_project_links_to_main() {
+test_init_project_keeps_routing_out_of_tracked_config() {
   setup
   bash "${INIT}" main "${TESTDIR}/main-wiki" >/dev/null
   bash "${INIT}" project "${TESTDIR}/proj/wiki" "${TESTDIR}/main-wiki" >/dev/null
   grep -q '^role = "project"' "${TESTDIR}/proj/wiki/.wiki-config" || {
     echo "FAIL: role != project"; teardown; exit 1
   }
-  grep -q "main = \"${TESTDIR}/main-wiki\"" "${TESTDIR}/proj/wiki/.wiki-config" || {
-    echo "FAIL: main path not recorded"; teardown; exit 1
-  }
-  echo "PASS: test_init_project_links_to_main"
+  if grep -q '^main = ' "${TESTDIR}/proj/wiki/.wiki-config"; then
+    echo "FAIL: machine-local main path leaked into tracked config"; teardown; exit 1
+  fi
+  echo "PASS: test_init_project_keeps_routing_out_of_tracked_config"
   teardown
 }
 
@@ -114,7 +123,7 @@ test_init_seed_list_creates_ideas_not_sources() {
 
 test_init_main_creates_structure
 test_init_main_writes_correct_role
-test_init_project_links_to_main
+test_init_project_keeps_routing_out_of_tracked_config
 test_init_idempotent
 test_init_creates_git_repo_if_git_installed
 test_init_python_version_check_too_old

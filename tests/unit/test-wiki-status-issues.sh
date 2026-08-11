@@ -21,12 +21,13 @@ output=$(bash "${STATUS}" "${WIKI}" 2>/dev/null) || fail "status without issues 
 
 # Add issue log with 6 broken links + 2 contradictions
 log="${WIKI}/.ingest-issues.jsonl"
+reported_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 {
   for i in {1..6}; do
-    echo "{\"reported_at\":\"2026-05-06T10:00:00Z\",\"ingester_run\":\"in-${i}\",\"capture\":\"c.md\",\"page\":\"concepts/p${i}.md\",\"issue_type\":\"broken-cross-link\",\"severity\":\"warn\",\"detail\":\"Link missing\"}"
+    echo "{\"reported_at\":\"${reported_at}\",\"ingester_run\":\"in-${i}\",\"capture\":\"c.md\",\"page\":\"concepts/p${i}.md\",\"issue_type\":\"broken-cross-link\",\"severity\":\"warn\",\"detail\":\"Link missing\"}"
   done
   for i in {1..2}; do
-    echo "{\"reported_at\":\"2026-05-06T10:00:00Z\",\"ingester_run\":\"in-c${i}\",\"capture\":\"c.md\",\"page\":\"concepts/q${i}.md\",\"issue_type\":\"contradiction\",\"severity\":\"error\",\"detail\":\"Conflict\"}"
+    echo "{\"reported_at\":\"${reported_at}\",\"ingester_run\":\"in-c${i}\",\"capture\":\"c.md\",\"page\":\"concepts/q${i}.md\",\"issue_type\":\"contradiction\",\"severity\":\"error\",\"detail\":\"Conflict\"}"
   done
 } > "${log}"
 

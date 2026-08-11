@@ -36,6 +36,18 @@ All cross-links in the page body and the `related:` frontmatter use
 - ❌ `[Auth flow](concepts/auth-flow.md)` (relative; breaks when read from a nested page)
 - ❌ `[Auth flow](../concepts/auth-flow.md)` (relative; breaks when page moves)
 
+## Timestamp convention
+
+`created`, `updated`, and `quality.rated_at` are actual UTC timestamps. When
+working from a shell, generate them with:
+
+```bash
+date -u +%Y-%m-%dT%H:%M:%SZ
+```
+
+Never take local wall-clock output and merely append `Z`; that produces a
+syntactically valid but factually incorrect timestamp on non-UTC machines.
+
 ## Quality block — never overwrite human ratings
 
 If `rated_by: human`, the ingester MUST NOT change any quality field.

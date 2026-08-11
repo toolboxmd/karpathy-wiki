@@ -87,12 +87,31 @@ wiki_root_from_cwd() {
 # Config read
 # ---------------------------------------------------------------------------
 
-wiki_config_get() {
-  # wiki_config_get <wiki_root> <key.subkey>
-  # Invokes wiki-config-read.py. Requires python3.
+_wiki_config_read_file() {
+  # _wiki_config_read_file <config_path> <key.subkey>
   local root="$1"
   local key="$2"
   local script
   script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki-config-read.py"
-  python3 "${script}" "${root}/.wiki-config" "${key}"
+  python3 "${script}" "${root}" "${key}"
+}
+
+wiki_structural_config_get() {
+  # wiki_structural_config_get <wiki_root> <key.subkey>
+  local root="$1"
+  local key="$2"
+  _wiki_config_read_file "${root}/.wiki-config" "${key}"
+}
+
+wiki_runtime_config_get() {
+  # wiki_runtime_config_get <wiki_root> <key.subkey>
+  local root="$1"
+  local key="$2"
+  _wiki_config_read_file "${root}/.wiki-config.local" "${key}"
+}
+
+wiki_config_get() {
+  # Backward-compatible structural reader. Runtime call sites must use
+  # wiki_runtime_config_get explicitly; there is no silent cross-file fallback.
+  wiki_structural_config_get "$@"
 }

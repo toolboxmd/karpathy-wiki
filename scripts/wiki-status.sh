@@ -150,6 +150,13 @@ categories exceeding depth 4: ${exceeding}
 category count vs soft-ceiling 8: ${cat_count} (ceiling 8)
 EOF
 
+echo
+echo "## Ingest runtime"
+if ! python3 "${SCRIPT_DIR}/wiki_runtime_status.py" "${wiki}"; then
+  echo "runtime config: invalid"
+  echo "wiki status: runtime health helper failed; content health above is still valid"
+fi
+
 # Issues summary (v2.4)
 issues_log="${wiki}/.ingest-issues.jsonl"
 if [[ -f "${issues_log}" && -s "${issues_log}" ]]; then

@@ -4,25 +4,34 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-HOOK="${REPO_ROOT}/hooks/session-start"
+SCAN="${REPO_ROOT}/scripts/wiki-scan.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
-trap 'rm -rf "${TESTDIR}"' EXIT
+cleanup() {
+  # SessionStart detaches the test ingester. On macOS, rm can briefly race
+  # with that child creating its final processing/log entry and report
+  # "Directory not empty" even though the assertion already passed.
+  local attempt
+  for attempt in {1..20}; do
+    rm -rf "${TESTDIR}" 2>/dev/null && return 0
+    sleep 0.05
+  done
+  rm -rf "${TESTDIR}"
+}
+trap cleanup EXIT
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${WIKI}/.wiki-config"
-rm -f "${WIKI}/.wiki-config.bak"
 
 # Drop a file with mtime = NOW (within 5s)
 echo "fresh content" > "${WIKI}/inbox/fresh.md"
 touch "${WIKI}/inbox/fresh.md"
 
-# Run hook — should defer
-( cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}" >/dev/null 2>&1 ) || true
+# Run scanner — should defer
+bash "${SCAN}" "${WIKI}" >/dev/null
 
 # No drift- capture should appear yet (the inbox emit was skipped due to defer).
 for f in "${WIKI}/.wiki-pending"/drift-*; do
@@ -31,7 +40,7 @@ done
 
 # Wait > 5 seconds and re-run
 sleep 6
-( cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}" >/dev/null 2>&1 ) || true
+bash "${SCAN}" "${WIKI}" >/dev/null
 
 # Now a capture SHOULD appear
 found=""

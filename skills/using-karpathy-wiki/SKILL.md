@@ -1,7 +1,7 @@
 ---
 name: using-karpathy-wiki
 description: |
-  Auto-loaded into every conversation by the karpathy-wiki SessionStart hook. This is the loader — it tells the agent WHEN to capture and points at the full operational skills (`karpathy-wiki-capture` for authoring, `karpathy-wiki-ingest` for the spawned ingester). Read this preamble; load the on-demand skills only when their moment arrives.
+  Auto-loaded by the SessionStart hook. Defines when to capture and routes the main agent or detached ingester to the appropriate on-demand skill.
 ---
 
 <SUBAGENT-STOP>
@@ -18,7 +18,7 @@ When you write a capture, run an ingest, or answer from the wiki, prefix your re
 
 > **Using the karpathy-wiki skill to [capture this / ingest pending captures / answer from wiki].**
 
-This is the ONLY wiki-mechanics text the user sees. Do not narrate orientation, capture authoring, spawn mechanics, or state-machine progress. Do all the wiki work silently after the announce line.
+This is the ONLY wiki-mechanics text the user sees. Do not narrate orientation, capture authoring, dispatch mechanics, or state-machine progress. Do all the wiki work silently after the announce line.
 
 ## Instruction priority
 
@@ -33,7 +33,7 @@ NO SKIPPING A CAPTURE BECAUSE "IT DOESN'T LOOK WIKI-SHAPED"
 NO ANSWERING ANY USER QUESTION WITHOUT ORIENTING FIRST
 ```
 
-Captures go to `<wiki>/.wiki-pending/<timestamp>-<slug>.md`. A detached `claude -p` ingester reads the capture and writes the wiki page in the background.
+Captures go to `<wiki>/.wiki-pending/<timestamp>-<slug>.md`. The bounded dispatcher assigns each capture to the configured provider/model profile and ingests it in the background.
 
 ## Orient before answering — the read protocol
 
@@ -104,7 +104,7 @@ mv <subagent-report-path> <wiki>/inbox/<basename>
 wiki ingest-now <wiki>          # or wait for next SessionStart
 ```
 
-For ANY user question (including "what does the wiki know about X" questions, but also any other question per Iron Rule 4): load `karpathy-wiki-read/SKILL.md` and run the deterministic 6-step ladder. Do NOT load `karpathy-wiki-ingest/SKILL.md` — that's for the spawned ingester only and contains write-side machinery the main agent never needs.
+For ANY user question (including "what does the wiki know about X" questions, but also any other question per Iron Rule 4): load `karpathy-wiki-read/SKILL.md` and run the deterministic 6-step ladder. Do NOT load `karpathy-wiki-ingest/SKILL.md` — that's for the detached runtime ingester only and contains write-side machinery the main agent never needs.
 
 ## Mode change
 
@@ -118,10 +118,10 @@ Confirm the change in one line; do not over-narrate.
 
 ## What's NOT in this loader
 
-The full operational details — capture format, body-size floors, spawn mechanics, ingester orientation, page format, manifest protocol, commit conventions — live in the on-demand skills:
+The full operational details — capture format, body-size floors, dispatch mechanics, ingester orientation, page format, manifest protocol, commit conventions — live in the on-demand skills:
 
 - `skills/karpathy-wiki-capture/SKILL.md` — load when you are about to write a capture.
 - `skills/karpathy-wiki-read/SKILL.md` — load when you are about to answer a user question (Iron Rule 4).
-- `skills/karpathy-wiki-ingest/SKILL.md` — loaded by the spawned ingester via its prompt; the main agent never reads this.
+- `skills/karpathy-wiki-ingest/SKILL.md` — loaded by the detached ingester via its provider prompt; the main agent never reads this.
 
 If you do not know what to do at a particular step, load the on-demand skill — do not invent.

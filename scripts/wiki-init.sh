@@ -66,35 +66,10 @@ done
 today="$(date +%Y-%m-%d)"
 
 if [[ ! -f "${wiki}/.wiki-config" ]]; then
-  if [[ "${role}" == "main" ]]; then
-    cat > "${wiki}/.wiki-config" <<EOF
-role = "main"
+  cat > "${wiki}/.wiki-config" <<EOF
+role = "${role}"
 created = "${today}"
-
-[platform]
-agent_cli = "claude"
-headless_command = "claude -p"
-
-[settings]
-auto_commit = true
 EOF
-  else
-    {
-      echo "role = \"project\""
-      if [[ -n "${main_path}" ]]; then
-        echo "main = \"${main_path}\""
-      fi
-      echo "created = \"${today}\""
-      echo "fork_to_main = false"
-      echo ""
-      echo "[platform]"
-      echo "agent_cli = \"claude\""
-      echo "headless_command = \"claude -p\""
-      echo ""
-      echo "[settings]"
-      echo "auto_commit = true"
-    } > "${wiki}/.wiki-config"
-  fi
 fi
 
 if [[ ! -f "${wiki}/index.md" ]]; then
@@ -167,8 +142,9 @@ that should become a wiki page here:
 - Manual file drops: downloaded articles, PDF→markdown exports,
   meeting notes.
 
-After you drop a file, ingestion happens on the next agent session
-start (silent), or immediately if you run \`wiki ingest-now <this-wiki-path>\`.
+After you drop a file, ingestion follows the dispatch mode selected in
+your per-machine runtime config, or runs immediately when you use
+\`wiki ingest-now <this-wiki-path>\`.
 
 **Do NOT put files in \`raw/\`.** That directory is the ingester's
 archive — every file there has a manifest entry tracking origin,
@@ -185,8 +161,8 @@ Location:
 - **Note location:** \`inbox\`
 - **Vault:** select this wiki's directory
 
-That's it. Clip a page; the file lands in \`inbox/\`; next agent session
-ingests it.
+That's it. Clip a page; the file lands in \`inbox/\`; the configured
+dispatcher ingests it.
 
 ## Other top-level directories
 
@@ -217,7 +193,10 @@ if [[ ! -f "${wiki}/.gitignore" ]]; then
 # Runtime state (per-machine, never commit)
 .locks/
 .ingest.log
+.wiki-config.local
 EOF
+elif ! grep -Fxq '.wiki-config.local' "${wiki}/.gitignore"; then
+  printf '%s\n' '.wiki-config.local' >> "${wiki}/.gitignore"
 fi
 
 # .obsidian/app.json — for Obsidian users; harmless if never opened

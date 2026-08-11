@@ -1,33 +1,17 @@
 #!/bin/bash
 # SessionStart hook for karpathy-wiki.
 #
-# Execution order (v2.4):
-#   1. Subagent / ingester fork-bomb guard (WIKI_CAPTURE or CLAUDE_AGENT_PARENT
-#      → exit 0; no loader, no drift, no drain).
-#   2. Loader injection (always, regardless of wiki presence): emit the
-#      using-karpathy-wiki body as hookSpecificOutput.additionalContext so the
-#      agent sees the wiki rules in every conversation.
-#   3. Resolve wiki from cwd; if none, exit 0 (loader already emitted).
-#   4. Drift check on raw/ — if new/modified sources, create drift captures.
-#   5. Drain pending captures: spawn one detached ingester per capture.
-#   6. Reclaim stale .processing files.
+# The hook has two intentionally small responsibilities:
+#   1. inject the loader rules into an interactive parent session;
+#   2. in session_start mode, launch one non-blocking dispatcher tick.
 #
-# Drift/drain logging goes to .ingest.log (not stdout). The only stdout the
-# hook emits is the loader JSON in step 2.
+# Source scanning, queue claims, concurrency, retries, heartbeat, and provider
+# execution are owned by the dispatcher. Scheduled mode is deliberately quiet
+# here because its LaunchAgent owns activation.
 
-# NOTE: no `set -e` — we want best-effort execution; a failing drift-check
-# should not prevent drain. Use `set -uo pipefail` for safer var handling.
 set -uo pipefail
 
-# v2.4 step 1: subagent / ingester fork-bomb guard.
-# Skip the entire hook (no loader, no drift-scan, no drain) when:
-#   - WIKI_CAPTURE is set (we are inside a spawned ingester; spawned ingesters
-#     are themselves `claude -p` sessions which trigger SessionStart again —
-#     without this guard, drift+drain re-runs inside every ingester, each
-#     spawning N more, exploding to thousands of processes).
-#   - CLAUDE_AGENT_PARENT is set (we are a subagent dispatched by another
-#     agent; the wiki rules apply to the main agent only).
-# WIKI_CAPTURE is set by wiki-spawn-ingester.sh on the headless worker's env.
+# Provider workers and nested agents must not load rules or start another tick.
 if [[ -n "${WIKI_CAPTURE:-}" || -n "${CLAUDE_AGENT_PARENT:-}" ]]; then
   exit 0
 fi
@@ -37,24 +21,11 @@ REPO_ROOT="$(cd "${HOOK_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
-# v2.4 step 2: loader injection (always runs, regardless of wiki presence).
-# Reads skills/using-karpathy-wiki/SKILL.md and emits its body wrapped in
-# <EXTREMELY_IMPORTANT> tags as additional-context, so the agent sees the
-# karpathy-wiki rules in every conversation.
-#
-# v0.2.7: three-platform JSON output mirroring obra/superpowers v5.1.0.
-# Cursor hooks expect additional_context (snake_case).
-# Claude Code hooks expect hookSpecificOutput.additionalContext (nested).
-# Copilot CLI (v1.0.11+) and others expect additionalContext (top-level, SDK
-# standard). Claude Code reads BOTH additional_context and hookSpecificOutput
-# without deduplication, so we must emit only the field the current platform
-# consumes.
+# Loader injection always runs, whether or not this cwd has a wiki.
 LOADER_PATH="${REPO_ROOT}/skills/using-karpathy-wiki/SKILL.md"
 if [[ -f "${LOADER_PATH}" ]]; then
   loader_content="$(cat "${LOADER_PATH}")"
 
-  # Escape the loader content for JSON embedding.
-  # Each ${s//old/new} is a single C-level pass — fast for large strings.
   escape_for_json() {
     local s="$1"
     s="${s//\\/\\\\}"
@@ -70,342 +41,39 @@ if [[ -f "${LOADER_PATH}" ]]; then
   context_suffix='\n</EXTREMELY_IMPORTANT>'
   session_context="${context_prefix}${loader_escaped}${context_suffix}"
 
-  # Branch on harness signal. Order matters: Cursor sets BOTH
-  # CURSOR_PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT, so the Cursor check has to
-  # come first.
   if [[ -n "${CURSOR_PLUGIN_ROOT:-}" ]]; then
-    # Cursor: snake_case, top-level.
     printf '{"additional_context":"%s"}' "${session_context}"
   elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -z "${COPILOT_CLI:-}" ]]; then
-    # Claude Code: nested under hookSpecificOutput. As of the schema update
-    # rolled out around 2026-05, hookEventName is REQUIRED inside
-    # hookSpecificOutput — sessions error out otherwise:
-    #   "Hook JSON output validation failed — hookSpecificOutput is missing
-    #    required field 'hookEventName'"
-    # Cursor and Copilot/SDK shapes do NOT need this field.
     printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}' "${session_context}"
   else
-    # Copilot CLI (sets COPILOT_CLI=1) or unknown harness — SDK standard.
     printf '{"additionalContext":"%s"}' "${session_context}"
   fi
 fi
 
-# v2.4 step 3: wiki resolution (existing walk-up behavior).
-# Steps 4-6 (drift-scan, drain, reclaim) only run if a wiki is found.
 wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
-[[ -n "${wiki}" ]] || exit 0  # No wiki; loader already emitted, nothing else to do.
+[[ -n "${wiki}" ]] || exit 0
+export WIKI_INGEST_LOG="${WIKI_INGEST_LOG:-${wiki}/.ingest.log}"
 
-log_info "session-start: wiki=${wiki}"
+config_json="$(python3 "${REPO_ROOT}/scripts/wiki_config.py" show --wiki "${wiki}" 2>&1)"
+config_exit=$?
+if [[ "${config_exit}" -ne 0 ]]; then
+  log_warn "session-start: dispatcher not started | ${config_json//$'\n'/ | }"
+  exit 0
+fi
 
-# ---------------------------------------------------------------------------
-# Drift check — detect new files in inbox/ and new/modified files in raw/,
-# emit drift captures for the next ingester run. v2.4 adds the inbox/ queue,
-# 5-second mtime defer (rsync/unzip protection), and a raw/ recovery rule
-# that moves accidentally-dropped files in raw/ back to inbox/ under the
-# manifest lock.
-# ---------------------------------------------------------------------------
-_drift_scan() {
-  local now mtime age
-  now="$(date +%s)"
-
-  # --- Inbox queue scan (new in v2.4) ---
-  if [[ -d "${wiki}/inbox" ]]; then
-    local f
-    for f in "${wiki}/inbox"/*; do
-      [[ -f "${f}" ]] || continue
-
-      mtime="$(stat -f %m "${f}" 2>/dev/null || stat -c %Y "${f}" 2>/dev/null || echo 0)"
-      age=$((now - mtime))
-      # 5-second mtime defer (rsync/unzip/in-progress copy protection).
-      if [[ "${age}" -lt 5 ]]; then
-        log_info "session-start: inbox file mtime within last 5s, deferring: $(basename "${f}")"
-        continue
-      fi
-
-      _emit_raw_direct_capture "${f}"
-    done
-  fi
-
-  # --- Existing raw/ drift detection ---
-  local drift_out
-  drift_out="$(python3 "${REPO_ROOT}/scripts/wiki-manifest.py" diff "${wiki}" 2>/dev/null || echo "CLEAN")"
-  [[ "${drift_out}" == "CLEAN" ]] && return 0
-
-  log_info "session-start: drift detected"
-  local line src
-  while IFS= read -r line; do
-    case "${line}" in
-      NEW:\ *)      src="${line#NEW: }" ;;
-      MODIFIED:\ *) src="${line#MODIFIED: }" ;;
-      *)            continue ;;
-    esac
-
-    # Convert wiki-relative src to absolute.
-    local abs_src="${wiki}/${src}"
-
-    # 5-second mtime defer.
-    mtime="$(stat -f %m "${abs_src}" 2>/dev/null || stat -c %Y "${abs_src}" 2>/dev/null || echo 0)"
-    age=$((now - mtime))
-    if [[ "${age}" -lt 5 ]]; then
-      log_info "session-start: raw file mtime within last 5s, deferring: ${src}"
-      continue
-    fi
-
-    # NEW raw/ files that are not in manifest could be "user accident" —
-    # apply the recovery rule: move to inbox/ and re-process via inbox path.
-    if [[ "${line}" == NEW:* ]]; then
-      _raw_recovery "${abs_src}" "${src}"
-      continue
-    fi
-
-    # MODIFIED raw/ files use the legacy drift capture path (sha changed
-    # against an existing manifest entry — the ingester re-ingests).
-    _emit_legacy_drift_capture "${src}"
-  done <<< "${drift_out}"
-}
-
-# Helper: emit a raw-direct capture for a file in inbox/ or recovered into inbox/.
-_emit_raw_direct_capture() {
-  local file_path="$1"
-  local basename
-  basename="$(basename "${file_path}")"
-
-  # Deterministic capture filename based on absolute path sha.
-  local src_hash
-  src_hash="$(printf '%s' "${file_path}" | shasum | cut -c1-12)"
-  local capture_base="drift-${src_hash}-$(slugify "${basename}")"
-  local capture_name="${capture_base:0:200}.md"
-  local capture_path="${wiki}/.wiki-pending/${capture_name}"
-
-  # Atomic exclusive create. Two SessionStarts on the same inbox file map
-  # to the same capture name; only one wins and the other no-ops.
-  if ( set -C; : > "${capture_path}" ) 2>/dev/null; then
-    cat > "${capture_path}" <<EOF
----
-title: "Drop: ${basename}"
-evidence: "${file_path}"
-evidence_type: "file"
-capture_kind: "raw-direct"
-suggested_action: "auto"
-suggested_pages: []
-captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-captured_by: "session-start-drop"
-propagated_from: null
----
-
-Auto-ingest of file in <inbox|raw>/. The raw file at \`evidence\` is the
-canonical source; this body is auto-generated and intentionally
-minimal. Action for the ingester: read the raw file, infer category
-from content, decide create vs augment, file under appropriate
-category. If the raw file looks like an Obsidian Web Clipper export
-(has source/created/published frontmatter), preserve those fields.
-EOF
-    log_info "session-start: raw-direct capture created: ${capture_name}"
-  fi
-}
-
-# Helper: legacy drift capture for MODIFIED files in raw/ (sha mismatch on
-# existing manifest entry — same behavior as v2.x with capture_kind label).
-_emit_legacy_drift_capture() {
-  local src="$1"
-  local src_hash capture_base capture_name capture_path
-  src_hash="$(printf '%s' "${src}" | shasum | cut -c1-12)"
-  capture_base="drift-${src_hash}-$(slugify "${src}")"
-  capture_name="${capture_base:0:200}.md"
-  capture_path="${wiki}/.wiki-pending/${capture_name}"
-  if ( set -C; : > "${capture_path}" ) 2>/dev/null; then
-    cat > "${capture_path}" <<EOF
----
-title: "Drift: ${src}"
-evidence: "${wiki}/${src}"
-evidence_type: "file"
-capture_kind: "raw-direct"
-suggested_action: "update"
-suggested_pages: []
-captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-captured_by: "session-start-drift"
-propagated_from: null
----
-
-Auto-generated drift capture. The raw source file at \`${src}\` has a
-sha mismatch against the manifest entry. Re-ingest to bring the wiki
-back in sync. The ingester should read the raw file at \`evidence\`,
-decide which existing page (if any) it augments based on its content,
-and either update that page or create a new one in the appropriate
-category. Update the manifest entry once done so this drift doesn't
-re-fire on the next session-start.
-EOF
-    log_info "session-start: legacy drift capture created: ${capture_name}"
-  fi
-}
-
-# Helper: acquire the manifest lock inline (cross-platform: prefers
-# flock(1) on Linux, falls back to noclobber polling on macOS).
-# Sets fd 8 to the lock file on Linux; on macOS, the lockfile path is
-# tracked via _MANIFEST_LOCK_OWNED so the release path can rm it.
-_manifest_lock_acquire() {
-  local lock_dir="${wiki}/.locks"
-  mkdir -p "${lock_dir}"
-  local lock_file="${lock_dir}/manifest.lock"
-
-  if command -v flock >/dev/null 2>&1; then
-    exec 8>"${lock_file}"
-    flock 8
-    _MANIFEST_LOCK_MODE="flock"
-  else
-    local poll=0.05 elapsed=0
-    while true; do
-      # Stale-lock reclaim (5 min).
-      if [[ -f "${lock_file}" ]]; then
-        local mtime now age
-        mtime="$(stat -f %m "${lock_file}" 2>/dev/null || stat -c %Y "${lock_file}" 2>/dev/null || echo 0)"
-        now="$(date +%s)"; age=$((now - mtime))
-        [[ "${age}" -gt 300 ]] && rm -f "${lock_file}"
-      fi
-      # `set -o noclobber` is shell-wide if leaked; isolate via subshell.
-      if ( set -o noclobber; printf '%d\n' "$$" > "${lock_file}" ) 2>/dev/null; then
-        _MANIFEST_LOCK_MODE="noclobber"
-        _MANIFEST_LOCK_FILE="${lock_file}"
-        break
-      fi
-      sleep "${poll}"
-      elapsed=$(awk -v e="${elapsed}" -v p="${poll}" 'BEGIN{print e+p}')
-      if awk -v e="${elapsed}" 'BEGIN{exit !(e>30)}'; then
-        log_warn "session-start: manifest lock acquire timeout"
-        return 1
-      fi
-    done
-  fi
-  return 0
-}
-
-_manifest_lock_release() {
-  case "${_MANIFEST_LOCK_MODE:-}" in
-    flock)
-      exec 8>&-
-      ;;
-    noclobber)
-      rm -f "${_MANIFEST_LOCK_FILE}"
-      ;;
-  esac
-  unset _MANIFEST_LOCK_MODE _MANIFEST_LOCK_FILE
-}
-
-# Helper: recover an unmanifested file in raw/ by moving it to inbox/.
-# Acquires the manifest lock and re-checks membership before classifying
-# the file as "user accident" — this eliminates the staging-vs-recovery
-# race where a legitimate ingester is mid-rename when the recovery scan
-# fires.
-_raw_recovery() {
-  local abs_src="$1"
-  local src="$2"
-  local basename
-  basename="$(basename "${abs_src}")"
-
-  if ! _manifest_lock_acquire; then
-    log_warn "session-start: raw-recovery skipped (lock unavailable): ${basename}"
-    return 0
-  fi
-
-  # Re-read manifest under the lock — may have been registered while we
-  # were acquiring the lock (legitimate ingester finishing).
-  if python3 -c "
-import json, sys
-try:
-    with open('${wiki}/.manifest.json') as f:
-        data = json.load(f)
-    sys.exit(0 if 'raw/${basename}' in data else 1)
-except Exception:
-    sys.exit(1)
-"; then
-    _manifest_lock_release
-    log_info "session-start: raw/${basename} now in manifest; recovery aborted"
-    return 0
-  fi
-
-  # Source may have been moved by a concurrent recovery already. Re-check
-  # under the lock — this handles two SessionStarts both seeing NEW in
-  # diff snapshots taken before either had recovered.
-  if [[ ! -f "${abs_src}" ]]; then
-    _manifest_lock_release
-    log_info "session-start: raw/${basename} already recovered by concurrent hook"
-    return 0
-  fi
-
-  # Move to inbox with collision suffix if needed.
-  local target="${wiki}/inbox/${basename}"
-  if [[ -e "${target}" ]]; then
-    local stem ext n
-    if [[ "${basename}" == *.* ]]; then
-      stem="${basename%.*}"; ext="${basename##*.}"
-      n=1
-      while [[ -e "${wiki}/inbox/${stem}.${n}.${ext}" ]]; do n=$((n+1)); done
-      target="${wiki}/inbox/${stem}.${n}.${ext}"
-    else
-      n=1
-      while [[ -e "${wiki}/inbox/${basename}.${n}" ]]; do n=$((n+1)); done
-      target="${wiki}/inbox/${basename}.${n}"
-    fi
-  fi
-
-  mv "${abs_src}" "${target}"
-  log_warn "session-start: raw-recovery | unmanifested file moved raw/ → inbox/: ${basename}"
-
-  # Emit raw-direct capture for the recovered file BEFORE releasing the
-  # lock. The contract is: manifest-check + mv + capture-emit form one
-  # atomic unit. Releasing the lock first opens a window where a
-  # concurrent SessionStart could observe the file in inbox/ during its
-  # inbox-scan and race to emit a competing capture (currently masked by
-  # the deterministic capture-filename hash + atomic-create, but the lock
-  # window is the durable invariant).
-  _emit_raw_direct_capture "${target}"
-
-  _manifest_lock_release
-}
-_drift_scan || log_warn "session-start: drift scan failed (non-fatal)"
-
-# ---------------------------------------------------------------------------
-# Drain pending captures — spawn a detached ingester per capture.
-# ---------------------------------------------------------------------------
-_drain_pending() {
-  local count=0
-  local f
-  for f in "${wiki}/.wiki-pending"/*.md; do
-    [[ -f "${f}" ]] || continue
-    [[ "${f}" == *.processing ]] && continue
-    count=$((count + 1))
-  done
-  [[ "${count}" -eq 0 ]] && return 0
-
-  log_info "session-start: draining ${count} pending captures"
-  for f in "${wiki}/.wiki-pending"/*.md; do
-    [[ -f "${f}" ]] || continue
-    [[ "${f}" == *.processing ]] && continue
-    bash "${REPO_ROOT}/scripts/wiki-spawn-ingester.sh" "${wiki}" "${f}" &
+dispatch_mode="$(printf '%s' "${config_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ingest"]["dispatch_mode"])' 2>/dev/null || echo "")"
+case "${dispatch_mode}" in
+  scheduled)
+    log_info "session-start: scheduled mode; activation owned by scheduler"
+    ;;
+  session_start)
+    nohup python3 "${REPO_ROOT}/scripts/wiki_dispatch.py" tick \
+      --wiki "${wiki}" --source session_start --scan \
+      >> "${wiki}/.ingest.log" 2>&1 < /dev/null &
     disown 2>/dev/null || true
-  done
-}
-_drain_pending || log_warn "session-start: drain failed (non-fatal)"
-
-# ---------------------------------------------------------------------------
-# Reclaim stale .processing files (> 10 min): rename back to .md so next
-# opportunity can pick them up.
-# ---------------------------------------------------------------------------
-_reclaim_stale() {
-  local proc mtime now age
-  while IFS= read -r proc; do
-    [[ -z "${proc}" ]] && continue
-    mtime="$(stat -f %m "${proc}" 2>/dev/null || stat -c %Y "${proc}" 2>/dev/null || echo 0)"
-    now="$(date +%s)"
-    age=$((now - mtime))
-    if [[ "${age}" -gt 600 ]]; then
-      log_warn "session-start: reclaiming stale processing: $(basename "${proc}")"
-      mv "${proc}" "${proc%.processing}" || true
-    fi
-  done < <(find "${wiki}/.wiki-pending" -maxdepth 1 -name "*.md.processing" -type f 2>/dev/null)
-}
-_reclaim_stale || log_warn "session-start: stale reclaim failed (non-fatal)"
-
-# Loader JSON (if any) was emitted in step 2; drift/drain/reclaim only log
-# to .ingest.log. Nothing else to stdout.
+    ;;
+  *)
+    log_warn "session-start: dispatcher not started | invalid dispatch mode"
+    ;;
+esac
 exit 0

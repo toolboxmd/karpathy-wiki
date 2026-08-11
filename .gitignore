@@ -2,6 +2,7 @@
 tests/tmp/
 tests/*.log
 tests/*/*.actual
+tests/acceptance/dispatcher/raw/
 
 # Editor
 .DS_Store

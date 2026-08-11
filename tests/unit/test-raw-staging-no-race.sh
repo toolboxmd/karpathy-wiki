@@ -7,7 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-HOOK="${REPO_ROOT}/hooks/session-start"
+SCAN="${REPO_ROOT}/scripts/wiki-scan.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -26,8 +26,8 @@ touch -t "$(date -v-30S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '30 seconds ago'
 echo "user dropped this" > "${WIKI}/raw/dropped.md"
 touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/dropped.md"
 
-# Run hook
-( cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}" >/dev/null 2>&1 ) || true
+# Run the shared scanner.
+bash "${SCAN}" "${WIKI}" >/dev/null
 
 # .raw-staging/inflight.md must be untouched (recovery skips reserved dirs)
 [[ -f "${WIKI}/.raw-staging/inflight.md" ]] || fail "recovery touched .raw-staging/ (must be reserved)"

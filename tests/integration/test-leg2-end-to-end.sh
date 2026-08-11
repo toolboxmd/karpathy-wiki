@@ -1,6 +1,7 @@
 #!/bin/bash
 # Integration test for Leg 2: bootstrap → per-cwd prompt → capture →
-# ingester spawn (mocked). Three modes: project / main / both.
+# durable queue write. Three modes: project / main / both. Runtime config is
+# intentionally absent so captures remain inspectable.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,8 +16,6 @@ trap 'rm -rf "${TESTDIR}"' EXIT
 
 MAIN="${TESTDIR}/main"
 bash "${INIT}" main "${MAIN}" >/dev/null
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${MAIN}/.wiki-config"
-rm -f "${MAIN}/.wiki-config.bak"
 
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
@@ -32,12 +31,9 @@ BODY=$(printf 'Real chat-only body that easily exceeds the 1500-byte floor.\n%.0
 PROJ="${TESTDIR}/proj"
 mkdir -p "${PROJ}"
 ( cd "${PROJ}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" project ) >/dev/null
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${PROJ}/wiki/.wiki-config"
-rm -f "${PROJ}/wiki/.wiki-config.bak"
-( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "ProjTest" --kind chat-only --suggested-action create ) >/dev/null \
+( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "ProjTest" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "project mode capture failed"
-# Spawn-ingester runs async; settle.
-sleep 0.3
+# Capture is durable even though this fixture has no local dispatcher profile.
 ls "${PROJ}/wiki/.wiki-pending/" | grep -qi projtest || fail "project capture not in proj/wiki/.wiki-pending"
 if ls "${MAIN}/.wiki-pending/" 2>/dev/null | grep -qi projtest; then
   fail "project mode leaked capture to main wiki"
@@ -47,9 +43,7 @@ fi
 BOTH="${TESTDIR}/both"
 mkdir -p "${BOTH}"
 ( cd "${BOTH}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" both ) >/dev/null
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${BOTH}/wiki/.wiki-config"
-rm -f "${BOTH}/wiki/.wiki-config.bak"
-( cd "${BOTH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "BothTest" --kind chat-only --suggested-action create ) >/dev/null \
+( cd "${BOTH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "BothTest" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "both mode capture failed"
 sleep 0.3
 ls "${BOTH}/wiki/.wiki-pending/" | grep -qi bothtest || fail "both mode: project capture missing"
@@ -60,7 +54,7 @@ ls "${MAIN}/.wiki-pending/" | grep -qi bothtest || fail "both mode: main capture
 MAIN_ONLY="${TESTDIR}/main-only"
 mkdir -p "${MAIN_ONLY}"
 ( cd "${MAIN_ONLY}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" main ) >/dev/null
-( cd "${MAIN_ONLY}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "MainOnlyTest" --kind chat-only --suggested-action create ) >/dev/null \
+( cd "${MAIN_ONLY}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "MainOnlyTest" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "main-only capture failed"
 sleep 0.3
 ls "${MAIN}/.wiki-pending/" | grep -qi mainonlytest || fail "main-only: capture not in main"

@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 USE="${REPO_ROOT}/scripts/wiki-use.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -16,6 +18,27 @@ MAIN="${TESTDIR}/main"
 bash "${INIT}" main "${MAIN}" >/dev/null
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+
+write_runtime_config() {
+  local root="$1"
+  cat > "${root}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 2
+default_profile = "grok_medium"
+
+[ingest.profiles.grok_medium]
+provider = "grok"
+model = "grok-test"
+reasoning_effort = "medium"
+
+[routing]
+fork_to_main = false
+
+[settings]
+auto_commit = false
+EOF
+}
 
 # Case 1: wiki use project (fresh cwd)
 PROJ="${TESTDIR}/proj1"
@@ -67,5 +90,34 @@ grep -q '^fork_to_main = true' "${PROJ}/.wiki-config" || fail "wiki use both: di
 ( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
   || fail "wiki use project (flip back) failed"
 grep -q '^fork_to_main = false' "${PROJ}/.wiki-config" || fail "fork_to_main should be false again"
+
+# Case 9: an actual wiki root keeps routing local and preserves its provider.
+ACTUAL="${TESTDIR}/actual-wiki"
+bash "${INIT}" project "${ACTUAL}" >/dev/null
+write_runtime_config "${ACTUAL}"
+structural_before="$(cat "${ACTUAL}/.wiki-config")"
+( cd "${ACTUAL}" && bash "${USE}" both ) >/dev/null \
+  || fail "wiki use both on actual wiki failed"
+[[ "$(wiki_runtime_config_get "${ACTUAL}" routing.fork_to_main)" == "true" ]] \
+  || fail "actual wiki did not store fork=true locally"
+[[ "$(wiki_runtime_config_get "${ACTUAL}" ingest.profiles.grok_medium.model)" == "grok-test" ]] \
+  || fail "actual wiki routing update changed the provider model"
+[[ "$(cat "${ACTUAL}/.wiki-config")" == "${structural_before}" ]] \
+  || fail "actual wiki routing update mutated tracked structural config"
+( cd "${ACTUAL}" && bash "${USE}" project ) >/dev/null \
+  || fail "wiki use project on actual wiki failed"
+[[ "$(wiki_runtime_config_get "${ACTUAL}" routing.fork_to_main)" == "false" ]] \
+  || fail "actual wiki did not store fork=false locally"
+
+# Case 10: actual wiki without local runtime config gets an actionable error.
+NO_LOCAL="${TESTDIR}/actual-without-local"
+bash "${INIT}" project "${NO_LOCAL}" >/dev/null
+set +e
+error=$( cd "${NO_LOCAL}" && bash "${USE}" both 2>&1 )
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] || fail "wiki use both should refuse to invent local provider config"
+grep -Fq "wiki config init-local ${NO_LOCAL}" <<< "${error}" \
+  || fail "missing local runtime config error is not actionable"
 
 echo "PASS: wiki-use.sh"

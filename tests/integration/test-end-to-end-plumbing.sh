@@ -8,14 +8,53 @@ setup() {
   TESTDIR="$(mktemp -d)"
   WIKI="${TESTDIR}/wiki"
   bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${WIKI}" >/dev/null
-  # Use echo as a stand-in for claude -p.
-  sed -i.bak 's|claude -p|echo stub-ingester|' "${WIKI}/.wiki-config"
-  rm -f "${WIKI}/.wiki-config.bak"
+  cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "test"
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
+[settings]
+auto_commit = false
+EOF
+  export WIKI_DISPATCH_TEST_MODE=1
+  export WIKI_DISPATCH_TEST_PROVIDER_MODE=hold
+  export WIKI_DISPATCH_TEST_PROVIDER_SECONDS=30
+  export WIKI_DISPATCH_TEST_NO_REFILL=1
 }
 
-teardown() { rm -rf "${TESTDIR}"; }
+teardown() {
+  local lease pid
+  for lease in "${WIKI}/.locks/ingest-slots"/*.lock; do
+    [[ -f "${lease}" ]] || continue
+    while IFS= read -r pid; do
+      [[ "${pid}" =~ ^[0-9]+$ ]] && kill "${pid}" 2>/dev/null || true
+    done < <(python3 - "${lease}" <<'PY'
+import json
+import sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    data = {}
+for key in ("provider_pid", "wrapper_pid"):
+    if isinstance(data.get(key), int) and data[key] > 0:
+        print(data[key])
+PY
+)
+  done
+  sleep 0.1
+  rm -rf "${TESTDIR}"
+}
 
-test_capture_drop_plus_hook_plus_spawn() {
+test_capture_drop_plus_hook_plus_dispatch() {
   setup
 
   # Drop a capture
@@ -25,24 +64,20 @@ test_capture_drop_plus_hook_plus_spawn() {
   # Run session-start hook
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
 
-  # Wait briefly for spawned workers
-  sleep 2
-
-  # Verify: capture either processing or gone
-  if [[ -f "${WIKI}/.wiki-pending/2026-04-22T14-30-test.md" ]]; then
-    echo "FAIL: capture never claimed"
-    ls -la "${WIKI}/.wiki-pending/"
-    teardown; exit 1
-  fi
-
-  # Verify: ingest log has entries
-  grep -q "spawned ingester" "${WIKI}/.ingest.log" || {
-    echo "FAIL: spawn not logged"
-    cat "${WIKI}/.ingest.log"
-    teardown; exit 1
-  }
-
-  echo "PASS: test_capture_drop_plus_hook_plus_spawn"
+  deadline=$((SECONDS + 5))
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    if [[ -f "${WIKI}/.wiki-pending/2026-04-22T14-30-test.md.processing" ]] \
+       && grep -q '"status":"started"' "${WIKI}/.ingest-runs.jsonl" 2>/dev/null; then
+      echo "PASS: test_capture_drop_plus_hook_plus_dispatch"
+      teardown
+      return
+    fi
+    sleep 0.05
+  done
+  echo "FAIL: capture was not claimed through the bounded dispatcher"
+  ls -la "${WIKI}/.wiki-pending/"
+  [[ -f "${WIKI}/.ingest.log" ]] && cat "${WIKI}/.ingest.log"
+  teardown; exit 1
   teardown
 }
 
@@ -61,13 +96,13 @@ test_fork_bomb_guard_short_circuits_inside_ingester() {
   ( cd "${WIKI}" && WIKI_CAPTURE="${WIKI}/.wiki-pending/some-other-capture.md" \
       bash "${REPO_ROOT}/hooks/session-start" ) >/dev/null
 
-  # Capture must NOT be claimed, log must have NO spawn line for this run.
+  # Capture must NOT be claimed and no dispatcher run may be recorded.
   if [[ ! -f "${WIKI}/.wiki-pending/2026-04-22T14-30-fork-test.md" ]]; then
     echo "FAIL: fork-bomb guard did not fire — capture was drained"
     teardown; exit 1
   fi
-  if grep -q "spawned ingester" "${WIKI}/.ingest.log" 2>/dev/null; then
-    echo "FAIL: fork-bomb guard did not fire — ingester was spawned"
+  if [[ -s "${WIKI}/.ingest-runs.jsonl" ]]; then
+    echo "FAIL: fork-bomb guard did not fire — dispatcher run was recorded"
     teardown; exit 1
   fi
 
@@ -187,7 +222,7 @@ test_drift_idempotent_under_concurrent_session_starts() {
   teardown
 }
 
-test_capture_drop_plus_hook_plus_spawn
+test_capture_drop_plus_hook_plus_dispatch
 test_fork_bomb_guard_short_circuits_inside_ingester
 test_drift_filenames_with_spaces_handled_correctly
 test_drift_capture_body_clears_200_byte_floor

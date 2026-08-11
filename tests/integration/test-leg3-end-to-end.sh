@@ -2,11 +2,8 @@
 # Integration test for Leg 3: drop file → SessionStart OR wiki ingest-now → page committed.
 # Subagent-report workflow + binary-file failure mode.
 #
-# Note: this test does NOT spawn a real `claude -p` ingester (that
-# requires API keys + wall-clock time). It verifies the spawner is
-# called, drift captures appear, and inbox/ is correctly drained
-# downstream of the hook. Real ingester behavior is covered by
-# tests/integration/test-end-to-end-plumbing.sh.
+# Provider execution uses the dispatcher's deterministic test adapter; no
+# external model, credentials, or subscription quota is used.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,9 +19,27 @@ trap 'sleep 0.3; rm -rf "${TESTDIR}" 2>/dev/null || true' EXIT
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
-# Mock the ingester to a no-op for testing
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${WIKI}/.wiki-config"
-rm -f "${WIKI}/.wiki-config.bak"
+WIKI="$(cd "${WIKI}" && pwd -P)"
+cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "test"
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
+[settings]
+auto_commit = false
+EOF
+export WIKI_DISPATCH_TEST_MODE=1
+export WIKI_DISPATCH_TEST_PROVIDER_MODE=success_no_complete
+export WIKI_DISPATCH_TEST_NO_REFILL=1
 
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${WIKI}" > "${WIKI_POINTER_FILE}"
@@ -34,8 +49,12 @@ echo "real content" > "${WIKI}/inbox/dropped.md"
 touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/inbox/dropped.md"
 ( cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}" >/dev/null 2>&1 ) || true
 found=""
-for f in "${WIKI}/.wiki-pending"/drift-*; do
-  [[ -f "${f}" ]] && found="${f}" && break
+deadline=$((SECONDS + 5))
+while [[ "${SECONDS}" -lt "${deadline}" && -z "${found}" ]]; do
+  for f in "${WIKI}/.wiki-pending"/drift-*; do
+    [[ -f "${f}" ]] && found="${f}" && break
+  done
+  [[ -n "${found}" ]] || sleep 0.05
 done
 [[ -n "${found}" ]] || fail "SessionStart did not produce drift capture"
 

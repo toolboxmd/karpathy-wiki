@@ -49,10 +49,9 @@ the manifest's `origin` field — the iron-rule contract that lets the
 ingester trace every wiki page back to its source.
 
 `bin/wiki capture` handles wiki resolution (which wiki the capture goes
-to), prompts the user for setup if needed, writes the capture file,
-and spawns the detached ingester. You do NOT write to
-`.wiki-pending/` directly. You do NOT call `wiki-spawn-ingester.sh`
-directly.
+to), prompts the user for setup if needed, writes every capture file,
+and asks the bounded dispatcher to drain the target queue. You do NOT
+write to `.wiki-pending/` directly or launch a provider yourself.
 
 ## Trigger
 
@@ -97,7 +96,11 @@ NOT in the body:
 - Process over output: wrong turns, reasoning trail, "I thought X but then Y". Keep the resolution; drop the detour.
 - The user's questions verbatim — they're context, not content. Capture the ANSWER, not the question.
 
-If the ingester rejects your capture (`needs-more-detail: true`), expand the body in place and re-spawn. Do NOT ignore the rejection.
+If the ingester rejects your capture (`needs_more_detail: true`), expand the
+re-queued body in place, remove both `needs_more_detail` and
+`needs_more_detail_reason` from frontmatter, and run
+`wiki tick <wiki> --source manual`. Marked captures remain durable but are not
+automatically retried. Do NOT ignore the rejection.
 
 ## Subagent reports — DO NOT write a capture body
 
@@ -175,6 +178,6 @@ This is a self-discipline rule until a Stop-hook gate is wired.
 
 - The ingester's behavior (orientation, page format, manifest
   protocol). That lives in `karpathy-wiki-ingest/SKILL.md` and is
-  loaded by the spawned ingester only. The main agent never reads it.
+  loaded by the detached runtime ingester only. The main agent never reads it.
 - Iron laws and announce-line contract. Those live in the loader
   (`using-karpathy-wiki/SKILL.md`) — single source of truth.

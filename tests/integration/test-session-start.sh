@@ -11,12 +11,40 @@ setup() {
   WIKI="${TESTDIR}/wiki"
   bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${WIKI}" >/dev/null
   export WIKI_TEST_ROOT="${WIKI}"
-  # Override headless_command so ingester doesn't actually try to run claude
-  sed -i.bak 's|claude -p|echo|' "${WIKI}/.wiki-config"
-  rm -f "${WIKI}/.wiki-config.bak"
+  cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "test"
+max_attempts = 1
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
+[settings]
+auto_commit = false
+EOF
+  export WIKI_DISPATCH_TEST_MODE=1
+  export WIKI_DISPATCH_TEST_PROVIDER_MODE=success_no_complete
+  export WIKI_DISPATCH_TEST_NO_REFILL=1
 }
 
-teardown() { rm -rf "${TESTDIR}"; }
+teardown() {
+  # SessionStart intentionally detaches its tick. On macOS, rm can observe a
+  # last log/runtime write while recursively removing the disposable fixture.
+  # Retry the fixture cleanup until that bounded background tick has exited.
+  local attempt
+  for attempt in $(seq 1 100); do
+    rm -rf "${TESTDIR}" 2>/dev/null && return 0
+    sleep 0.05
+  done
+  rm -rf "${TESTDIR}"
+}
 
 test_hook_emits_loader_context_in_normal_session() {
   setup
@@ -51,32 +79,28 @@ test_hook_emits_empty_context_in_subagent_or_ingester() {
   teardown
 }
 
-test_hook_spawns_ingester_for_pending() {
+test_hook_dispatches_pending_capture() {
   setup
   # Drop a pending capture
   cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
      "${WIKI}/.wiki-pending/2026-04-22T14-30-pending.md"
   (cd "${WIKI}" && bash "${HOOK}") >/dev/null
-  # Give spawner a moment
-  sleep 1
-  # Capture should be claimed (renamed to .processing) or archived
-  local has_pending has_processing
-  has_pending=0
-  has_processing=0
-  for f in "${WIKI}/.wiki-pending"/*.md; do
-    [[ -f "${f}" ]] || continue
-    [[ "${f}" == *.processing ]] && has_processing=1 && continue
-    has_pending=1
+  # The hook returns immediately; wait for durable terminal evidence so the
+  # detached worker has finished before the disposable fixture is removed.
+  local deadline=$((SECONDS + 5))
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    if [[ -f "${WIKI}/.ingest-runs.jsonl" ]] \
+       && grep -Eq '"status":"(completed|failed|transient_failure|rate_limited|auth_failure|config_failure)"' \
+         "${WIKI}/.ingest-runs.jsonl"; then
+      echo "PASS: test_hook_dispatches_pending_capture"
+      teardown
+      return
+    fi
+    sleep 0.05
   done
-  # Expect processing or fully consumed.
-  # With echo-as-headless, the ingester does nothing, so capture stays as .processing.
-  if [[ "${has_processing}" -eq 1 ]] || [[ "${has_pending}" -eq 0 ]]; then
-    echo "PASS: test_hook_spawns_ingester_for_pending"
-  else
-    echo "FAIL: capture not claimed"
-    ls "${WIKI}/.wiki-pending/"
-    teardown; exit 1
-  fi
+  echo "FAIL: SessionStart did not produce a dispatcher run"
+  [[ -f "${WIKI}/.ingest.log" ]] && tail -30 "${WIKI}/.ingest.log"
+  teardown; exit 1
   teardown
 }
 
@@ -94,8 +118,36 @@ test_hook_exits_fast() {
   teardown
 }
 
+test_scheduled_mode_is_loader_only() {
+  setup
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" update-runtime \
+    --wiki "${WIKI}" --dispatch-mode scheduled >/dev/null
+  cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
+    "${WIKI}/.wiki-pending/scheduled-pending.md"
+  printf '%s\n' "scheduled source" > "${WIKI}/inbox/scheduled-source.md"
+  touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+    "${WIKI}/inbox/scheduled-source.md"
+
+  local output
+  output="$(cd "${WIKI}" && bash "${HOOK}")"
+  sleep 0.3
+  grep -q 'additionalContext' <<< "${output}" \
+    || { echo "FAIL: scheduled mode lost loader output"; teardown; exit 1; }
+  [[ -f "${WIKI}/.wiki-pending/scheduled-pending.md" ]] \
+    || { echo "FAIL: scheduled SessionStart claimed queue work"; teardown; exit 1; }
+  if compgen -G "${WIKI}/.wiki-pending/drift-*scheduled-source*" >/dev/null; then
+    echo "FAIL: scheduled SessionStart scanned source material"
+    teardown; exit 1
+  fi
+  [[ ! -s "${WIKI}/.ingest-runs.jsonl" ]] \
+    || { echo "FAIL: scheduled SessionStart recorded a dispatcher run"; teardown; exit 1; }
+  echo "PASS: test_scheduled_mode_is_loader_only"
+  teardown
+}
+
 test_hook_emits_loader_context_in_normal_session
 test_hook_emits_empty_context_in_subagent_or_ingester
-test_hook_spawns_ingester_for_pending
+test_hook_dispatches_pending_capture
 test_hook_exits_fast
+test_scheduled_mode_is_loader_only
 echo "ALL PASS"

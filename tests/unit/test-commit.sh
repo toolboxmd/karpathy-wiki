@@ -41,8 +41,10 @@ test_commit_creates_commit_with_message() {
 
 test_commit_respects_auto_commit_false() {
   setup
-  sed -i.bak 's/auto_commit = true/auto_commit = false/' "${WIKI}/.wiki-config"
-  rm -f "${WIKI}/.wiki-config.bak"
+  cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[settings]
+auto_commit = false
+EOF
   echo "# Changed" >> "${WIKI}/index.md"
   bash "${COMMIT}" "${WIKI}" "ingest: should not commit"
   local last

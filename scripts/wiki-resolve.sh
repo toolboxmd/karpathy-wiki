@@ -102,6 +102,15 @@ if [[ "${config_present}" == 1 ]]; then
           exit 14
         fi
       done
+      # Routing for an actual wiki root is per user/machine. A legacy
+      # tracked value is honored only until that wiki is explicitly migrated.
+      if [[ -f "${wiki_root}/.wiki-config.local" ]]; then
+        if [[ "$(wiki_runtime_config_get "${wiki_root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+          fork=1
+        fi
+      elif grep -q '^fork_to_main = true' "${config}"; then
+        fork=1
+      fi
       ;;
     project-pointer)
       sub=$(grep '^wiki = ' "${config}" | head -1 | sed 's/^wiki = "\(.*\)"/\1/')
@@ -119,17 +128,17 @@ if [[ "${config_present}" == 1 ]]; then
           exit 14
         fi
       done
+      # A project pointer belongs to the project checkout, so its routing
+      # choice intentionally remains in the tracked pointer file.
+      if grep -q '^fork_to_main = true' "${config}"; then
+        fork=1
+      fi
       ;;
     *)
       # Unknown role — treat as conflict-equivalent
       exit 13
       ;;
   esac
-
-  # Read fork_to_main (default false)
-  if grep -q '^fork_to_main = true' "${config}"; then
-    fork=1
-  fi
 
 elif [[ "${mode_present}" == 1 ]]; then
   mode_value=$(head -1 "${cwd_base}/.wiki-mode" | tr -d '[:space:]')

@@ -17,7 +17,7 @@ msg="$2"
 [[ -n "${msg}" ]]  || { echo >&2 "missing message"; exit 1; }
 
 # Respect auto_commit setting.
-auto_commit="$(wiki_config_get "${wiki}" settings.auto_commit 2>/dev/null || echo "true")"
+auto_commit="$(wiki_runtime_config_get "${wiki}" settings.auto_commit 2>/dev/null || echo "true")"
 if [[ "${auto_commit}" != "true" ]]; then
   log_info "commit: auto_commit disabled, skipping"
   exit 0

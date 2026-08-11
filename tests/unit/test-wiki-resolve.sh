@@ -121,7 +121,31 @@ echo "# Schema" > "${HALF}/schema.md"
 # index.md is now present, schema.md present, .wiki-pending/ present — should resolve fine
 assert_exit "cwd fully built" "${HALF}" 0
 
-# Case 11: pointer-target half-built (project-pointer's wiki dir missing schema) → 14
+# Case 11: an actual wiki root reads fork routing from ignored local config.
+ACTUAL="${TESTDIR}/actual-project-wiki"
+bash "${INIT}" project "${ACTUAL}" >/dev/null
+cat > "${ACTUAL}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "codex_medium"
+
+[ingest.profiles.codex_medium]
+provider = "codex"
+model = "gpt-test"
+reasoning_effort = "medium"
+
+[routing]
+fork_to_main = true
+EOF
+output=$( cd "${ACTUAL}" && bash "${RESOLVE}" )
+echo "${output}" | grep -qF "${ACTUAL}" || fail "local fork mode: actual wiki missing"
+echo "${output}" | grep -qF "${MAIN}" || fail "local fork mode: main wiki missing"
+sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${ACTUAL}/.wiki-config.local"
+output=$( cd "${ACTUAL}" && bash "${RESOLVE}" )
+[[ "${output}" == "${ACTUAL}" ]] || fail "local fork=false should return only actual wiki, got '${output}'"
+
+# Case 12: pointer-target half-built (project-pointer's wiki dir missing schema) → 14
 BROKEN_MAIN="${TESTDIR}/broken-main"
 mkdir -p "${BROKEN_MAIN}/.wiki-pending"
 cat > "${BROKEN_MAIN}/.wiki-config" <<EOF
@@ -138,7 +162,7 @@ assert_exit "pointer target half-built" "${UNCONFIGURED}" 14
 rm "${UNCONFIGURED}/.wiki-mode"
 rm -rf "${BROKEN_MAIN}"
 
-# Case 12: pointer points at non-main wiki (role=project) → 10
+# Case 13: pointer points at non-main wiki (role=project) → 10
 PROJ_AS_POINTER="${TESTDIR}/proj-as-pointer"
 bash "${INIT}" project "${PROJ_AS_POINTER}" >/dev/null
 echo "${PROJ_AS_POINTER}" > "${WIKI_POINTER_FILE}"
@@ -146,11 +170,11 @@ echo "main-only" > "${UNCONFIGURED}/.wiki-mode"
 assert_exit "pointer target role=project (not main)" "${UNCONFIGURED}" 10
 rm "${UNCONFIGURED}/.wiki-mode"
 
-# Case 13: broken pointer (path doesn't exist) → 10
+# Case 14: broken pointer (path doesn't exist) → 10
 echo "/nonexistent/path/to/wiki" > "${WIKI_POINTER_FILE}"
 assert_exit "broken pointer path" "${UNCONFIGURED}" 10
 
-# Case 14: pointer is a symlink to a valid main → 0
+# Case 15: pointer is a symlink to a valid main → 0
 echo "${MAIN}" > "${WIKI_POINTER_FILE}.target"
 ln -sf "${WIKI_POINTER_FILE}.target" "${WIKI_POINTER_FILE}"
 echo "main-only" > "${UNCONFIGURED}/.wiki-mode"
@@ -158,4 +182,4 @@ assert_exit "symlink pointer to valid main" "${UNCONFIGURED}" 0
 rm "${UNCONFIGURED}/.wiki-mode"
 rm -f "${WIKI_POINTER_FILE}" "${WIKI_POINTER_FILE}.target"
 
-echo "PASS: wiki-resolve.sh exit-code matrix (14 cases)"
+echo "PASS: wiki-resolve.sh exit-code matrix (15 cases)"

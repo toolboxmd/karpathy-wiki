@@ -26,12 +26,10 @@ ingest_one_wiki() {
     fi
   done
 
-  # Run the same drift-scan + drain logic as SessionStart, but inline.
-  # Since the SessionStart hook is a single script, we invoke it with
-  # cwd set to the wiki AND override env vars to make it scan THIS wiki.
-  # The hook keeps walk-up via wiki_root_from_cwd, which from inside the
-  # wiki dir will find the wiki itself.
-  ( cd "${wiki}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${REPO_ROOT}/hooks/session-start" >/dev/null 2>&1 )
+  # Manual activation uses the same scanner and bounded dispatcher as every
+  # other mode. It never depends on a SessionStart hook being available.
+  python3 "${SCRIPT_DIR}/wiki_dispatch.py" tick \
+    --wiki "${wiki}" --source manual --scan
 }
 
 if [[ $# -eq 0 ]]; then

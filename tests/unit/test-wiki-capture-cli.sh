@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verify bin/wiki capture body-input contract, headless fallback,
-# orphan preservation. Does NOT spawn a real ingester (uses a mock
-# headless_command).
+# orphan preservation. Runtime config is intentionally absent so captures stay
+# durable and inspectable while dispatcher setup is reported separately.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,9 +16,6 @@ trap 'rm -rf "${TESTDIR}"' EXIT
 
 MAIN="${TESTDIR}/main"
 bash "${INIT}" main "${MAIN}" >/dev/null
-# Override headless_command with no-op for testing
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${MAIN}/.wiki-config"
-rm -f "${MAIN}/.wiki-config.bak"
 
 # Hermetic $HOME — required so bin/wiki capture's silent-bootstrap branch
 # (added in 0.2.7) doesn't read the developer's real ~/wiki when this test
@@ -37,14 +34,14 @@ PROJ="${TESTDIR}/proj"
 mkdir -p "${PROJ}"
 echo "main-only" > "${PROJ}/.wiki-mode"
 BODY=$(printf 'A real chat-only body that exceeds 1500 bytes.\n%.0s' {1..40})
-( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "Test" --kind chat-only --suggested-action create ) >/dev/null \
+( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "Test" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "chat-only via stdin failed"
 ls "${MAIN}/.wiki-pending/" | grep -q '\.md$' || fail "no capture appeared in main pending"
 
 # Case 2: chat-only via --body-file
 TMPBODY="$(mktemp)"
 echo "${BODY}" > "${TMPBODY}"
-( cd "${PROJ}" && bash "${WIKI_BIN}" capture --title "Test2" --kind chat-only --suggested-action create --body-file "${TMPBODY}" ) >/dev/null \
+( cd "${PROJ}" && bash "${WIKI_BIN}" capture --title "Test2" --kind chat-only --suggested-action create --body-file "${TMPBODY}" ) >/dev/null 2>&1 \
   || fail "chat-only via --body-file failed"
 
 # Case 3: missing body (no stdin, no --body-file) → error

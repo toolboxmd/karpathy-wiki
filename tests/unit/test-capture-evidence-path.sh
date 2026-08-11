@@ -37,16 +37,8 @@ MAIN="${FAKE_HOME}/wiki"
 bash "${INIT}" main "${MAIN}" >/dev/null
 echo "${MAIN}" > "${FAKE_HOME}/.wiki-pointer"
 
-# Disable spawn so the test doesn't fork actual headless ingesters AND so
-# the capture file isn't renamed to .processing before we inspect it. The
-# spawner claims (link + unlink) the capture before launching headless.
-# Simplest: configure the wiki to use a no-op headless_command, then the
-# spawner still claims (which we don't want) but we read the .processing
-# file. Cleaner: replace spawn-ingester.sh in the bin/wiki call site by
-# putting a stub on $PATH ahead. bin/wiki invokes via "bash <repo>/scripts/
-# wiki-spawn-ingester.sh" with absolute path though, so PATH won't catch it.
-# Cheapest reliable path: skim either {capture}.md OR {capture}.md.processing.
-:
+# Runtime config is intentionally absent. `wiki capture` must still save the
+# durable file and return success, while printing an actionable setup warning.
 
 WORKDIR="${TMP}/work"
 mkdir -p "${WORKDIR}"

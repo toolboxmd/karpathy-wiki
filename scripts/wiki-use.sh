@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/wiki-lib.sh"
 
 POINTER_FILE="${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}"
+CONFIG_TOOL="${SCRIPT_DIR}/wiki_config.py"
 
 mode="${1:-}"
 [[ -n "${mode}" ]] || { echo >&2 "usage: wiki use project|main|both"; exit 1; }
@@ -43,10 +44,37 @@ write_project_pointer_config() {
   } > "${cwd_config}"
 }
 
+set_runtime_fork() {
+  local root="$1"
+  local enabled="$2"
+  local flag="--no-fork-to-main"
+  [[ "${enabled}" == "true" ]] && flag="--fork-to-main"
+  python3 "${CONFIG_TOOL}" update-runtime --wiki "${root}" "${flag}" >/dev/null
+}
+
 case "${mode}" in
   project)
     main="$(read_main_wiki)"
-    if [[ ! -d "$(pwd)/wiki" ]]; then
+    if [[ -f "$(pwd)/.wiki-config" ]]; then
+      role=$(grep '^role = ' "$(pwd)/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
+      case "${role}" in
+        main|project)
+          if ! set_runtime_fork "$(pwd)" false; then
+            echo >&2 "wiki use project: could not update per-user routing; configure this wiki with 'wiki config init-local $(pwd)' first"
+            exit 1
+          fi
+          rm -f "$(pwd)/.wiki-mode"
+          echo "wiki use project: fork_to_main = false in .wiki-config.local (role=${role})"
+          exit 0
+          ;;
+        project-pointer)
+          ;;
+        *)
+          echo >&2 "wiki use project: unknown role '${role}' in existing .wiki-config"
+          exit 1
+          ;;
+      esac
+    elif [[ ! -d "$(pwd)/wiki" ]]; then
       if [[ "${main}" == "none" ]]; then
         bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" >/dev/null
       else
@@ -90,7 +118,7 @@ EOF
     if [[ -f "$(pwd)/.wiki-config" ]]; then
       role=$(grep '^role = ' "$(pwd)/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
       case "${role}" in
-        project-pointer|main|project)
+        project-pointer)
           # Set fork_to_main = true in place
           if grep -q '^fork_to_main = ' "$(pwd)/.wiki-config"; then
             sed -i.bak 's/^fork_to_main = .*/fork_to_main = true/' "$(pwd)/.wiki-config"
@@ -100,6 +128,14 @@ EOF
           fi
           rm -f "$(pwd)/.wiki-mode"
           echo "wiki use both: fork_to_main = true on existing config (role=${role})"
+          ;;
+        main|project)
+          if ! set_runtime_fork "$(pwd)" true; then
+            echo >&2 "wiki use both: could not update per-user routing; configure this wiki with 'wiki config init-local $(pwd)' first"
+            exit 1
+          fi
+          rm -f "$(pwd)/.wiki-mode"
+          echo "wiki use both: fork_to_main = true in .wiki-config.local (role=${role})"
           ;;
         *)
           echo >&2 "wiki use both: unknown role '${role}' in existing .wiki-config"

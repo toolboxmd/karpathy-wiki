@@ -47,7 +47,8 @@ case "${sub}" in
   capture)
     # bin/wiki capture — single entry point for chat-driven captures.
     # Reads body from stdin OR --body-file, validates, runs resolver,
-    # handles prompts/headless fallback, writes capture(s), spawns ingester(s).
+    # handles prompts/headless fallback, writes every capture, then requests
+    # one bounded dispatcher tick per target wiki.
 
     title=""
     kind=""
@@ -165,7 +166,23 @@ case "${sub}" in
           if [[ -f "$(pwd)/.wiki-config" ]]; then
             # Cwd has its own config — proceed with cwd's wiki only,
             # if and only if fork_to_main is false. (true → exit 12 path.)
-            if grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
+            cwd_role="$(wiki_structural_config_get "$(pwd)" role 2>/dev/null || echo "")"
+            fork_requested=0
+            case "${cwd_role}" in
+              main|project)
+                if [[ -f "$(pwd)/.wiki-config.local" ]] \
+                   && [[ "$(wiki_runtime_config_get "$(pwd)" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+                  fork_requested=1
+                elif [[ ! -f "$(pwd)/.wiki-config.local" ]] \
+                     && grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
+                  fork_requested=1
+                fi
+                ;;
+              project-pointer)
+                grep -q '^fork_to_main = true' "$(pwd)/.wiki-config" && fork_requested=1
+                ;;
+            esac
+            if [[ "${fork_requested}" == 1 ]]; then
               orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
                 --title "${title}" \
                 --reason "headless: cwd .wiki-config requests fork_to_main=true but pointer is missing" \
@@ -173,8 +190,13 @@ case "${sub}" in
               echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
               exit 1
             fi
-            # Re-run resolver: it will succeed on cwd alone now.
-            resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || true
+            # Resolve with an ephemeral `none` pointer. This preserves the
+            # user's missing-pointer state while allowing a local-only wiki.
+            temporary_pointer="$(mktemp)"
+            printf 'none\n' > "${temporary_pointer}"
+            resolver_out="$(WIKI_POINTER_FILE="${temporary_pointer}" bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" \
+              && resolver_exit=0 || true
+            rm -f "${temporary_pointer}"
           else
             orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
               --title "${title}" \
@@ -264,7 +286,7 @@ case "${sub}" in
       exit 1
     fi
 
-    # Build frontmatter + body for each target wiki and spawn ingester
+    # Build frontmatter + body for every target before any dispatch starts.
     ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
     slug="$(slugify "${title}")"
     fork_id="fk-$(date +%s)-$$"
@@ -283,6 +305,7 @@ case "${sub}" in
         raw-direct)    evidence_type="file"; evidence="${evidence_path}" ;;
       esac
 
+      capture_temp="$(mktemp "${target_wiki}/.wiki-pending/.capture.XXXXXX")"
       {
         echo "---"
         echo "title: \"${title}\""
@@ -297,10 +320,40 @@ case "${sub}" in
         echo "---"
         echo
         cat "${body_buf}"
-      } > "${capture_path}"
+      } > "${capture_temp}"
+      chmod 0644 "${capture_temp}"
 
-      bash "${REPO_ROOT}/scripts/wiki-spawn-ingester.sh" "${target_wiki}" "${capture_path}" &
-      disown 2>/dev/null || true
+      # Publish a complete inode atomically. If the same title is captured
+      # twice within one second, preserve both instead of overwriting either.
+      capture_candidate="${capture_path}"
+      capture_suffix=1
+      while true; do
+        if ln "${capture_temp}" "${capture_candidate}" 2>/dev/null; then
+          break
+        fi
+        if [[ -e "${capture_candidate}" ]]; then
+          capture_candidate="${capture_path%.md}-${capture_suffix}.md"
+          capture_suffix=$((capture_suffix + 1))
+          continue
+        fi
+        rm -f "${capture_temp}"
+        echo >&2 "wiki capture: could not publish capture in ${target_wiki}/.wiki-pending"
+        exit 1
+      done
+      rm -f "${capture_temp}"
+
+    done <<< "${resolver_out}"
+
+    # A missing or legacy local runtime config must never lose the capture.
+    # The user gets one actionable warning and can drain it after configuring
+    # the wiki; capture itself remains a successful durable operation.
+    while IFS= read -r target_wiki; do
+      [[ -n "${target_wiki}" ]] || continue
+      if ! dispatch_error="$(python3 "${REPO_ROOT}/scripts/wiki_dispatch.py" tick \
+          --wiki "${target_wiki}" --source capture 2>&1)"; then
+        echo >&2 "wiki capture: saved, but dispatcher did not start for ${target_wiki}:"
+        echo >&2 "${dispatch_error}"
+      fi
     done <<< "${resolver_out}"
 
     # Write fork-coordination record if multi-target
@@ -321,8 +374,59 @@ case "${sub}" in
   use)
     bash "${REPO_ROOT}/scripts/wiki-use.sh" "$@"
     ;;
+  config)
+    config_action="${1:-}"
+    [[ -n "${config_action}" ]] || {
+      echo >&2 "usage: wiki config init-local|migrate|validate|show|update-runtime <wiki-path> [options]"
+      exit 1
+    }
+    shift
+    case "${config_action}" in
+      init-local|migrate|validate|show|update-runtime)
+        config_wiki="${1:-}"
+        [[ -n "${config_wiki}" ]] || {
+          echo >&2 "wiki config ${config_action}: <wiki-path> required"
+          exit 1
+        }
+        shift
+        python3 "${REPO_ROOT}/scripts/wiki_config.py" "${config_action}" --wiki "${config_wiki}" "$@"
+        ;;
+      *)
+        echo >&2 "wiki config: unknown action '${config_action}'; valid: init-local|migrate|validate|show|update-runtime"
+        exit 1
+        ;;
+    esac
+    ;;
+  scheduler)
+    scheduler_action="${1:-}"
+    case "${scheduler_action}" in
+      install|uninstall|status) ;;
+      *)
+        echo >&2 "usage: wiki scheduler install|uninstall|status <wiki-path> [--json]"
+        exit 1
+        ;;
+    esac
+    shift
+    scheduler_wiki="${1:-}"
+    [[ -n "${scheduler_wiki}" ]] || {
+      echo >&2 "wiki scheduler ${scheduler_action}: <wiki-path> required"
+      exit 1
+    }
+    shift
+    python3 "${REPO_ROOT}/scripts/wiki_scheduler.py" "${scheduler_action}" \
+      --wiki "${scheduler_wiki}" "$@"
+    ;;
+  tick)
+    tick_wiki=""
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+      tick_wiki="$1"
+      shift
+    else
+      tick_wiki="$(wiki_root)"
+    fi
+    python3 "${REPO_ROOT}/scripts/wiki_dispatch.py" tick --wiki "${tick_wiki}" "$@"
+    ;;
   ingest-now)
-    # Leg 3 implements this; placeholder for now
     if [[ -f "${REPO_ROOT}/scripts/wiki-ingest-now.sh" ]]; then
       bash "${REPO_ROOT}/scripts/wiki-ingest-now.sh" "$@"
     else
@@ -341,12 +445,18 @@ subcommands:
   capture        Write a chat-driven capture (the agent's canonical entry point)
                    wiki capture --title T --kind chat-only|chat-attached --suggested-action <act> [--body-file <path>]
                    Body via stdin (pipe) OR --body-file. Max 256 KB.
-  ingest-now     Drift-scan + drain inbox/ on demand (Leg 3)
+  ingest-now     Scan sources and run one bounded drain on demand
                    wiki ingest-now [<wiki-path>]
   issues         Show ingester-reported issues (grouped, severity-ordered)
                    wiki issues
   use            Change per-cwd wiki mode
                    wiki use project|main|both
+  config         Manage per-user runtime configuration
+                   wiki config init-local|migrate|validate|show|update-runtime <wiki-path> [options]
+  scheduler      Manage the macOS cron-like LaunchAgent adapter
+                   wiki scheduler install|uninstall|status <wiki-path>
+  tick           Run one bounded queue-dispatch pass
+                   wiki tick [<wiki-path>] --source session_start|scheduled|manual|capture|worker_completion [--scan]
   init-main      Bootstrap ~/.wiki-pointer (interactive)
   status         Read-only health report
   doctor         Deep lint + fix (post-MVP)

@@ -1,15 +1,19 @@
 ---
 name: karpathy-wiki-ingest
 description: |
-  For the spawned `claude -p` ingester only. The main agent never loads this. Defines orientation protocol, page format, role guardrail, validator contract, manifest protocol, commit protocol. Loaded via the spawn prompt by `wiki-spawn-ingester.sh`.
+  For a detached wiki ingester only. The main agent never loads this. Defines orientation protocol, page format, role guardrail, validator contract, manifest protocol, and deterministic completion contract. Loaded by the provider-aware runtime worker.
 ---
 
-# karpathy-wiki ingest (for spawned ingester only)
+# karpathy-wiki ingest (for detached runtime ingester only)
 
-You are a detached `claude -p` ingester invoked by
-`wiki-spawn-ingester.sh`. Your job: process one already-claimed
-capture into wiki pages and commit. The main agent does NOT read this
-skill — it's loaded by your spawn prompt.
+You are a detached wiki ingester invoked by the provider-aware runtime
+worker. Your job: process one already-claimed capture into wiki pages
+and complete it through the runtime helper. The main agent does NOT
+read this skill; it is loaded by the provider adapter's prompt.
+
+Perform this ingest yourself. You must not launch or delegate the work
+to another model or agentic CLI. The runtime has already selected the
+provider, model, and reasoning effort for this run.
 
 ## Deep orientation
 
@@ -64,16 +68,17 @@ titles alone.
 
 9. **Issue reporting (during steps 5-7).** While reading the index and
    the candidate pages, observe issues. Append each as one JSONL line
-   to `<wiki>/.ingest-issues.jsonl` via `bash scripts/wiki-issue-log.sh`.
+   to `<wiki>/.ingest-issues.jsonl` via
+   `bash "${WIKI_PLUGIN_ROOT}/scripts/wiki-issue-log.sh"`.
    Do NOT fix issues inline; report only — `wiki doctor` consumes the
    log later.
 
    Example invocation:
 
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-issue-log.sh" \
+   bash "${WIKI_PLUGIN_ROOT}/scripts/wiki-issue-log.sh" \
      --wiki "${WIKI_ROOT}" \
-     --ingester-run "${RUN_ID}" \
+     --ingester-run "${WIKI_RUN_ID}" \
      --capture "${WIKI_CAPTURE#${WIKI_ROOT}/}" \
      --page "concepts/auth.md" \
      --type broken-cross-link \
@@ -147,48 +152,17 @@ measurable spawn-time impact.
 
 ## Run record (per ingestion)
 
-At the very start of your work, generate a unique `run_id` and append
-a "spawned" record to `<wiki>/.ingest-runs.jsonl`:
+`WIKI_RUN_ID` is assigned before you start. Do not generate or replace
+it. The runtime wrapper owns the `started`, retry, failure, and
+`completed` records in `<wiki>/.ingest-runs.jsonl`; it also owns the
+heartbeat on `WIKI_CAPTURE` and the process-slot lease. Do not write
+run-history records yourself.
 
-```bash
-RUN_ID="in-$(date +%s)-$(openssl rand -hex 4 2>/dev/null || echo $$)"
-ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-mkdir -p "${WIKI_ROOT}/.locks"
-{
-  flock 7
-  printf '{"run_id":"%s","capture":"%s","started_at":"%s","status":"spawned"}\n' \
-    "${RUN_ID}" "${WIKI_CAPTURE}" "${ts}" >> "${WIKI_ROOT}/.ingest-runs.jsonl"
-} 7>"${WIKI_ROOT}/.locks/ingest-runs.lock"
-```
-
-At the END of your work (success or failure), append a closing
-record:
-
-```bash
-ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-status="completed"  # or "failed" if you exit non-zero
-exit_code=0          # or your real exit code
-{
-  flock 7
-  printf '{"run_id":"%s","ended_at":"%s","status":"%s","exit_code":%d}\n' \
-    "${RUN_ID}" "${ts}" "${status}" "${exit_code}" >> "${WIKI_ROOT}/.ingest-runs.jsonl"
-} 7>"${WIKI_ROOT}/.locks/ingest-runs.lock"
-```
-
-The two records (spawned + closing) tie back via `run_id`. `wiki
-status` reads both files and surfaces asymmetric outcomes in `both`
-mode (a fork that has a project record but no main record is
-flagged).
-
-If the ingester crashes between the two records, the spawned record
-remains without a closing record. `wiki status` flags such records as
-"in-flight or stalled" if they're > 30 minutes old.
-
-On platforms without `flock(1)` (macOS), use the same noclobber-spin
-fallback used by `scripts/wiki-manifest-lock.sh`. The 4 KB-per-line
-JSONL discipline keeps the append atomic on POSIX even without a lock,
-but the lock prevents any partial-write contention under high
-concurrency.
+Use `WIKI_RUN_ID` only when another deterministic helper needs to tie
+an observation to the current run, such as `wiki-issue-log.sh`. A
+successful ingest is closed by the completion helper described in
+step 10. The wrapper writes `completed` only after it verifies both the
+archive and the provider's zero exit.
 
 ## Role guardrail
 
@@ -223,6 +197,10 @@ that schema here.
 See `references/page-conventions.md` for the canonical page
 frontmatter and cross-link conventions.
 
+All generated page metadata timestamps (`created`, `updated`, `rated_at`) must
+be real UTC values. In shell, generate them with
+`date -u +%Y-%m-%dT%H:%M:%SZ`. Never append `Z` to local wall-clock output.
+
 ## Body-sufficiency check (first thing — reject if too thin)
 
 Before any other work, measure the capture body size in bytes (content
@@ -241,7 +219,8 @@ If body is BELOW its floor:
 1. Add `needs_more_detail: true` to the capture's frontmatter.
 2. Add `needs_more_detail_reason: "body is <N> bytes; floor for capture_kind=<K> is <F> bytes"`.
 3. Rename `.md.processing` → `.md` so the next session-start drain
-   re-presents it after the main agent expands.
+   preserves it for the main agent to expand. The dispatcher skips marked
+   captures until the main agent removes both deferral fields.
 4. Append to `log.md`: `## [<timestamp>] reject | <capture-basename> — body <N>b below <F>b floor`.
 5. Exit 0. Do NOT write pages. Do NOT commit.
 
@@ -262,7 +241,9 @@ A thin-capture rejection is a feature, not a failure.
 
    1. Copy the evidence file to `<wiki>/.raw-staging/<basename>` (NOT directly to `raw/`).
    2. Compute the new sha256.
-   3. Acquire `<wiki>/.locks/manifest.lock` via `bash scripts/wiki-manifest-lock.sh ...` for the manifest write + rename block.
+   3. Acquire `<wiki>/.locks/manifest.lock` via
+      `bash "${WIKI_PLUGIN_ROOT}/scripts/wiki-manifest-lock.sh" ...` for the
+      manifest write + rename block.
    4. Re-read the manifest under the lock. If `raw/<basename>` already exists with the same sha256, this is a duplicate — skip (apply the sha256 short-circuit below).
    5. Update the manifest entry for `raw/<basename>` (origin, sha, copied_at, last_ingested, referenced_by).
    6. Write the manifest atomically (`.manifest.json.tmp` + `os.rename`) — `wiki-manifest.py build` already does this.
@@ -287,7 +268,7 @@ A thin-capture rejection is a feature, not a failure.
        }
      }
      ```
-   - Always call `python3 scripts/wiki-manifest.py build "${WIKI_ROOT}"` at the end of ingest to refresh sha256 and `last_ingested`. This is mandatory; the manifest is the drift-detection source of truth.
+   - Always call `python3 "${WIKI_PLUGIN_ROOT}/scripts/wiki-manifest.py" build "${WIKI_ROOT}"` at the end of ingest to refresh sha256 and `last_ingested`. This is mandatory; the manifest is the drift-detection source of truth.
    - **Iron rule:** `origin` is the capture's `evidence` field value — never the string `"file"`, `"conversation"` (when a real path was available), `"mixed"`, or the `evidence_type`/`capture_kind`. If `capture_kind == "chat-only"` AND the capture has no real path, `origin` is the literal string `"conversation"`. Any other value is a validator failure.
    - **sha256 short-circuit.** If `raw/<basename>` already exists AND `sha256(new) == manifest[raw/<basename>].sha256`, the evidence content is identical — skip re-ingest of this capture and append `## [<timestamp>] skip | <capture-basename> — sha match, no-op` to `log.md`. Archive the capture normally (step 10). This prevents re-ingesting the same research file twice when the capture-trigger fires on a near-duplicate.
    - **Title-scope check.** Before merging into an existing wiki page in step 6, compare the new evidence's scope to the existing page's slug. Scope is the set of distinct entities (product names, versions, model names, concepts) the evidence covers. If the existing page's slug is NARROWER than the new evidence's scope (example: existing `concepts/gemma4-27b-hardware-requirements.md` vs new evidence covering a 27B+31B comparison), do NOT force-merge the broader content into the narrower-titled page. Instead, either (a) create a sibling concept page with a scope-appropriate slug (e.g. `concepts/gemma4-27b-vs-31b-hardware-comparison.md`) and cross-link both, or (b) rename the existing page's slug AND frontmatter title to cover the new scope, then merge — only if no other wiki page currently links to the old slug (if any do, use option (a) to avoid broken links). Log which option was taken in `log.md`.
@@ -301,7 +282,7 @@ A thin-capture rejection is a feature, not a failure.
    c. Merge new material. Do NOT replace existing claims — add dated findings, use `contradictions:` frontmatter if they disagree.
    d. Release lock (`wiki_lock_release`).
 
-6.5. **Self-rate every page you just touched.** For each page, use the cheap model to score on four dimensions (1-5 each), compute `overall` as `round(mean, 2)`, and write the following into the page's frontmatter (creating the `quality:` block if missing, preserving `rated_by: human` if the page already has it):
+6.5. **Self-rate every page you just touched.** Use your own judgment as the current ingester; do not launch another model. For each page, score four dimensions (1-5 each), compute `overall` as `round(mean, 2)`, and write the following into the page's frontmatter (creating the `quality:` block if missing, preserving `rated_by: human` if the page already has it):
    ```yaml
    quality:
      accuracy: <1-5>
@@ -324,7 +305,7 @@ A thin-capture rejection is a feature, not a failure.
 
    ```bash
    for dir in "${TOUCHED_DIRS[@]}"; do
-     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-build-index.py" \
+     python3 "${WIKI_PLUGIN_ROOT}/scripts/wiki-build-index.py" \
        --wiki-root "${WIKI_ROOT}" "${dir}"
    done
    ```
@@ -333,7 +314,7 @@ A thin-capture rejection is a feature, not a failure.
 
    If the script exits non-zero (lock timeout, discovery failure), log the failure to `log.md` and continue. The next ingest catches up because indexes are a function of directory state.
 
-7.5. **Missed-cross-link check.** Pass the freshly-edited page content AND the relevant `_index.md` content (the page's parent directory's index, NOT root index.md) to the cheap model with this prompt: "Identify any existing wiki page in _index.md that this page obviously should link to but currently does not. Return a list of (target-page-path, anchor-text) pairs, or an empty list. Do not propose new pages; only propose links to pages already in _index.md." For each returned pair, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release. Re-validate.
+7.5. **Missed-cross-link check.** Using your own judgment as the current ingester, compare the freshly edited page with the relevant `_index.md` (the page's parent directory's index, NOT root `index.md`). Identify existing pages it obviously should link to but currently does not. Do not delegate this check to another model. For every clear match, insert a markdown link at a relevant point in the page (or append to a `## See also` section, creating it if absent), re-acquire the page lock, save, release, and re-validate. Do not propose new pages in this step.
 
 7.6. **Per-`_index.md` size threshold check.** After step 7's invocation, check the size of every `_index.md` the script touched:
 
@@ -370,11 +351,18 @@ EOF
 
    Main wiki ingestion is otherwise identical to project wiki ingestion.
 
-10. **Archive the capture** from `.processing` to `.wiki-pending/archive/YYYY-MM/`: `wiki_capture_archive "${WIKI_ROOT}" "${WIKI_CAPTURE}"`. The helper strips the `.processing` suffix on rename, so archived basenames end in `.md`.
+10. **Complete through the deterministic runtime helper:**
 
-11. **Call auto-commit** (from skill's base dir): `bash scripts/wiki-commit.sh "${WIKI_ROOT}" "ingest: <capture title>"`
+    ```bash
+    bash "${WIKI_PLUGIN_ROOT}/scripts/wiki-complete-ingest.sh"
+    ```
 
-12. **Exit.**
+    `WIKI_ROOT`, `WIKI_CAPTURE`, and `WIKI_RUN_ID` are already set. The
+    helper validates the manifest, archives the `.processing` capture,
+    and applies the configured commit policy. If it exits non-zero,
+    stop and exit non-zero; the wrapper owns retry classification.
+
+11. **Exit zero only after the completion helper succeeds.**
 
 ## Tier-1 lint at ingest (inline)
 
@@ -382,7 +370,7 @@ Before exiting, run the validator on every page you just touched:
 
 ```bash
 for page in "${touched_pages[@]}"; do
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/wiki-validate-page.py" \
+  python3 "${WIKI_PLUGIN_ROOT}/scripts/wiki-validate-page.py" \
     --wiki-root "${WIKI_ROOT}" "${page}"
 done
 ```
@@ -390,7 +378,8 @@ done
 The validator checks:
 - Every markdown link in the page resolves to an existing file.
 - Required frontmatter fields (`title`, `type`, `tags`, `sources`, `created`, `updated`) present.
-- `type` is one of `concept, entity, query`.
+- `type` matches the discovered top-level category and the page's first path
+  component (plural form such as `concepts`, `entities`, or `queries`).
 - Dates are full ISO-8601 UTC (`2026-04-24T13:00:00Z`, not `2026-04-24`).
 - `sources:` is a flat list of strings (no nested mappings).
 - Every `quality.*` field is present and in range.
@@ -414,11 +403,11 @@ When a threshold is reached, propose the restructure via a `schema-proposal` cap
 
 Three rules govern how categories grow. Each has firing mechanism aimed at the agent during ingest, not at the user via status alarms.
 
-**Rule 1: Don't create a new category to file ONE page.** Before mkdir-ing during ingest step 5 (decide-target-page), the agent checks: are there ≥3 pages I can place here, or one page that will grow to ≥3? If neither, place this page in an existing category instead. **Mechanism:** the cheap model's prompt at step 5 carries this rule explicitly. Decision-time prevention beats after-the-fact warning.
+**Rule 1: Don't create a new category to file ONE page.** Before mkdir-ing during ingest step 5 (decide-target-page), the current ingester checks: are there ≥3 pages I can place here, or one page that will grow to ≥3? If neither, place this page in an existing category instead. **Mechanism:** the provider-neutral ingest prompt carries this rule explicitly. Decision-time prevention beats after-the-fact warning.
 
-**Rule 2: Sub-directory depth has a HARD cap of 4.** Validator REJECTS any page placed at depth ≥5 (`category/a/b/c/d/page.md`). The cheap model is told at step 5 to place shallower if a deeper position would be required. **Mechanism:** validator exit non-zero. `wiki-status.sh` surfaces "categories exceeding depth 4" (always 0 if validator is doing its job).
+**Rule 2: Sub-directory depth has a HARD cap of 4.** Validator REJECTS any page placed at depth ≥5 (`category/a/b/c/d/page.md`). The current ingester must place shallower if a deeper position would be required. **Mechanism:** validator exit non-zero. `wiki-status.sh` surfaces "categories exceeding depth 4" (always 0 if validator is doing its job).
 
-**Rule 3: ≥8 categories soft ceiling triggers schema-proposal.** When current category count is already 8 and the cheap model wants to mkdir a 9th, it files a schema-proposal capture in `.wiki-pending/schema-proposals/<timestamp>-9th-category-<name>.md` instead of mkdir-ing. The current capture is filed in the existing-best-fit category for now. User reviews schema-proposal and can `mkdir` themselves to override. **Mechanism:** schema-proposal capture (not a hard reject — flexibility preserved). `wiki-status.sh` surfaces "category count vs soft-ceiling 8."
+**Rule 3: ≥8 categories soft ceiling triggers schema-proposal.** When current category count is already 8 and the current ingester wants to mkdir a 9th, it files a schema-proposal capture in `.wiki-pending/schema-proposals/<timestamp>-9th-category-<name>.md` instead of mkdir-ing. The current capture is filed in the existing-best-fit category for now. User reviews schema-proposal and can `mkdir` themselves to override. **Mechanism:** schema-proposal capture (not a hard reject — flexibility preserved). `wiki-status.sh` surfaces "category count vs soft-ceiling 8."
 
 ## What's NOT in this skill
 

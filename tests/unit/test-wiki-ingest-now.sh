@@ -17,8 +17,26 @@ trap 'sleep 0.3; rm -rf "${TESTDIR}" 2>/dev/null || true' EXIT
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${WIKI}/.wiki-config"
-rm -f "${WIKI}/.wiki-config.bak"
+cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "scheduled"
+max_processes = 1
+default_profile = "test"
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
+[settings]
+auto_commit = false
+EOF
+export WIKI_DISPATCH_TEST_MODE=1
+export WIKI_DISPATCH_TEST_PROVIDER_MODE=success_no_complete
+export WIKI_DISPATCH_TEST_NO_REFILL=1
 
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${WIKI}" > "${WIKI_POINTER_FILE}"

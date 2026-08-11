@@ -27,9 +27,7 @@ trap 'rm -rf "${TESTDIR}"' EXIT
 FAKE_HOME="${TESTDIR}/home"
 mkdir -p "${FAKE_HOME}"
 bash "${INIT}" main "${FAKE_HOME}/wiki" >/dev/null
-# Override headless_command so the test never spawns a real ingester.
-sed -i.bak 's|headless_command = .*|headless_command = "echo"|' "${FAKE_HOME}/wiki/.wiki-config"
-rm -f "${FAKE_HOME}/wiki/.wiki-config.bak"
+# No runtime config is needed: all headline cases stop before dispatch.
 
 # NOTE: we deliberately do NOT create ${FAKE_HOME}/.wiki-pointer.  That's
 # the upgrade scenario this test exists to cover.

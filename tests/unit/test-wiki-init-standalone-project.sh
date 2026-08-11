@@ -28,9 +28,12 @@ for f in index.md log.md schema.md .manifest.json .gitignore; do
   [[ -e "${TESTDIR}/wiki/${f}" ]] || fail "missing ${f}"
 done
 
-# Existing two-arg form still works
+# Existing three-arg form still initializes, but the machine-local main path is
+# no longer copied into the tracked wiki identity.
 bash "${INIT}" project "${TESTDIR}/wiki2" "${TESTDIR}/wiki" >/dev/null \
   || fail "wiki-init.sh project <path> <main> must still succeed"
-grep -q '^main = ' "${TESTDIR}/wiki2/.wiki-config" || fail "with-main form lost main field"
+if grep -q '^main = ' "${TESTDIR}/wiki2/.wiki-config"; then
+  fail "with-main form leaked machine-local routing into tracked config"
+fi
 
 echo "PASS: wiki-init.sh standalone project mode"
