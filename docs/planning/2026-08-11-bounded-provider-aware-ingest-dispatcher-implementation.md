@@ -1,6 +1,6 @@
 # Bounded, Provider-Aware Wiki Ingest Dispatcher — Implementation Plan
 
-**Status:** Implemented and verified in the uncommitted working tree. No existing user wiki was a migration target or test fixture.
+**Status:** Shipped and verified in commit [`877e659`](https://github.com/toolboxmd/karpathy-wiki/commit/877e659). No existing user wiki was a migration target or test fixture.
 **Date:** 2026-08-11
 **Design specification:** `docs/planning/2026-08-11-bounded-provider-aware-ingest-dispatcher-plan.md`
 **Repository baseline:** `990cb20`
@@ -71,8 +71,9 @@ Verification completed on 2026-08-11:
   LaunchAgent completed and was fully removed;
 - no existing wiki was discovered, inspected, migrated, or mutated.
 
-The post-ship skill-authoring case study remains deferred until an actual
-implementation commit exists, as required by the evidence-first rule.
+The evidence-backed post-ship retrospective is now published as the
+[provider-aware ingest case study](https://github.com/toolboxmd/building-agentskills/blob/a87d457/case-studies/2026-08-11-karpathy-wiki-provider-aware-ingest.md),
+with a condensed benchmark evidence manifest in the same repository.
 
 ## Current baseline and pre-existing failure
 
