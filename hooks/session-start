@@ -37,7 +37,8 @@ if [[ -f "${LOADER_PATH}" ]]; then
   }
 
   loader_escaped="$(escape_for_json "${loader_content}")"
-  context_prefix='<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Below is the full content of the using-karpathy-wiki loader skill — auto-loaded into every conversation. For all other karpathy-wiki skills (capture, read, ingest), use the Skill tool when their moment arrives:**\n\n'
+  wiki_cli_escaped="$(escape_for_json "${REPO_ROOT}/bin/wiki")"
+  context_prefix="<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Runtime CLI for this session:** execute \`${wiki_cli_escaped}\` whenever a wiki skill refers to \`bin/wiki\` or \`wiki\`. This path belongs to the installed plugin; do not rely on a global symlink or PATH entry.\n\n**Below is the full content of the using-karpathy-wiki loader skill, auto-loaded into every conversation. For all other karpathy-wiki skills (capture, read, ingest), use the Skill tool when their moment arrives:**\n\n"
   context_suffix='\n</EXTREMELY_IMPORTANT>'
   session_context="${context_prefix}${loader_escaped}${context_suffix}"
 

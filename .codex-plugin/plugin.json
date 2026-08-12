@@ -1,0 +1,28 @@
+{
+  "name": "karpathy-wiki",
+  "version": "0.2.8",
+  "description": "Auto-maintained LLM wiki based on Andrej Karpathy's pattern.",
+  "author": {
+    "name": "lukaszmaj",
+    "url": "https://github.com/toolboxmd"
+  },
+  "homepage": "https://github.com/toolboxmd/karpathy-wiki#readme",
+  "repository": "https://github.com/toolboxmd/karpathy-wiki",
+  "license": "MIT",
+  "keywords": ["knowledge-base", "wiki", "capture", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Karpathy Wiki",
+    "shortDescription": "Capture and reuse durable project knowledge.",
+    "longDescription": "Maintain project and global wikis with automatic capture, background ingestion, source attribution, and wiki-grounded answers.",
+    "developerName": "toolbox.md",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/toolboxmd/karpathy-wiki",
+    "defaultPrompt": [
+      "Capture durable knowledge from this conversation.",
+      "Answer this question from the project wiki.",
+      "Show wiki status and unresolved ingest issues."
+    ]
+  }
+}
