@@ -64,7 +64,7 @@ case "${mode}" in
             exit 1
           fi
           rm -f "$(pwd)/.wiki-mode"
-          echo "wiki use project: fork_to_main = false in .wiki-config.local (role=${role})"
+          echo "wiki use project: fork_to_main = false in trusted runtime config (role=${role})"
           exit 0
           ;;
         project-pointer)
@@ -135,7 +135,7 @@ EOF
             exit 1
           fi
           rm -f "$(pwd)/.wiki-mode"
-          echo "wiki use both: fork_to_main = true in .wiki-config.local (role=${role})"
+          echo "wiki use both: fork_to_main = true in trusted runtime config (role=${role})"
           ;;
         *)
           echo >&2 "wiki use both: unknown role '${role}' in existing .wiki-config"

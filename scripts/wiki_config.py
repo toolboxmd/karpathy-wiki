@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Load and validate karpathy-wiki structural and per-user runtime config.
+"""Load and validate structural config plus locally trusted runtime config.
 
-The tracked ``.wiki-config`` identifies a wiki. Machine-local ingest settings
-live in ignored ``.wiki-config.local``. This module is importable by runtime
-scripts and also exposes a small CLI for tests and user-facing wrappers.
+The tracked ``.wiki-config`` identifies a wiki. Provider settings and the
+local trust decision live outside the checkout under the user's config home.
+This module is importable by runtime scripts and exposes a small CLI.
 """
 
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -118,31 +121,209 @@ def classify_wiki_root(wiki: str | Path) -> tuple[Path, dict[str, Any]]:
     return root, structural
 
 
+def trusted_workspace_root(root: Path) -> Path:
+    """Return the checkout whose files must never define an ingest executable."""
+
+    parent = root.parent
+    pointer = parent / ".wiki-config"
+    if pointer.is_file():
+        try:
+            data = _load_toml(pointer, "project pointer")
+        except ConfigError:
+            data = {}
+        target = data.get("wiki", "./wiki")
+        if data.get("role") == "project-pointer" and isinstance(target, str):
+            candidate = Path(target).expanduser()
+            if not candidate.is_absolute():
+                candidate = parent / candidate
+            if candidate.resolve() == root:
+                return parent.resolve()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        result = None
+    if result is not None and result.returncode == 0:
+        return Path(result.stdout.strip()).resolve()
+    return root
+
+
+def _config_home() -> Path:
+    override = os.environ.get("WIKI_CONFIG_HOME")
+    if override:
+        return Path(override).expanduser()
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "karpathy-wiki"
+    return Path.home() / ".config" / "karpathy-wiki"
+
+
+def runtime_config_path(wiki: str | Path) -> Path:
+    root = Path(wiki).expanduser().resolve()
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
+        return root / ".wiki-config.local"
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:24]
+    return _config_home() / "wikis" / digest / "runtime.toml"
+
+
+def _ensure_private_runtime_parent(path: Path) -> None:
+    base = _config_home()
+    for directory in (base, base / "wikis", path.parent):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if directory.is_symlink():
+            raise ConfigError(f"wiki: runtime configuration directory must not be a symlink: {directory}")
+        os.chmod(directory, 0o700)
+
+
+def _prepare_runtime_parent(path: Path) -> None:
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return
+    _ensure_private_runtime_parent(path)
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_executable_origin(executable: str, workspace: Path, dotted: str) -> None:
+    expanded = os.path.expanduser(executable)
+    resolved: Path | None = None
+    if os.sep in expanded:
+        path = Path(expanded)
+        if not path.is_absolute():
+            raise _invalid(dotted, "must be an executable name or an absolute path")
+        resolved = path.resolve()
+    else:
+        found = shutil.which(expanded)
+        if found is not None:
+            resolved = Path(found).resolve()
+    if resolved is not None and _is_within(resolved, workspace):
+        raise _invalid(dotted, "resolves inside the project checkout")
+
+
+def _trusted_runtime_file(root: Path) -> tuple[Path, dict[str, Any]]:
+    path = runtime_config_path(root)
+    if not path.is_file():
+        workspace = trusted_workspace_root(root)
+        raise ConfigError(
+            f"wiki: trusted runtime configuration missing: {path}\n"
+            f"Run: wiki config init-local {root} --trust-workspace {workspace}"
+        )
+    test_checkout = os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1"
+    if not test_checkout and path.is_symlink():
+        raise ConfigError(f"wiki: trusted runtime configuration must not be a symlink: {path}")
+    if not test_checkout:
+        for directory in (_config_home(), _config_home() / "wikis", path.parent):
+            if directory.is_symlink():
+                raise ConfigError(
+                    f"wiki: runtime configuration directory must not be a symlink: {directory}"
+                )
+            directory_info = directory.stat()
+            if hasattr(os, "getuid") and directory_info.st_uid != os.getuid():
+                raise ConfigError(f"wiki: runtime configuration directory has the wrong owner: {directory}")
+            if directory_info.st_mode & 0o077:
+                raise ConfigError(f"wiki: runtime configuration directory must have mode 0700: {directory}")
+    try:
+        info = path.stat()
+    except OSError as exc:
+        raise ConfigError(f"cannot inspect runtime configuration: {path}: {exc}") from exc
+    if not test_checkout and hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ConfigError(f"wiki: trusted runtime configuration has the wrong owner: {path}")
+    if not test_checkout and info.st_mode & 0o077:
+        raise ConfigError(f"wiki: trusted runtime configuration must have mode 0600: {path}")
+    return path, _load_toml(path, "trusted runtime configuration")
+
+
+def _require_workspace_consent(args: argparse.Namespace, root: Path) -> None:
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
+        return
+    expected = trusted_workspace_root(root)
+    supplied = getattr(args, "trust_workspace", None)
+    if supplied is None:
+        raise ConfigError(
+            "wiki config: explicit local trust required\n"
+            f"Re-run with: --trust-workspace {shlex.quote(str(expected))}"
+        )
+    actual = Path(supplied).expanduser().resolve()
+    if actual != expected:
+        raise ConfigError(
+            f"wiki config: --trust-workspace must equal the canonical workspace: {expected}"
+        )
+
+
+def _is_git_tracked(path: Path) -> bool:
+    try:
+        top_result = subprocess.run(
+            ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if top_result.returncode != 0:
+        return False
+    top = Path(top_result.stdout.strip()).resolve()
+    try:
+        relative = path.resolve().relative_to(top)
+    except ValueError:
+        return False
+    tracked = subprocess.run(
+        ["git", "-C", str(top), "ls-files", "--error-unmatch", "--", str(relative)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return tracked.returncode == 0
+
+
 def _legacy_config_error(root: Path) -> ConfigError:
+    workspace = trusted_workspace_root(root)
     return ConfigError(
         f"wiki: legacy ingest configuration detected in {root / '.wiki-config'}\n"
-        f"Run: wiki config migrate {root} --dry-run"
+        f"Run: wiki config migrate {root} --trust-workspace {workspace} --dry-run"
     )
 
 
 def _missing_local_error(root: Path) -> ConfigError:
+    workspace = trusted_workspace_root(root)
     return ConfigError(
-        f"wiki: runtime configuration missing: {root / '.wiki-config.local'}\n"
-        f"Run: wiki config init-local {root}"
+        f"wiki: trusted runtime configuration missing: {runtime_config_path(root)}\n"
+        f"Run: wiki config init-local {root} --trust-workspace {workspace}"
     )
 
 
 def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
-    """Load, validate, and normalize the split runtime configuration."""
+    """Load, validate, and normalize the trusted runtime configuration."""
 
     root, structural = classify_wiki_root(wiki)
     if any(key in structural for key in LEGACY_OPERATIONAL_KEYS):
         raise _legacy_config_error(root)
 
-    local_path = root / ".wiki-config.local"
-    if not local_path.is_file():
-        raise _missing_local_error(root)
-    local = _load_toml(local_path, "runtime configuration")
+    local_path, local = _trusted_runtime_file(root)
+    workspace = trusted_workspace_root(root)
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") != "1":
+        trust = local.get("trust")
+        if not isinstance(trust, dict):
+            raise ConfigError(f"wiki: trusted runtime configuration has no [trust] table: {local_path}")
+        if trust.get("wiki_root") != str(root):
+            raise ConfigError(f"wiki: trusted runtime configuration is bound to another wiki: {local_path}")
+        if trust.get("workspace_root") != str(workspace):
+            raise ConfigError(f"wiki: trusted runtime configuration is bound to another workspace: {local_path}")
 
     ingest = local.get("ingest")
     if not isinstance(ingest, dict):
@@ -246,12 +427,7 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
         executable = raw_profile.get("executable", provider)
         if not isinstance(executable, str) or not executable.strip():
             raise _invalid(f"{dotted}.executable", "must be a non-empty string")
-        expanded_executable = os.path.expanduser(executable)
-        if os.sep in expanded_executable and not Path(expanded_executable).is_absolute():
-            raise _invalid(
-                f"{dotted}.executable",
-                "must be an executable name or an absolute path",
-            )
+        _validate_executable_origin(executable, workspace, f"{dotted}.executable")
         profile_limit = _positive_int(
             raw_profile,
             "max_processes",
@@ -303,8 +479,16 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
         default=INGEST_DEFAULTS["rate_limit_retry_seconds"],
     )
 
+    normalized_trust = local.get("trust", {})
     return {
         "wiki_root": str(root),
+        "trusted_workspace": str(workspace),
+        "runtime_config_path": str(local_path),
+        "trust": {
+            "wiki_root": str(root),
+            "workspace_root": str(workspace),
+            "trusted_at": normalized_trust.get("trusted_at"),
+        },
         "wiki_role": structural["role"],
         "ingest": {
             "dispatch_mode": dispatch_mode,
@@ -354,9 +538,18 @@ def _render_structural_config(structural: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_runtime_config(config: dict[str, Any]) -> str:
+def _render_runtime_config(config: dict[str, Any], root: Path) -> str:
     ingest = config["ingest"]
+    trust = config.get("trust", {})
+    trusted_at = trust.get("trusted_at")
+    if not isinstance(trusted_at, str) or not trusted_at:
+        trusted_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     lines = [
+        "[trust]",
+        f"wiki_root = {_toml_string(str(root))}",
+        f"workspace_root = {_toml_string(str(trusted_workspace_root(root)))}",
+        f"trusted_at = {_toml_string(trusted_at)}",
+        "",
         "[ingest]",
         f"dispatch_mode = {_toml_string(ingest['dispatch_mode'])}",
         f"schedule_interval_seconds = {ingest['schedule_interval_seconds']}",
@@ -423,16 +616,17 @@ def _gitignore_with_local_config(root: Path) -> str:
 
 
 def _validate_generated_texts(structural_text: str, runtime_text: str) -> None:
-    """Validate generated TOML through the public loader before replacement."""
+    """Reject invalid generated TOML before any replacement."""
 
-    with tempfile.TemporaryDirectory(prefix="wiki-config-validate-") as tmp:
-        root = Path(tmp)
-        (root / ".wiki-pending").mkdir()
-        (root / "schema.md").write_text("# Schema\n", encoding="utf-8")
-        (root / "index.md").write_text("# Index\n", encoding="utf-8")
-        (root / ".wiki-config").write_text(structural_text, encoding="utf-8")
-        (root / ".wiki-config.local").write_text(runtime_text, encoding="utf-8")
-        validate_runtime_config(root)
+    try:
+        structural = tomllib.loads(structural_text)
+        runtime = tomllib.loads(runtime_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"generated configuration is malformed: {exc}") from exc
+    if structural.get("role") not in SUPPORTED_WIKI_ROLES:
+        raise ConfigError("generated structural configuration has an invalid role")
+    if not isinstance(runtime.get("trust"), dict) or not isinstance(runtime.get("ingest"), dict):
+        raise ConfigError("generated runtime configuration is incomplete")
 
 
 def _write_temp(path: Path, content: bytes, mode: int) -> Path:
@@ -551,8 +745,10 @@ def _read_explicit_profile(args: argparse.Namespace, prefix: str) -> dict[str, A
 
 
 def _profile_options_example(command: str, root: Path) -> str:
+    workspace = trusted_workspace_root(root)
     return (
         f"Run: wiki config {command} {root} "
+        f"--trust-workspace {shlex.quote(str(workspace))} "
         "--default-provider <codex|claude|grok> "
         "--default-model <model-id> --default-effort <effort> "
         "--max-processes <n> --dispatch-mode <session_start|scheduled>"
@@ -617,6 +813,7 @@ def _build_runtime_for_write(
     structural: dict[str, Any],
     allow_legacy_inference: bool,
 ) -> dict[str, Any]:
+    root = Path(args.wiki).expanduser().resolve()
     default = _read_explicit_profile(args, "default")
     if default is None and allow_legacy_inference:
         default = _infer_legacy_profile(structural)
@@ -681,47 +878,52 @@ def _build_runtime_for_write(
         "routing": {"fork_to_main": bool(fork_to_main)},
         "settings": {"auto_commit": bool(auto_commit)},
     }
+    workspace = trusted_workspace_root(root)
+    for name, profile in profiles.items():
+        _validate_executable_origin(
+            profile["executable"], workspace, f"ingest.profiles.{name}.executable"
+        )
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config)
+    runtime_text = _render_runtime_config(config, root)
     _validate_generated_texts(structural_text, runtime_text)
     return config
 
 
 def init_local_config(args: argparse.Namespace) -> int:
     root, structural = classify_wiki_root(args.wiki)
+    _require_workspace_consent(args, root)
     if any(key in structural for key in LEGACY_OPERATIONAL_KEYS):
         raise _legacy_config_error(root)
-    local_path = root / ".wiki-config.local"
+    local_path = runtime_config_path(root)
     if local_path.exists():
         validate_runtime_config(root)
-        gitignore_path = root / ".gitignore"
-        gitignore_text = _gitignore_with_local_config(root)
-        try:
-            current_gitignore = gitignore_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            current_gitignore = ""
-        except OSError as exc:
-            raise ConfigError(f"cannot read gitignore: {gitignore_path}: {exc}") from exc
-        if current_gitignore != gitignore_text:
-            _apply_transaction(
-                root,
-                [(gitignore_path, gitignore_text, 0o644)],
-                backup_structural=False,
-            )
+        if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
+            gitignore_path = root / ".gitignore"
+            gitignore_text = _gitignore_with_local_config(root)
+            try:
+                current_gitignore = gitignore_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                current_gitignore = ""
+            if current_gitignore != gitignore_text:
+                _apply_transaction(
+                    root,
+                    [(gitignore_path, gitignore_text, 0o644)],
+                    backup_structural=False,
+                )
         print(f"runtime configuration already exists: {local_path}")
         return 0
 
     config = _build_runtime_for_write(
         args, structural=structural, allow_legacy_inference=False
     )
-    runtime_text = _render_runtime_config(config)
-    gitignore_text = _gitignore_with_local_config(root)
+    runtime_text = _render_runtime_config(config, root)
+    _prepare_runtime_parent(local_path)
+    replacements = [(local_path, runtime_text, 0o600)]
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
+        replacements.append((root / ".gitignore", _gitignore_with_local_config(root), 0o644))
     _apply_transaction(
         root,
-        [
-            (local_path, runtime_text, 0o600),
-            (root / ".gitignore", gitignore_text, 0o644),
-        ],
+        replacements,
         backup_structural=False,
     )
     validate_runtime_config(root)
@@ -731,7 +933,8 @@ def init_local_config(args: argparse.Namespace) -> int:
 
 def migrate_config(args: argparse.Namespace) -> int:
     root, structural = classify_wiki_root(args.wiki)
-    local_path = root / ".wiki-config.local"
+    _require_workspace_consent(args, root)
+    local_path = runtime_config_path(root)
     legacy = any(key in structural for key in LEGACY_OPERATIONAL_KEYS)
     if not legacy:
         if local_path.exists():
@@ -744,25 +947,21 @@ def migrate_config(args: argparse.Namespace) -> int:
         args, structural=structural, allow_legacy_inference=True
     )
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config)
-    gitignore_text = _gitignore_with_local_config(root)
-
+    runtime_text = _render_runtime_config(config, root)
     if args.dry_run:
         print("--- proposed .wiki-config ---")
         print(structural_text, end="")
-        print("--- proposed .wiki-config.local ---")
+        print(f"--- proposed trusted runtime config: {local_path} ---")
         print(runtime_text, end="")
-        print("--- proposed .gitignore addition ---")
-        print(".wiki-config.local")
         print("dry-run complete; no files modified")
         return 0
 
+    _prepare_runtime_parent(local_path)
     backup = _apply_transaction(
         root,
         [
             (root / ".wiki-config", structural_text, 0o644),
             (local_path, runtime_text, 0o600),
-            (root / ".gitignore", gitignore_text, 0o644),
         ],
         backup_structural=True,
     )
@@ -770,6 +969,61 @@ def migrate_config(args: argparse.Namespace) -> int:
     print(f"migration complete: {root}")
     if backup is not None:
         print(f"backup: {backup}")
+    return 0
+
+
+def migrate_checkout_local_config(args: argparse.Namespace) -> int:
+    """Copy an ignored legacy checkout config into the external trust store."""
+
+    root, structural = classify_wiki_root(args.wiki)
+    if any(key in structural for key in LEGACY_OPERATIONAL_KEYS):
+        raise _legacy_config_error(root)
+    _require_workspace_consent(args, root)
+    source = root / ".wiki-config.local"
+    if not source.is_file() or source.is_symlink():
+        raise ConfigError(f"wiki config migrate-local: inactive source missing: {source}")
+    if _is_git_tracked(source):
+        raise ConfigError(
+            f"wiki config migrate-local: refusing Git-tracked runtime config: {source}"
+        )
+    target = runtime_config_path(root)
+    if target.exists():
+        validate_runtime_config(root)
+        print(f"trusted runtime configuration already exists: {target}")
+        return 0
+    try:
+        source_text = source.read_text(encoding="utf-8")
+        source_data = tomllib.loads(source_text)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"cannot migrate runtime configuration: {source}: {exc}") from exc
+    if "trust" in source_data:
+        raise ConfigError("wiki config migrate-local: source must not define [trust]")
+    workspace = trusted_workspace_root(root)
+    trust_text = "\n".join(
+        [
+            "[trust]",
+            f"wiki_root = {_toml_string(str(root))}",
+            f"workspace_root = {_toml_string(str(workspace))}",
+            f"trusted_at = {_toml_string(datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'))}",
+            "",
+        ]
+    )
+    runtime_text = trust_text + source_text.lstrip()
+    if args.dry_run:
+        print(f"inactive source: {source}")
+        print(f"trusted target: {target}")
+        print(f"trusted workspace: {workspace}")
+        print("dry-run complete; no files modified")
+        return 0
+    _prepare_runtime_parent(target)
+    _apply_transaction(root, [(target, runtime_text, 0o600)], backup_structural=False)
+    try:
+        validate_runtime_config(root)
+    except ConfigError:
+        target.unlink(missing_ok=True)
+        raise
+    print(f"trusted runtime configuration migrated: {target}")
+    print(f"inactive legacy copy preserved: {source}")
     return 0
 
 
@@ -788,20 +1042,21 @@ def update_runtime_config(args: argparse.Namespace) -> int:
     if not changed:
         raise ConfigError("wiki config update-runtime: no update option supplied")
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config)
+    runtime_text = _render_runtime_config(config, root)
     _validate_generated_texts(structural_text, runtime_text)
     _apply_transaction(
         root,
-        [(root / ".wiki-config.local", runtime_text, 0o600)],
+        [(runtime_config_path(root), runtime_text, 0o600)],
         backup_structural=False,
     )
     validate_runtime_config(root)
-    print(f"runtime configuration updated: {root / '.wiki-config.local'}")
+    print(f"runtime configuration updated: {runtime_config_path(root)}")
     return 0
 
 
 def _add_write_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--wiki", required=True)
+    parser.add_argument("--trust-workspace")
     parser.add_argument("--default-provider", choices=sorted(SUPPORTED_PROVIDERS))
     parser.add_argument("--default-model")
     parser.add_argument("--default-effort", choices=sorted(SUPPORTED_EFFORTS))
@@ -835,23 +1090,37 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    validate = subparsers.add_parser("validate", help="validate split runtime config")
+    validate = subparsers.add_parser("validate", help="validate trusted runtime config")
     validate.add_argument("--wiki", required=True)
     validate.add_argument("--json", action="store_true")
 
     show = subparsers.add_parser("show", help="print normalized runtime config as JSON")
     show.add_argument("--wiki", required=True)
 
+    path = subparsers.add_parser("path", help="print the trusted runtime config path")
+    path.add_argument("--wiki", required=True)
+
+    get = subparsers.add_parser("get", help="print one normalized runtime value")
+    get.add_argument("--wiki", required=True)
+    get.add_argument("--key", required=True)
+
     init_local = subparsers.add_parser(
-        "init-local", help="create ignored per-user runtime config"
+        "init-local", help="create trusted per-user runtime config"
     )
     _add_write_options(init_local)
 
     migrate = subparsers.add_parser(
-        "migrate", help="split legacy tracked and per-user runtime config"
+        "migrate", help="split legacy tracked config into external runtime config"
     )
     _add_write_options(migrate)
     migrate.add_argument("--dry-run", action="store_true")
+
+    migrate_local = subparsers.add_parser(
+        "migrate-local", help="move an ignored checkout runtime config into local trust"
+    )
+    migrate_local.add_argument("--wiki", required=True)
+    migrate_local.add_argument("--trust-workspace")
+    migrate_local.add_argument("--dry-run", action="store_true")
 
     update = subparsers.add_parser(
         "update-runtime", help="update adapter-owned local runtime fields"
@@ -869,10 +1138,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        if args.command == "path":
+            root, _structural = classify_wiki_root(args.wiki)
+            print(runtime_config_path(root))
+            return 0
         if args.command == "init-local":
             return init_local_config(args)
         if args.command == "migrate":
             return migrate_config(args)
+        if args.command == "migrate-local":
+            return migrate_checkout_local_config(args)
         if args.command == "update-runtime":
             return update_runtime_config(args)
         config = validate_runtime_config(args.wiki)
@@ -880,7 +1155,21 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    if args.command == "show" or args.json:
+    if args.command == "get":
+        value: Any = config
+        for part in args.key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                raise SystemExit(f"wiki config get: key not found: {args.key}")
+            value = value[part]
+        if isinstance(value, bool):
+            print("true" if value else "false")
+        elif value is None:
+            print("")
+        elif isinstance(value, (str, int)):
+            print(value)
+        else:
+            print(json.dumps(value, sort_keys=True))
+    elif args.command == "show" or args.json:
         print(json.dumps(config, indent=2, sort_keys=True))
     else:
         print(f"runtime configuration valid: {config['wiki_root']}")

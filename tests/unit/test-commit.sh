@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -42,6 +43,19 @@ test_commit_creates_commit_with_message() {
 test_commit_respects_auto_commit_false() {
   setup
   cat > "${WIKI}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "test"
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
 [settings]
 auto_commit = false
 EOF

@@ -20,7 +20,7 @@ No global `wiki` command is required.
 - `wiki ingest-now` — drift-scan + drain `inbox/` on demand.
 - `wiki issues` — show recent ingester-reported issues, grouped and severity-ordered.
 - `wiki use project|main|both` — change per-cwd wiki mode.
-- `wiki config init-local|migrate|validate|show` — manage ignored, per-machine provider and dispatcher settings.
+- `wiki config init-local|migrate|migrate-local|validate|show` — manage trusted, per-machine provider and dispatcher settings outside the checkout.
 - `wiki scheduler install|uninstall|status` — manage the macOS cron-like LaunchAgent adapter.
 - `wiki tick` — run one short, bounded dispatcher pass (also usable from an external scheduler).
 - `wiki init-main` — bootstrap `~/.wiki-pointer` (interactive).
@@ -52,10 +52,20 @@ skill copy is required.
 To update a GitHub installation:
 
 ```bash
+# Repeat before removal for every wiki using scheduled activation.
+wiki scheduler uninstall <wiki-path>
+
 codex plugin marketplace upgrade toolboxmd
 codex plugin remove karpathy-wiki@toolboxmd
 codex plugin add karpathy-wiki@toolboxmd
+
+# Repeat after installation for every wiki that previously used scheduling.
+wiki scheduler install <wiki-path>
 ```
+
+The uninstall and reinstall steps are required for scheduled wikis because the
+LaunchAgent stores the absolute path to the installed plugin snapshot. Removing
+the plugin first can leave the agent pointing at a deleted or obsolete snapshot.
 
 Start a new session after each install or update. If a hook definition changed,
 review and trust its new hash through `/hooks`.
@@ -73,8 +83,12 @@ Codex installs a snapshot from the marketplace. During local development,
 refresh it by removing and adding the plugin again, then open a new session:
 
 ```bash
+# For every scheduled wiki, while the old snapshot still exists:
+wiki scheduler uninstall <wiki-path>
 codex plugin remove karpathy-wiki@toolboxmd
 codex plugin add karpathy-wiki@toolboxmd
+# Restore scheduling through the newly installed snapshot:
+wiki scheduler install <wiki-path>
 ```
 
 Do not install duplicate copies of these skills under `~/.agents/skills` or
@@ -86,6 +100,9 @@ Do not install duplicate copies of these skills under `~/.agents/skills` or
   `bin/wiki` is the executable, not a wiki-data directory.
 - `~/.wiki-pointer` stores the selected main-wiki path. `~/wiki/` is the
   default, not a required location.
+- `${XDG_CONFIG_HOME:-~/.config}/karpathy-wiki/wikis/<wiki-hash>/runtime.toml`
+  stores the local trust record and provider settings. It is never read from a
+  project checkout.
 - Project-specific data lives in `<project>/wiki/` after project mode is
   configured.
 - Removing or updating the plugin does not remove `~/.wiki-pointer`, a main
@@ -164,12 +181,16 @@ Either way, one dispatcher atomically claims captures and enforces the configure
 
 ## Per-machine ingest configuration
 
-Tracked `.wiki-config` contains only wiki identity. Provider/model choices, concurrency, activation mode, routing, and auto-commit live in `.wiki-config.local`, which is ignored by Git and configured separately by every user or machine.
+Tracked `.wiki-config` contains only wiki identity. Provider/model choices,
+concurrency, activation mode, routing, auto-commit, and the explicit local trust
+record live outside the checkout under the user's config home. A checkout cannot
+enable its own provider execution by committing configuration files.
 
 Example (profile choices are illustrative, not defaults):
 
 ```bash
 wiki config init-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> \
   --default-provider grok --default-model grok-4.5 --default-effort medium \
   --fallback-provider claude --fallback-model sonnet --fallback-effort low \
   --max-processes 10 --dispatch-mode session_start
@@ -177,16 +198,36 @@ wiki config validate <wiki>
 wiki config show <wiki>
 ```
 
-Supported provider adapters in this release are `grok`, `claude`, and `codex`; model IDs are not hard-coded. `executable` is one executable name or absolute path, never an arbitrary shell command.
+Supported provider adapters in this release are `grok`, `claude`, and `codex`;
+model IDs are not hard-coded. `executable` is one executable name or absolute
+path, never an arbitrary shell command. An executable that resolves inside the
+trusted project checkout is rejected, including through a symlink or `PATH`.
 
 For an older tracked operational config, inspect the split before applying it:
 
 ```bash
-wiki config migrate <wiki> --dry-run
-wiki config migrate <wiki> [explicit provider/model/effort options if needed]
+wiki config migrate <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> --dry-run
+wiki config migrate <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> \
+  [explicit provider/model/effort options if needed]
 ```
 
 This only migrates configuration layout. It does not move or rewrite wiki content.
+
+If a previous plugin snapshot already created an ignored
+`<wiki>/.wiki-config.local`, import it into the external trust store explicitly:
+
+```bash
+wiki config migrate-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> --dry-run
+wiki config migrate-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root>
+```
+
+The importer refuses a Git-tracked source. After a successful import, the old
+checkout file remains as an inactive copy so the operator can inspect and remove
+it deliberately.
 
 ## Activation modes
 

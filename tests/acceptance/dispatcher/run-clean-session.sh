@@ -13,6 +13,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TMP_BASE="${TMPDIR:-/tmp}"
 TESTDIR="$(mktemp -d "${TMP_BASE%/}/karpathy wiki clean session.XXXXXX")"
+export WIKI_CONFIG_HOME="${TESTDIR}/trusted-config"
 WIKI="${TESTDIR}/wiki with spaces"
 SCHEDULER_HOME="${TESTDIR}/scheduler-home"
 SESSION_START_TRANSCRIPT="${TESTDIR}/session-start.jsonl"
@@ -83,6 +84,9 @@ max_processes = 1
 [settings]
 auto_commit = false
 EOF
+python3 "${REPO_ROOT}/scripts/wiki_config.py" migrate-local \
+  --wiki "${WIKI}" --trust-workspace "${WIKI}" >/dev/null
+RUNTIME_CONFIG="$(python3 "${REPO_ROOT}/scripts/wiki_config.py" path --wiki "${WIKI}")"
 
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "${WIKI}/queries/acceptance-runtime-role.md" <<EOF
@@ -208,7 +212,7 @@ cat > "${FAKE_CODEX}" <<'EOF'
 exec /bin/bash "${WIKI_PLUGIN_ROOT}/scripts/wiki-complete-ingest.sh"
 EOF
 chmod +x "${FAKE_CODEX}"
-python3 - "${WIKI}/.wiki-config.local" "${FAKE_CODEX}" <<'PY'
+python3 - "${RUNTIME_CONFIG}" "${FAKE_CODEX}" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()

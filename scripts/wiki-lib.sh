@@ -107,7 +107,9 @@ wiki_runtime_config_get() {
   # wiki_runtime_config_get <wiki_root> <key.subkey>
   local root="$1"
   local key="$2"
-  _wiki_config_read_file "${root}/.wiki-config.local" "${key}"
+  local script
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki_config.py"
+  python3 "${script}" get --wiki "${root}" --key "${key}"
 }
 
 wiki_config_get() {

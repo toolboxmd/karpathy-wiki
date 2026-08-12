@@ -579,7 +579,10 @@ def dispatch_tick(
     if not _test_mode():
         for name, profile in ingest["profiles"].items():
             try:
-                resolve_executable(profile["executable"])
+                resolve_executable(
+                    profile["executable"],
+                    forbidden_roots=(Path(config["trusted_workspace"]),),
+                )
             except ProviderError:
                 unavailable_profiles.add(name)
         configured = [ingest["default_profile"]]
@@ -922,7 +925,10 @@ def run_worker(
             stderr_handle = stdout_handle
         else:
             runtime_profile = dict(profile)
-            runtime_profile["executable"] = resolve_executable(profile["executable"])
+            runtime_profile["executable"] = resolve_executable(
+                profile["executable"],
+                forbidden_roots=(Path(config["trusted_workspace"]),),
+            )
             invocation = build_provider_invocation(
                 runtime_profile,
                 root,

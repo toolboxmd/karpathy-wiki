@@ -104,10 +104,8 @@ if [[ "${config_present}" == 1 ]]; then
       done
       # Routing for an actual wiki root is per user/machine. A legacy
       # tracked value is honored only until that wiki is explicitly migrated.
-      if [[ -f "${wiki_root}/.wiki-config.local" ]]; then
-        if [[ "$(wiki_runtime_config_get "${wiki_root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
-          fork=1
-        fi
+      if [[ "$(wiki_runtime_config_get "${wiki_root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+        fork=1
       elif grep -q '^fork_to_main = true' "${config}"; then
         fork=1
       fi

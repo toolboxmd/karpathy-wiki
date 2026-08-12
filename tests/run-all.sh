@@ -2,6 +2,11 @@
 # Run all deterministic tests or one focused contract group.
 set -e
 
+# Existing behavioral fixtures write a checkout-local runtime file. Production
+# never enables this compatibility switch. Security tests explicitly unset it
+# to exercise the external trust boundary.
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -52,6 +57,7 @@ group_for_test() {
     integration/test-dispatcher-concurrency.sh|\
     integration/test-dispatcher-refill.sh|\
     integration/test-session-start.sh|\
+    integration/test-untrusted-checkout.sh|\
     unit/test-dispatch-scan-routing.sh|\
     unit/test-dispatcher-slots.sh|\
     unit/test-ingest-run-events.sh|\
