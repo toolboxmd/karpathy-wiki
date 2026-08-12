@@ -308,6 +308,30 @@ executable = \"${project}/evil-provider\"
   echo "PASS: test_migrate_local_requires_untracked_source_and_explicit_trust"
 }
 
+test_semantically_invalid_legacy_migration_restores_structural_config() {
+  local wiki="${TESTDIR}/invalid-legacy-migration"
+  make_legacy_wiki "${wiki}"
+  local before_config
+  before_config="$(shasum -a 256 "${wiki}/.wiki-config")"
+
+  local args=()
+  while IFS= read -r arg; do args+=("${arg}"); done < <(migration_args)
+  local output rc
+  set +e
+  output="$(python3 "${CONFIG}" migrate --wiki "${wiki}" "${args[@]}" \
+    --heartbeat-seconds 30 --stale-after-seconds 60 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "semantically invalid legacy migration succeeded"
+  grep -Fq 'ingest.stale_after_seconds' <<< "${output}" \
+    || fail "invalid migration did not report the semantic key"
+  [[ "$(shasum -a 256 "${wiki}/.wiki-config")" == "${before_config}" ]] \
+    || fail "invalid migration did not restore structural config"
+  [[ ! -e "${wiki}/.wiki-config.local" ]] \
+    || fail "invalid migration left runtime config"
+  echo "PASS: test_semantically_invalid_legacy_migration_restores_structural_config"
+}
+
 test_dry_run_is_complete_and_non_mutating
 test_real_migration_splits_config_and_preserves_user_gitignore
 test_completed_migration_is_idempotent
@@ -317,4 +341,5 @@ test_atomic_failure_restores_every_file
 test_same_provider_and_effort_can_use_distinct_models
 test_relative_executable_path_is_rejected
 test_migrate_local_requires_untracked_source_and_explicit_trust
+test_semantically_invalid_legacy_migration_restores_structural_config
 echo "ALL PASS"

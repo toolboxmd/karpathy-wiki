@@ -51,17 +51,21 @@ skill copy is required.
 
 To update a GitHub installation:
 
-```bash
-# Repeat before removal for every wiki using scheduled activation.
-wiki scheduler uninstall <wiki-path>
+1. In the current Codex session, ask Codex to run
+   `wiki scheduler uninstall <wiki-path>` with the plugin-owned Runtime CLI
+   path for every wiki using scheduled activation. Do this while the old
+   snapshot still exists. Do not invoke a global `wiki` command.
+2. Run the plugin lifecycle commands in your shell:
 
+```bash
 codex plugin marketplace upgrade toolboxmd
 codex plugin remove karpathy-wiki@toolboxmd
 codex plugin add karpathy-wiki@toolboxmd
-
-# Repeat after installation for every wiki that previously used scheduling.
-wiki scheduler install <wiki-path>
 ```
+
+3. Start a new Codex session, review the new hook hash through `/hooks`, then
+   ask Codex to run `wiki scheduler install <wiki-path>` with the new
+   plugin-owned Runtime CLI path for every wiki that previously used scheduling.
 
 The uninstall and reinstall steps are required for scheduled wikis because the
 LaunchAgent stores the absolute path to the installed plugin snapshot. Removing
@@ -80,16 +84,18 @@ codex plugin add karpathy-wiki@toolboxmd
 ```
 
 Codex installs a snapshot from the marketplace. During local development,
-refresh it by removing and adding the plugin again, then open a new session:
+refresh it by first asking Codex in the current session to run
+`wiki scheduler uninstall <wiki-path>` for each scheduled wiki. Then remove and
+add the snapshot in your shell:
 
 ```bash
-# For every scheduled wiki, while the old snapshot still exists:
-wiki scheduler uninstall <wiki-path>
 codex plugin remove karpathy-wiki@toolboxmd
 codex plugin add karpathy-wiki@toolboxmd
-# Restore scheduling through the newly installed snapshot:
-wiki scheduler install <wiki-path>
 ```
+
+Open a new session and ask Codex to run
+`wiki scheduler install <wiki-path>` through the new plugin-owned Runtime CLI
+for each wiki that should return to scheduled mode.
 
 Do not install duplicate copies of these skills under `~/.agents/skills` or
 `~/.codex/skills`.

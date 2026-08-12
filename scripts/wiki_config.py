@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     import tomllib
@@ -669,6 +669,7 @@ def _apply_transaction(
     replacements: list[tuple[Path, str, int]],
     *,
     backup_structural: bool,
+    validator: Callable[[], None] | None = None,
 ) -> Path | None:
     originals: dict[Path, bytes | None] = {}
     modes: dict[Path, int] = {}
@@ -706,6 +707,8 @@ def _apply_transaction(
                 and path == structural_path
             ):
                 raise OSError("injected transaction failure after structural replace")
+        if validator is not None:
+            validator()
     except Exception as exc:
         rollback_errors: list[str] = []
         for path in reversed(replaced):
@@ -713,6 +716,11 @@ def _apply_transaction(
                 _restore_path(path, originals[path], modes[path])
             except Exception as rollback_exc:  # pragma: no cover - catastrophic I/O
                 rollback_errors.append(f"{path}: {rollback_exc}")
+        if backup_path is not None:
+            try:
+                backup_path.unlink(missing_ok=True)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"{backup_path}: {rollback_exc}")
         detail = f"configuration transaction failed and was rolled back: {exc}"
         if rollback_errors:
             detail += f"; rollback errors: {'; '.join(rollback_errors)}"
@@ -925,8 +933,8 @@ def init_local_config(args: argparse.Namespace) -> int:
         root,
         replacements,
         backup_structural=False,
+        validator=lambda: validate_runtime_config(root),
     )
-    validate_runtime_config(root)
     print(f"runtime configuration initialized: {local_path}")
     return 0
 
@@ -964,8 +972,8 @@ def migrate_config(args: argparse.Namespace) -> int:
             (local_path, runtime_text, 0o600),
         ],
         backup_structural=True,
+        validator=lambda: validate_runtime_config(root),
     )
-    validate_runtime_config(root)
     print(f"migration complete: {root}")
     if backup is not None:
         print(f"backup: {backup}")
@@ -1016,12 +1024,12 @@ def migrate_checkout_local_config(args: argparse.Namespace) -> int:
         print("dry-run complete; no files modified")
         return 0
     _prepare_runtime_parent(target)
-    _apply_transaction(root, [(target, runtime_text, 0o600)], backup_structural=False)
-    try:
-        validate_runtime_config(root)
-    except ConfigError:
-        target.unlink(missing_ok=True)
-        raise
+    _apply_transaction(
+        root,
+        [(target, runtime_text, 0o600)],
+        backup_structural=False,
+        validator=lambda: validate_runtime_config(root),
+    )
     print(f"trusted runtime configuration migrated: {target}")
     print(f"inactive legacy copy preserved: {source}")
     return 0
@@ -1048,8 +1056,8 @@ def update_runtime_config(args: argparse.Namespace) -> int:
         root,
         [(runtime_config_path(root), runtime_text, 0o600)],
         backup_structural=False,
+        validator=lambda: validate_runtime_config(root),
     )
-    validate_runtime_config(root)
     print(f"runtime configuration updated: {runtime_config_path(root)}")
     return 0
 

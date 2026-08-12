@@ -376,6 +376,30 @@ EOF
   echo "PASS: test_checkout_resolving_provider_executable_is_rejected"
 }
 
+test_semantically_invalid_init_rolls_back_external_config() {
+  local wiki="${TESTDIR}/invalid-external-init"
+  local config_home="${TESTDIR}/invalid-external-config-home"
+  make_wiki "${wiki}" main
+
+  local output rc runtime_path
+  set +e
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" --trust-workspace "${wiki}" \
+    --default-provider codex --default-model test-model --default-effort low \
+    --heartbeat-seconds 30 --stale-after-seconds 60 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "semantically invalid init-local succeeded"
+  grep -Fq 'ingest.stale_after_seconds' <<< "${output}" \
+    || fail "invalid init-local did not report the semantic key"
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" path --wiki "${wiki}")"
+  [[ ! -e "${runtime_path}" ]] \
+    || fail "semantically invalid init-local left a trusted runtime file"
+  echo "PASS: test_semantically_invalid_init_rolls_back_external_config"
+}
+
 test_valid_config_returns_normalized_json
 test_missing_local_is_actionable
 test_legacy_structural_config_requires_migration
@@ -389,4 +413,5 @@ test_existing_local_config_repairs_ignore_entry
 test_checkout_runtime_config_is_not_trusted_implicitly
 test_init_local_records_runtime_outside_checkout
 test_checkout_resolving_provider_executable_is_rejected
+test_semantically_invalid_init_rolls_back_external_config
 echo "ALL PASS"

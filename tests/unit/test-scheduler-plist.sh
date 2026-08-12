@@ -68,5 +68,9 @@ add = upgrade.index("codex plugin add")
 install = upgrade.index("wiki scheduler install")
 assert uninstall < remove < add < install
 assert "for every wiki using scheduled activation" in upgrade
+assert "ask Codex" in upgrade
+assert not any(
+    line.strip().startswith("wiki scheduler ") for line in upgrade.splitlines()
+)
 print("PASS: documented plugin upgrade refreshes every scheduled activation")
 PY
