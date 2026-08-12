@@ -1,5 +1,12 @@
 # Contributing to karpathy-wiki
 
+## Active planning handoff
+
+Before changing test policy or removing, merging, or demoting tests, read
+[`docs/planning/2026-08-12-test-strategy-rightsizing-handoff.md`](docs/planning/2026-08-12-test-strategy-rightsizing-handoff.md).
+The first phase is a read-only portfolio audit and must stop for human review.
+Remove this pointer when that workstream is resolved.
+
 ## If you are an AI agent
 
 Before opening a PR against this repo:
