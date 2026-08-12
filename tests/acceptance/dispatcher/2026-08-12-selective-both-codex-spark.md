@@ -78,4 +78,6 @@ project-to-main lifecycle. The two source scenarios required three provider
 calls because the reusable case intentionally included ingestion of the
 derived main capture rather than stopping after durable publication.
 
-The disposable fixture was deleted after these assertions passed.
+The disposable fixture was removed from the temporary directory and moved to
+the user's Trash after these assertions passed. It can be recovered until the
+Trash is emptied.
