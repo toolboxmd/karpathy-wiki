@@ -37,6 +37,30 @@ grep -q 'capture_kind: "raw-direct"' "${capture}" \
   || fail "drift capture missing capture_kind: raw-direct"
 grep -q "evidence: \"${WIKI_CANONICAL}/inbox/note.md\"" "${capture}" \
   || fail "drift capture evidence path wrong: $(grep '^evidence:' "${capture}")"
+grep -Eq '^capture_id: "cap-[a-f0-9]+"' "${capture}" \
+  || fail "scanner capture lacks portable capture_id"
+grep -q '^promotion_policy: "none"' "${capture}" \
+  || fail "main-wiki scanner capture should not be promotable"
+
+# A nested project wiki configured for both marks scanner captures selective,
+# while still queueing them only in the project wiki.
+PROJECT_ROOT="${TESTDIR}/project-both"
+PROJECT_WIKI="${PROJECT_ROOT}/wiki"
+mkdir -p "${PROJECT_ROOT}"
+bash "${INIT}" project "${PROJECT_WIKI}" "${WIKI}" >/dev/null
+cat > "${PROJECT_ROOT}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+created = "2026-08-12"
+fork_to_main = true
+EOF
+printf 'project source\n' > "${PROJECT_WIKI}/inbox/project.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${PROJECT_WIKI}/inbox/project.md"
+bash "${SCAN}" "${PROJECT_WIKI}" >/dev/null
+project_capture="$(find "${PROJECT_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"' "${project_capture}" \
+  || fail "both-mode project scanner capture lacks selective policy"
 
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.

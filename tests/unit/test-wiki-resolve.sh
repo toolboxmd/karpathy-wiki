@@ -80,11 +80,17 @@ echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 assert_exit "pointer valid + project-pointer + fork=false" "${PROJECT}" 0
 assert_returns "pointer valid + project-pointer + fork=false" "${PROJECT}" "${PROJECT}/wiki"
 
-# Case 6: pointer valid + cwd has project-pointer (fork=true) → 0, returns [project, main]
+# Case 6: pointer valid + cwd has project-pointer (fork=true) validates main,
+# but returns only the project as the initial capture target.
 sed -i.bak 's/fork_to_main = false/fork_to_main = true/' "${PROJECT}/.wiki-config"
 output=$( cd "${PROJECT}" && bash "${RESOLVE}" )
-echo "${output}" | grep -qF "${PROJECT}/wiki" || fail "fork mode: project wiki missing"
-echo "${output}" | grep -qF "${MAIN}" || fail "fork mode: main wiki missing"
+[[ "${output}" == "${PROJECT}/wiki" ]] \
+  || fail "both mode should initially resolve only project wiki, got '${output}'"
+plan=$( cd "${PROJECT}" && bash "${RESOLVE}" --plan )
+echo "${plan}" | grep -q '"promotion_policy": "selective"' \
+  || fail "both plan lacks selective promotion policy"
+echo "${plan}" | grep -qF "\"main_wiki\": \"${MAIN}\"" \
+  || fail "both plan lacks validated main target"
 sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${PROJECT}/.wiki-config"
 
 # Case 7: cwd has .wiki-mode = main-only + pointer valid → 0, returns [main]
@@ -139,8 +145,11 @@ reasoning_effort = "medium"
 fork_to_main = true
 EOF
 output=$( cd "${ACTUAL}" && bash "${RESOLVE}" )
-echo "${output}" | grep -qF "${ACTUAL}" || fail "local fork mode: actual wiki missing"
-echo "${output}" | grep -qF "${MAIN}" || fail "local fork mode: main wiki missing"
+[[ "${output}" == "${ACTUAL}" ]] \
+  || fail "local both mode should initially resolve only actual project wiki, got '${output}'"
+plan=$( cd "${ACTUAL}" && bash "${RESOLVE}" --plan )
+echo "${plan}" | grep -q '"promotion_policy": "selective"' \
+  || fail "local both plan lacks selective promotion policy"
 sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${ACTUAL}/.wiki-config.local"
 output=$( cd "${ACTUAL}" && bash "${RESOLVE}" )
 [[ "${output}" == "${ACTUAL}" ]] || fail "local fork=false should return only actual wiki, got '${output}'"

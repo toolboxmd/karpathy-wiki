@@ -21,7 +21,6 @@ export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 export WIKI_ORPHANS_DIR="${TESTDIR}/.wiki-orphans"
 export CLAUDE_HEADLESS=1
-# Isolate $HOME so .wiki-forks.jsonl writes land inside TESTDIR.
 export HOME="${TESTDIR}/home"
 mkdir -p "${HOME}"
 
@@ -39,7 +38,8 @@ if ls "${MAIN}/.wiki-pending/" 2>/dev/null | grep -qi projtest; then
   fail "project mode leaked capture to main wiki"
 fi
 
-# Both mode: pre-configure cwd with fork_to_main = true
+# Both mode: initial capture is project-only. The project ingester later makes
+# the selective promotion decision.
 BOTH="${TESTDIR}/both"
 mkdir -p "${BOTH}"
 ( cd "${BOTH}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" both ) >/dev/null
@@ -47,8 +47,14 @@ mkdir -p "${BOTH}"
   || fail "both mode capture failed"
 sleep 0.3
 ls "${BOTH}/wiki/.wiki-pending/" | grep -qi bothtest || fail "both mode: project capture missing"
-ls "${MAIN}/.wiki-pending/" | grep -qi bothtest || fail "both mode: main capture missing"
-[[ -f "${HOME}/.wiki-forks.jsonl" ]] || fail "both mode: fork-coordination record missing"
+if ls "${MAIN}/.wiki-pending/" 2>/dev/null | grep -qi bothtest; then
+  fail "both mode published the original capture to main before semantic judgment"
+fi
+both_capture="$(find "${BOTH}/wiki/.wiki-pending" -maxdepth 1 -type f -iname '*bothtest*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"' "${both_capture}" \
+  || fail "both mode capture lacks selective promotion policy"
+[[ ! -e "${HOME}/.wiki-forks.jsonl" ]] \
+  || fail "both mode wrote a legacy simultaneous-fork record"
 
 # Main-only mode: pre-configure cwd with .wiki-mode
 MAIN_ONLY="${TESTDIR}/main-only"

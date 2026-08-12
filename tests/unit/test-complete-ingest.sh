@@ -78,7 +78,26 @@ test_post_archive_failure_rolls_back() {
   echo "PASS: test_post_archive_failure_rolls_back"
 }
 
+test_selective_capture_requires_decision() {
+  local wiki="${TESTDIR}/selective"
+  local capture="${wiki}/.wiki-pending/selective.md.processing"
+  make_wiki "${wiki}"
+  printf 'role = "project"\n' > "${wiki}/.wiki-config"
+  printf '%s\n' '---' 'title: "Selective"' 'capture_id: "cap-selective"' \
+    'promotion_policy: "selective"' 'promotion_decision: null' \
+    'promotion_id: null' '---' > "${capture}"
+  run_complete "${wiki}" "${capture}" >/dev/null 2>&1 \
+    && fail "selective capture without decision unexpectedly completed"
+  [[ -f "${capture}" ]] || fail "missing decision lost processing capture"
+  WIKI_ROOT="${wiki}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="in-test" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${REPO_ROOT}/scripts/wiki-promote-capture.py" keep-local \
+    || fail "keep-local helper failed"
+  run_complete "${wiki}" "${capture}" || fail "decided selective capture did not complete"
+  echo "PASS: test_selective_capture_requires_decision"
+}
+
 test_success_and_idempotence
 test_validation_failure_keeps_processing
 test_post_archive_failure_rolls_back
+test_selective_capture_requires_decision
 echo "ALL PASS"

@@ -1,11 +1,34 @@
 # Both-Mode Routing Contradiction
 
-**Status:** Confirmed behavior mismatch. Documentation only. No routing,
-ingest, skill, or test-policy change is applied by this handoff.
+**Status:** Resolved on `codex/fix-selective-both-routing`. The original
+handoff evidence is retained below for review history.
 **Date:** 2026-08-12
 **Observed at:** `9bffbc08734fa6728c5087bdc5084e05ba65b47f`
-**Next workstream:** Implement on a dedicated fix branch after the Codex-first
-rollout branch is reviewed.
+**Resolution branch:** `codex/fix-selective-both-routing`
+
+## Resolution
+
+The fix keeps `fork_to_main` as a migration-compatible persisted flag but
+redefines it as selective promotion permission:
+
+- the resolver validates main availability while returning only the project as
+  the initial target;
+- new captures carry portable identity, promotion policy, decision, and stable
+  promotion identity fields;
+- the project ingester makes the semantic keep-local or promote decision;
+- `scripts/wiki-promote-capture.py` owns locked, atomic, idempotent derived
+  publication and retry receipts;
+- deterministic completion refuses to archive a selective capture without a
+  durable decision;
+- new simultaneous-fork records are no longer written, and status reports
+  selective decision counts instead;
+- tracked project-pointer config no longer stores an absolute main-wiki path.
+
+The witnessed RED transcript is retained at
+`tests/red/RED-selective-both-promotion.md`. The deterministic suite covers
+local-first routing, exact-once publication, portable provenance, concurrent
+retry, failures before and after publication, project-mode isolation,
+main-mode stability, and invalid main-pointer refusal.
 
 ## Summary
 

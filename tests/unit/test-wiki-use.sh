@@ -72,6 +72,9 @@ mkdir -p "${PROJ_BOTH}"
 ( cd "${PROJ_BOTH}" && bash "${USE}" both ) >/dev/null \
   || fail "wiki use both failed"
 grep -q '^fork_to_main = true' "${PROJ_BOTH}/.wiki-config" || fail "wiki use both: fork_to_main should be true"
+if grep -q '^main = ' "${PROJ_BOTH}/.wiki-config"; then
+  fail "wiki use both wrote a machine-specific main path into tracked config"
+fi
 
 # Case 6: wiki use both (when pointer = none) — refused
 echo "none" > "${WIKI_POINTER_FILE}"
@@ -81,10 +84,29 @@ mkdir -p "${PROJ_BOTH_NOMAIN}"
   && fail "wiki use both should refuse when pointer = none"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 
+# Case 6b: broken and non-main pointers are refused before config mutation.
+BROKEN_BOTH="${TESTDIR}/broken-both"
+mkdir -p "${BROKEN_BOTH}"
+echo "${TESTDIR}/missing-main" > "${WIKI_POINTER_FILE}"
+( cd "${BROKEN_BOTH}" && bash "${USE}" both ) 2>/dev/null \
+  && fail "wiki use both accepted a broken pointer"
+[[ ! -e "${BROKEN_BOTH}/.wiki-config" ]] || fail "broken pointer mutated cwd config"
+
+NOT_MAIN="${TESTDIR}/not-main"
+bash "${INIT}" project "${NOT_MAIN}" >/dev/null
+echo "${NOT_MAIN}" > "${WIKI_POINTER_FILE}"
+( cd "${BROKEN_BOTH}" && bash "${USE}" both ) 2>/dev/null \
+  && fail "wiki use both accepted a non-main pointer"
+[[ ! -e "${BROKEN_BOTH}/.wiki-config" ]] || fail "non-main pointer mutated cwd config"
+echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+
 # Case 7: wiki use both (existing project, flips fork_to_main)
 ( cd "${PROJ}" && bash "${USE}" both ) >/dev/null \
   || fail "wiki use both on existing project failed"
 grep -q '^fork_to_main = true' "${PROJ}/.wiki-config" || fail "wiki use both: did not flip fork_to_main"
+if grep -q '^main = ' "${PROJ}/.wiki-config"; then
+  fail "existing project config retained a machine-specific main path"
+fi
 
 # Case 8: wiki use project flips back
 ( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
@@ -119,5 +141,10 @@ set -e
 [[ "${rc}" -ne 0 ]] || fail "wiki use both should refuse to invent local provider config"
 grep -Fq "wiki config init-local ${NO_LOCAL}" <<< "${error}" \
   || fail "missing local runtime config error is not actionable"
+
+# Case 11: both mode is meaningless inside the main wiki and must refuse.
+write_runtime_config "${MAIN}"
+( cd "${MAIN}" && bash "${USE}" both ) 2>/dev/null \
+  && fail "wiki use both inside main wiki should refuse"
 
 echo "PASS: wiki-use.sh"

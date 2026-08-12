@@ -47,8 +47,8 @@ case "${sub}" in
   capture)
     # bin/wiki capture — single entry point for chat-driven captures.
     # Reads body from stdin OR --body-file, validates, runs resolver,
-    # handles prompts/headless fallback, writes every capture, then requests
-    # one bounded dispatcher tick per target wiki.
+    # handles prompts/headless fallback, writes one initial capture, then
+    # requests one bounded dispatcher tick for that wiki.
 
     title=""
     kind=""
@@ -124,6 +124,7 @@ case "${sub}" in
 
     # Run resolver
     resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || resolver_exit=$?
+    resolver_plan=""
 
     # Headless detection: any of WIKI_CAPTURE / CLAUDE_HEADLESS=1 / no TTY+no CLAUDE_AGENT_INTERACTIVE / CLAUDE_AGENT_PARENT.
     is_headless=0
@@ -194,6 +195,8 @@ case "${sub}" in
             printf 'none\n' > "${temporary_pointer}"
             resolver_out="$(WIKI_POINTER_FILE="${temporary_pointer}" bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" \
               && resolver_exit=0 || true
+            resolver_plan="$(WIKI_POINTER_FILE="${temporary_pointer}" bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan 2>/dev/null)" \
+              || true
             rm -f "${temporary_pointer}"
           else
             orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
@@ -235,7 +238,7 @@ case "${sub}" in
           echo >&2 "wiki capture: cwd unconfigured. Run one of:"
           echo >&2 "  wiki use project   # captures stay in this repo (./wiki/)"
           echo >&2 "  wiki use main      # captures go to the main wiki"
-          echo >&2 "  wiki use both      # fork to both"
+          echo >&2 "  wiki use both      # local first, selectively promote reusable knowledge"
           echo >&2 "Then re-capture (pipe the body again or use --body-file ${orphan})."
           exit 1
         else
@@ -246,7 +249,7 @@ case "${sub}" in
           echo "This directory isn't configured for the wiki yet. How should captures here flow?"
           echo "  1) project — create a project wiki at ./wiki/, captures stay local."
           echo "  2) main    — captures go to the main wiki (the default)."
-          echo "  3) both    — fork: write the same capture into both wikis."
+          echo "  3) both    — capture locally, then selectively promote reusable knowledge."
           echo
           read -r -p "Reply with 1, 2, or 3: " choice </dev/tty
           case "${choice}" in
@@ -278,16 +281,25 @@ case "${sub}" in
         ;;
     esac
 
-    # At this point resolver_out has one or more target wiki paths (one per line).
+    # At this point resolver_out has exactly one initial target. In `both`
+    # mode, semantic promotion happens later inside the project ingester.
     if [[ -z "${resolver_out}" ]]; then
       echo >&2 "wiki capture: resolver returned no targets despite exit 0"
       exit 1
     fi
 
-    # Build frontmatter + body for every target before any dispatch starts.
+    if [[ -z "${resolver_plan}" ]]; then
+      resolver_plan="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan 2>/dev/null)" || {
+        echo >&2 "wiki capture: resolver plan failed after target resolution"
+        exit 1
+      }
+    fi
+    promotion_policy="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["promotion_policy"])' <<< "${resolver_plan}")"
+
+    # Build frontmatter + body for the initial target before dispatch starts.
     ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
     slug="$(slugify "${title}")"
-    fork_id="fk-$(date +%s)-$$"
+    capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
     target_count=0
     while IFS= read -r target_wiki; do
       [[ -n "${target_wiki}" ]] || continue
@@ -314,6 +326,10 @@ case "${sub}" in
         echo "suggested_pages: []"
         echo "captured_at: \"${ts}\""
         echo "captured_by: \"in-session-agent\""
+        echo "capture_id: \"${capture_id}\""
+        echo "promotion_policy: \"${promotion_policy}\""
+        echo "promotion_decision: null"
+        echo "promotion_id: null"
         echo "propagated_from: null"
         echo "---"
         echo
@@ -353,16 +369,6 @@ case "${sub}" in
         echo >&2 "${dispatch_error}"
       fi
     done <<< "${resolver_out}"
-
-    # Write fork-coordination record if multi-target
-    if [[ "${target_count}" -gt 1 ]]; then
-      forks_log="${HOME}/.wiki-forks.jsonl"
-      mkdir -p "$(dirname "${forks_log}")"
-      printf '{"fork_id":"%s","captured_at":"%s","title":"%s","wikis":%s}\n' \
-        "${fork_id}" "${ts}" "${title}" \
-        "$(echo "${resolver_out}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
-        >> "${forks_log}"
-    fi
 
     echo "wiki capture: ${target_count} target(s) — ${title}"
     ;;

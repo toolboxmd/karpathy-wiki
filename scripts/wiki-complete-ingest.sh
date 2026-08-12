@@ -53,6 +53,23 @@ if [[ -e "${archived}" ]]; then
   exit 1
 fi
 
+promotion_policy="$(sed -n 's/^promotion_policy:[[:space:]]*["'\'']\{0,1\}\([^"'\'']*\)["'\'']\{0,1\}[[:space:]]*$/\1/p' "${processing}" | head -n 1)"
+if [[ "${promotion_policy}" == "selective" ]]; then
+  promotion_decision="$(sed -n 's/^promotion_decision:[[:space:]]*["'\'']\{0,1\}\([^"'\'']*\)["'\'']\{0,1\}[[:space:]]*$/\1/p' "${processing}" | head -n 1)"
+  case "${promotion_decision}" in
+    keep-local|promoted) ;;
+    *)
+      echo >&2 "wiki complete: selective capture requires keep-local or promoted decision"
+      exit 1
+      ;;
+  esac
+  if ! WIKI_PLUGIN_ROOT="${WIKI_PLUGIN_ROOT:-${SCRIPT_DIR}/..}" \
+    python3 "${SCRIPT_DIR}/wiki-promote-capture.py" verify >&2; then
+    echo >&2 "wiki complete: selective promotion decision verification failed"
+    exit 1
+  fi
+fi
+
 if ! python3 "${SCRIPT_DIR}/wiki-manifest.py" validate "${wiki}" >&2; then
   echo >&2 "wiki complete: manifest validation failed"
   exit 1

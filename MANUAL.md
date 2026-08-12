@@ -87,7 +87,7 @@ Run `wiki use <mode>` once per directory you want a non-default capture flow in:
 
 - `wiki use project` — writes a `role = "project-pointer"` marker to cwd and initializes `./wiki/` with `role = "project"` if missing. Captures from this dir flow to `./wiki/.wiki-pending/`.
 - `wiki use main` — writes `.wiki-mode` with literal string `main-only` to cwd. Captures flow only to `~/wiki/`.
-- `wiki use both` — writes `.wiki-config` with fork mode. Captures fork: same content goes to BOTH `./wiki/` AND `~/wiki/`.
+- `wiki use both` — writes `.wiki-config` with selective promotion enabled. The original capture goes only to `./wiki/`; after local ingest, reusable cross-project knowledge may produce one generalized capture in the main wiki. Project-specific knowledge stays local.
 
 Without `wiki use`, interactive capture prompts for a mode. Headless capture preserves the body as an orphan and asks the user to choose; it never silently writes `.wiki-mode`.
 

@@ -4,7 +4,7 @@
 # Subcommands:
 #   wiki-use.sh project   — write .wiki-config (project-pointer, fork=false)
 #   wiki-use.sh main      — write .wiki-mode = main-only (refuses if cwd has .wiki-config)
-#   wiki-use.sh both      — write .wiki-config with fork_to_main = true (refuses if pointer = none)
+#   wiki-use.sh both      — enable selective project-to-main promotion
 #
 # Idempotent: re-running with the current state is a no-op.
 
@@ -28,18 +28,23 @@ read_main_wiki() {
   cat "${POINTER_FILE}" | tr -d '[:space:]'
 }
 
+validate_main_wiki() {
+  local main="$1"
+  [[ -d "${main}" && -f "${main}/.wiki-config" ]] || return 1
+  grep -q '^role = "main"' "${main}/.wiki-config" || return 1
+  for required in schema.md index.md .wiki-pending; do
+    [[ -e "${main}/${required}" ]] || return 1
+  done
+}
+
 write_project_pointer_config() {
   local fork="$1"
-  local main="$2"
   local cwd_config="$(pwd)/.wiki-config"
   local today="$(date +%Y-%m-%d)"
   {
     echo "role = \"project-pointer\""
     echo "wiki = \"./wiki\""
     echo "created = \"${today}\""
-    if [[ -n "${main}" && "${main}" != "none" ]]; then
-      echo "main = \"${main}\""
-    fi
     echo "fork_to_main = ${fork}"
   } > "${cwd_config}"
 }
@@ -81,7 +86,7 @@ case "${mode}" in
         bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" "${main}" >/dev/null
       fi
     fi
-    write_project_pointer_config "false" "${main}"
+    write_project_pointer_config "false"
     rm -f "$(pwd)/.wiki-mode"
     echo "wiki use project: $(pwd)/wiki/ (fork_to_main = false)"
     ;;
@@ -110,9 +115,13 @@ EOF
     if [[ "${main}" == "none" || -z "${main}" ]]; then
       cat >&2 <<EOF
 wiki use both: refused — \$WIKI_POINTER_FILE is 'none' or missing.
-'both' mode requires a main wiki to fork to. Run 'wiki init-main' first
+'both' mode requires a main wiki for selective promotion. Run 'wiki init-main' first
 or 'wiki use project' for a project-only setup.
 EOF
+      exit 1
+    fi
+    if ! validate_main_wiki "${main}"; then
+      echo >&2 "wiki use both: refused — main wiki pointer is broken or does not target role=main"
       exit 1
     fi
     if [[ -f "$(pwd)/.wiki-config" ]]; then
@@ -126,16 +135,22 @@ EOF
           else
             echo "fork_to_main = true" >> "$(pwd)/.wiki-config"
           fi
+          sed -i.bak '/^main = /d' "$(pwd)/.wiki-config"
+          rm -f "$(pwd)/.wiki-config.bak"
           rm -f "$(pwd)/.wiki-mode"
           echo "wiki use both: fork_to_main = true on existing config (role=${role})"
           ;;
-        main|project)
+        project)
           if ! set_runtime_fork "$(pwd)" true; then
             echo >&2 "wiki use both: could not update per-user routing; configure this wiki with 'wiki config init-local $(pwd)' first"
             exit 1
           fi
           rm -f "$(pwd)/.wiki-mode"
           echo "wiki use both: fork_to_main = true in trusted runtime config (role=${role})"
+          ;;
+        main)
+          echo >&2 "wiki use both: refused — selective promotion requires a project wiki"
+          exit 1
           ;;
         *)
           echo >&2 "wiki use both: unknown role '${role}' in existing .wiki-config"
@@ -147,7 +162,7 @@ EOF
       if [[ ! -d "$(pwd)/wiki" ]]; then
         bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" "${main}" >/dev/null
       fi
-      write_project_pointer_config "true" "${main}"
+      write_project_pointer_config "true"
       rm -f "$(pwd)/.wiki-mode"
       echo "wiki use both: created project wiki + fork_to_main = true"
     fi

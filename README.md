@@ -15,7 +15,7 @@ natural language and the SessionStart hook supplies the installed CLI path. From
 a source checkout, operators can invoke the same commands as `./bin/wiki ...`.
 No global `wiki` command is required.
 
-- `wiki status` — content and ingest-runtime health report: queue depth, active slots, profiles, cooldowns, heartbeat stalls, scheduler state, failed/deferred captures, quality, drift, issues, and fork-asymmetry.
+- `wiki status` — content and ingest-runtime health report: queue depth, active slots, profiles, cooldowns, heartbeat stalls, scheduler state, failed/deferred captures, quality, drift, issues, and selective-promotion decisions.
 - `wiki capture` — write a chat-driven capture (the agent's canonical entry point; supports `--kind chat-only|chat-attached`, body via stdin or `--body-file`).
 - `wiki ingest-now` — drift-scan + drain `inbox/` on demand.
 - `wiki issues` — show recent ingester-reported issues, grouped and severity-ordered.
@@ -33,6 +33,12 @@ the actual path is selected by `wiki init-main` and stored in
 chooses one automatic activation mode: SessionStart, or a local scheduler.
 Drop a file into a wiki's `inbox/` and the next scan ingests it directly. No
 fabricated wrapper capture is required.
+
+`wiki use both` is project-first. Every original capture enters only the
+project wiki. After local ingest, the project worker keeps repository-specific
+knowledge local or publishes one generalized, provenance-linked capture to the
+main wiki through an atomic idempotent helper. It never copies the original
+capture verbatim into both queues.
 
 ## Install in Codex
 
@@ -258,7 +264,7 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 - Project-wiki auto-resolution at capture time via `wiki-resolve.sh` (5 exit codes). `wiki use project|main|both` lets the user override; `wiki init-main` bootstraps `~/.wiki-pointer`.
 - Raw-direct ingest: drop a file into `<wiki>/inbox/` and the next configured scan ingests it directly (no fabricated wrapper). Files accidentally dropped in `raw/` are recovered to `inbox/` under the manifest lock.
 - Deep orientation (steps 1-9) in the ingester; issues surfaced to `.ingest-issues.jsonl` and the `wiki issues` / `wiki status` commands.
-- Per-wiki `.ingest-runs.jsonl` for run history; status check detects fork-asymmetry between main and project wikis.
+- Per-wiki `.ingest-runs.jsonl` for run history; status reports selective captures awaiting a decision, kept local, or promoted.
 - Bounded provider-aware dispatcher, optional fallback profile, heartbeat, retries, failed queue, optional CodexBar preflight, and mutually exclusive SessionStart/scheduled activation.
 - `wiki status` health report; `wiki capture` / `wiki ingest-now` / `wiki issues` / `wiki use` / `wiki config` / `wiki scheduler` / `wiki tick` / `wiki init-main` CLI.
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.

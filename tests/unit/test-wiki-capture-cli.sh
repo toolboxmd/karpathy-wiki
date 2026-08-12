@@ -37,6 +37,9 @@ BODY=$(printf 'A real chat-only body that exceeds 1500 bytes.\n%.0s' {1..40})
 ( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "Test" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "chat-only via stdin failed"
 ls "${MAIN}/.wiki-pending/" | grep -q '\.md$' || fail "no capture appeared in main pending"
+first_capture="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*.md' -print -quit)"
+grep -Eq '^capture_id: "cap-[a-f0-9]+"' "${first_capture}" || fail "capture lacks portable capture_id"
+grep -q '^promotion_policy: "none"' "${first_capture}" || fail "main capture should not be promotable"
 
 # Case 2: chat-only via --body-file
 TMPBODY="$(mktemp)"
@@ -55,6 +58,18 @@ HUGE_BODY=$(yes "x" | head -c 270000)
 
 # Case 5: headless + unconfigured cwd + no pointer → orphan-preserve
 rm -f "${WIKI_POINTER_FILE}"
+
+# Case 5a: headless + configured project-only wiki + no pointer succeeds and
+# records a non-promotable capture. The ephemeral resolver fallback must also
+# supply the routing plan used for frontmatter.
+LOCAL_ONLY="${TESTDIR}/local-only"
+bash "${INIT}" project "${LOCAL_ONLY}" >/dev/null
+( cd "${LOCAL_ONLY}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "LocalOnly" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
+  || fail "configured project-only capture failed without main pointer"
+local_capture="$(find "${LOCAL_ONLY}/.wiki-pending" -maxdepth 1 -type f -iname '*localonly*.md' -print -quit)"
+grep -q '^promotion_policy: "none"' "${local_capture}" \
+  || fail "project-only fallback capture has wrong promotion policy"
+
 SCRATCH="${TESTDIR}/scratch"
 mkdir -p "${SCRATCH}"
 ( cd "${SCRATCH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "OrphanTest" --kind chat-only --suggested-action create ) 2>/dev/null \

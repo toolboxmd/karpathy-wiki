@@ -1,10 +1,11 @@
 #!/bin/bash
 # wiki-resolve.sh — non-interactive wiki resolver.
 #
-# Determines which wiki(s) a chat-driven capture should target based on
+# Determines which wiki a chat-driven capture should target based on
 # cwd's .wiki-config or .wiki-mode and the user's main-wiki pointer.
-# Returns target wiki paths on stdout (one per line) and exit 0, OR
-# exits with one of these specific codes signaling user input is needed:
+# Returns the one initial target on stdout and exit 0. With --plan, returns a
+# JSON routing plan including selective-promotion metadata. Otherwise it exits
+# with one of these specific codes signaling user input is needed:
 #
 #   10 — pointer missing or broken (need bootstrap or re-init)
 #   11 — cwd unconfigured (need per-cwd prompt)
@@ -24,6 +25,13 @@
 # Override $WIKI_POINTER_FILE for testing (default: ~/.wiki-pointer).
 
 set -uo pipefail
+
+output_format="targets"
+if [[ "${1:-}" == "--plan" ]]; then
+  output_format="plan"
+  shift
+fi
+[[ "$#" -eq 0 ]] || { echo >&2 "usage: wiki-resolve.sh [--plan]"; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -88,6 +96,7 @@ fi
 
 wiki_root=""
 fork=0
+resolved_role=""
 
 if [[ "${config_present}" == 1 ]]; then
   config="${cwd_base}/.wiki-config"
@@ -95,6 +104,7 @@ if [[ "${config_present}" == 1 ]]; then
 
   case "${role}" in
     main|project)
+      resolved_role="${role}"
       wiki_root="${cwd_base}"
       # Validate structure
       for required in schema.md index.md .wiki-pending; do
@@ -111,6 +121,7 @@ if [[ "${config_present}" == 1 ]]; then
       fi
       ;;
     project-pointer)
+      resolved_role="project"
       sub=$(grep '^wiki = ' "${config}" | head -1 | sed 's/^wiki = "\(.*\)"/\1/')
       [[ -n "${sub}" ]] || exit 14
       # Resolve relative path against cwd_base (the dir holding .wiki-config)
@@ -144,6 +155,7 @@ elif [[ "${mode_present}" == 1 ]]; then
     main-only)
       [[ -n "${main_wiki}" ]] || exit 12
       wiki_root="${main_wiki}"
+      resolved_role="main"
       fork=0
       ;;
     *)
@@ -156,13 +168,33 @@ else
   exit 11
 fi
 
-# Build target list.
+# Validate the promotion target, but never fan out the original capture.
 if [[ "${fork}" == 1 ]]; then
   [[ -n "${main_wiki}" ]] || exit 12
-  echo "${wiki_root}"
-  if [[ "${main_wiki}" != "${wiki_root}" ]]; then
-    echo "${main_wiki}"
+  [[ "${resolved_role}" == "project" ]] || exit 13
+fi
+
+if [[ "${output_format}" == "plan" ]]; then
+  promotion_policy="none"
+  mode="${resolved_role}"
+  plan_main=""
+  if [[ "${fork}" == 1 ]]; then
+    promotion_policy="selective"
+    mode="both"
+    plan_main="${main_wiki}"
   fi
+  python3 - "${mode}" "${wiki_root}" "${promotion_policy}" "${plan_main}" <<'PYEOF'
+import json
+import sys
+
+mode, primary, policy, main = sys.argv[1:]
+print(json.dumps({
+    "mode": mode,
+    "primary_wiki": primary,
+    "promotion_policy": policy,
+    "main_wiki": main or None,
+}))
+PYEOF
 else
   echo "${wiki_root}"
 fi

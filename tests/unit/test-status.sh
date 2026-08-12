@@ -318,6 +318,31 @@ test_status_soft_ceiling_line() {
   echo "PASS: test_status_soft_ceiling_line"
 }
 
+test_status_reports_selective_promotion_decisions() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  for item in pending:null local:keep-local promoted:promoted; do
+    name="${item%%:*}"
+    decision="${item#*:}"
+    cat > "${WIKI}/.wiki-pending/archive/2026-08/${name}.md" <<EOF
+---
+promotion_policy: "selective"
+promotion_decision: ${decision}
+---
+EOF
+  done
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  grep -q "1 awaiting decision" <<< "${output}" \
+    || { echo "FAIL: pending promotion decision missing"; teardown; exit 1; }
+  grep -q "1 kept local" <<< "${output}" \
+    || { echo "FAIL: keep-local promotion count missing"; teardown; exit 1; }
+  grep -q "1 promoted" <<< "${output}" \
+    || { echo "FAIL: promoted count missing"; teardown; exit 1; }
+  echo "PASS: test_status_reports_selective_promotion_decisions"
+  teardown
+}
+
 test_status_on_empty_wiki
 test_status_reports_runtime_and_scheduler_state
 test_status_reports_legacy_migration_action
@@ -329,4 +354,5 @@ test_status_walks_discovered_categories
 test_status_includes_ideas_directory
 test_status_depth_violation_count
 test_status_soft_ceiling_line
+test_status_reports_selective_promotion_decisions
 echo "ALL PASS"

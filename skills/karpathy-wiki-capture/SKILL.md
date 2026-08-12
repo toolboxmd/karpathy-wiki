@@ -122,12 +122,17 @@ If the user asks to change the wiki mode for this directory:
 ```bash
 wiki use project    # captures go to ./wiki/ only
 wiki use main       # captures go to ~/wiki/ only
-wiki use both       # captures fork to ./wiki/ AND ~/wiki/
+wiki use both       # capture locally; selectively promote reusable knowledge
 ```
 
 Confirm in one line. The mode is persisted in `<cwd>/.wiki-config`
 (project or both) or `<cwd>/.wiki-mode` (main-only). See
 `references/capture-schema.md` and the v2.4 spec for details.
+
+`both` is project-first. The original capture is written only to `./wiki/`.
+During ingest, the project ingester keeps project-specific knowledge local and
+uses the deterministic promotion helper only for reusable cross-project
+knowledge. The original capture is never copied verbatim to both queues.
 
 ## Cwd unconfigured (0.2.9)
 

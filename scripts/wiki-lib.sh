@@ -117,3 +117,40 @@ wiki_config_get() {
   # wiki_runtime_config_get explicitly; there is no silent cross-file fallback.
   wiki_structural_config_get "$@"
 }
+
+wiki_promotion_policy() {
+  # wiki_promotion_policy <actual_wiki_root>
+  # Prints selective only when this project wiki was configured for `both`.
+  # The parent project-pointer fallback covers a fresh ./wiki that has no
+  # per-machine runtime config yet.
+  local root="$1"
+  root="$(cd "${root}" 2>/dev/null && pwd -P)" || { echo none; return; }
+  [[ -f "${root}/.wiki-config" ]] || { echo none; return; }
+  grep -q '^role = "project"' "${root}/.wiki-config" || { echo none; return; }
+
+  if [[ -f "${root}/.wiki-config.local" ]] \
+    && [[ "$(wiki_runtime_config_get "${root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+    echo selective
+    return
+  fi
+
+  local parent config sub candidate
+  parent="$(dirname "${root}")"
+  config="${parent}/.wiki-config"
+  if [[ -f "${config}" ]] \
+    && grep -q '^role = "project-pointer"' "${config}" \
+    && grep -q '^fork_to_main = true' "${config}"; then
+    sub="$(sed -n 's/^wiki = "\(.*\)"/\1/p' "${config}" | head -1)"
+    if [[ "${sub}" == /* ]]; then
+      candidate="${sub}"
+    else
+      candidate="${parent}/${sub#./}"
+    fi
+    candidate="$(cd "${candidate}" 2>/dev/null && pwd -P)" || candidate=""
+    if [[ "${candidate}" == "${root}" ]]; then
+      echo selective
+      return
+    fi
+  fi
+  echo none
+}

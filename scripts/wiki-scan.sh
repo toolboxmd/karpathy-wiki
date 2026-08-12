@@ -24,6 +24,8 @@ for required in .wiki-config schema.md index.md .wiki-pending inbox raw; do
   }
 done
 
+promotion_policy="$(wiki_promotion_policy "${wiki}")"
+
 _emit_raw_direct_capture() {
   local file_path="$1"
   local basename
@@ -36,6 +38,8 @@ _emit_raw_direct_capture() {
   capture_path="${wiki}/.wiki-pending/${capture_name}"
 
   local capture_temp
+  local capture_id
+  capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   capture_temp="$(mktemp "${wiki}/.wiki-pending/.scan-capture.XXXXXX")" || return 1
   if ! cat > "${capture_temp}" <<EOF
 ---
@@ -47,6 +51,10 @@ suggested_action: "auto"
 suggested_pages: []
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 captured_by: "wiki-scan-drop"
+capture_id: "${capture_id}"
+promotion_policy: "${promotion_policy}"
+promotion_decision: null
+promotion_id: null
 propagated_from: null
 ---
 
@@ -76,6 +84,8 @@ _emit_legacy_drift_capture() {
   capture_name="${capture_base:0:200}.md"
   capture_path="${wiki}/.wiki-pending/${capture_name}"
   local capture_temp
+  local capture_id
+  capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   capture_temp="$(mktemp "${wiki}/.wiki-pending/.scan-capture.XXXXXX")" || return 1
   if ! cat > "${capture_temp}" <<EOF
 ---
@@ -87,6 +97,10 @@ suggested_action: "update"
 suggested_pages: []
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 captured_by: "wiki-scan-drift"
+capture_id: "${capture_id}"
+promotion_policy: "${promotion_policy}"
+promotion_decision: null
+promotion_id: null
 propagated_from: null
 ---
 
