@@ -760,9 +760,7 @@ def _test_provider_command(root: Path) -> tuple[list[str], str]:
         except ValueError as exc:
             raise DispatchError("invalid test provider duration") from exc
         code = (
-            "import os,pathlib,sys,time; "
-            "p=os.environ.get('WIKI_DISPATCH_TEST_PROVIDER_PID_FILE'); "
-            "pathlib.Path(p).write_text(str(os.getpid())) if p else None; "
+            "import sys,time; "
             "time.sleep(float(sys.argv[1]))"
         )
         return [sys.executable, "-c", code, seconds], mode
@@ -963,6 +961,10 @@ def run_worker(
                 provider_pid=child.pid,
                 heartbeat_at=_utc_now(),
             )
+            if _test_mode():
+                test_pid_file = os.environ.get("WIKI_DISPATCH_TEST_PROVIDER_PID_FILE")
+                if test_pid_file:
+                    Path(test_pid_file).write_text(str(child.pid), encoding="utf-8")
             if stdin_bytes is not None:
                 if child.stdin is None:
                     raise DispatchError("wiki dispatch worker: provider stdin pipe missing")

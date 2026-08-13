@@ -149,7 +149,7 @@ test_orchestrator_failure_terminates_provider_group() {
   printf 'capture\n' > "${wiki}/.wiki-pending/x.md"
   run_tick "${wiki}" hold \
     WIKI_DISPATCH_TEST_PROVIDER_SECONDS=30 \
-    WIKI_DISPATCH_TEST_HEARTBEAT_SECONDS=0.05 \
+    WIKI_DISPATCH_TEST_HEARTBEAT_SECONDS=0.001 \
     WIKI_DISPATCH_TEST_PROVIDER_PID_FILE="${pid_file}" \
     WIKI_DISPATCH_TEST_FAIL_HEARTBEAT=1 \
     WIKI_DISPATCH_TEST_NO_REFILL=1
