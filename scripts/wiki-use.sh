@@ -70,8 +70,15 @@ pointer_target() {
 }
 
 set_pointer_fork() {
-  local config="$1" enabled="$2" target runtime_path backup
+  local config="$1" enabled="$2" target workspace runtime_path backup
   target="$(pointer_target "${config}")"
+  workspace="$(dirname "${config}")"
+  runtime_path="$(python3 "${CONFIG_TOOL}" path --wiki "${target}" 2>/dev/null || true)"
+  if [[ -n "${runtime_path}" && -e "${runtime_path}" ]]; then
+    python3 "${CONFIG_TOOL}" validate-pointer \
+      --wiki "${target}" --workspace "${workspace}" >/dev/null 2>&1 \
+      || return 1
+  fi
   backup="${config}.wiki-use-backup.$$"
   cp "${config}" "${backup}" || return 1
   if grep -q '^fork_to_main = ' "${config}"; then
@@ -93,7 +100,6 @@ set_pointer_fork() {
   }
   rm -f "${config}.bak"
 
-  runtime_path="$(python3 "${CONFIG_TOOL}" path --wiki "${target}" 2>/dev/null || true)"
   if [[ -n "${runtime_path}" && -e "${runtime_path}" ]] \
     && ! set_runtime_fork "${target}" "${enabled}"; then
     mv "${backup}" "${config}"

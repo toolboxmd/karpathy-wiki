@@ -21,8 +21,12 @@ export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 
 write_runtime_config() {
-  local root="$1"
-  cat > "${root}/.wiki-config.local" <<'EOF'
+  local root="$1" workspace="${2:-$1}"
+  cat > "${root}/.wiki-config.local" <<EOF
+[trust]
+wiki_root = "$(cd "${root}" && pwd -P)"
+workspace_root = "$(cd "${workspace}" && pwd -P)"
+
 [ingest]
 dispatch_mode = "session_start"
 max_processes = 2
@@ -137,7 +141,7 @@ structural_before="$(cat "${ACTUAL}/.wiki-config")"
 POINTER_RUNTIME="${TESTDIR}/pointer-runtime"
 mkdir -p "${POINTER_RUNTIME}"
 bash "${INIT}" project "${POINTER_RUNTIME}/wiki" "${MAIN}" >/dev/null
-write_runtime_config "${POINTER_RUNTIME}/wiki"
+write_runtime_config "${POINTER_RUNTIME}/wiki" "${POINTER_RUNTIME}"
 cat > "${POINTER_RUNTIME}/.wiki-config" <<'EOF'
 role = "project-pointer"
 wiki = "./wiki"
@@ -162,6 +166,57 @@ rm -f "${POINTER_RUNTIME}/wiki/.wiki-config.local.bak"
   && fail "wiki use both succeeded with an invalid target runtime"
 grep -q '^fork_to_main = false' "${POINTER_RUNTIME}/.wiki-config" \
   || fail "failed runtime synchronization did not roll back the pointer"
+
+# Case 9c: a project pointer cannot synchronize a runtime trusted for a
+# different workspace. Trust must be checked before either side is mutated.
+VICTIM_WORKSPACE="${TESTDIR}/victim-workspace"
+ATTACKER_WORKSPACE="${TESTDIR}/attacker-workspace"
+SHARED_WIKI="${TESTDIR}/custom/shared-project-wiki"
+EXTERNAL_CONFIG_HOME="${TESTDIR}/external-config-home"
+mkdir -p "${VICTIM_WORKSPACE}" "${ATTACKER_WORKSPACE}"
+bash "${INIT}" project "${SHARED_WIKI}" "${MAIN}" >/dev/null
+cat > "${VICTIM_WORKSPACE}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${SHARED_WIKI}"
+fork_to_main = false
+EOF
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+    --wiki "${SHARED_WIKI}" --trust-workspace "${VICTIM_WORKSPACE}" \
+    --default-provider codex --default-model test-model \
+    --default-effort low --no-fork-to-main >/dev/null
+cat > "${ATTACKER_WORKSPACE}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${SHARED_WIKI}"
+fork_to_main = false
+EOF
+attacker_before="$(cat "${ATTACKER_WORKSPACE}/.wiki-config")"
+for attempted_mode in both project; do
+  if [[ "${attempted_mode}" == "project" ]]; then
+    env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+      XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+      python3 "${REPO_ROOT}/scripts/wiki_config.py" update-runtime \
+        --wiki "${SHARED_WIKI}" --fork-to-main >/dev/null
+  fi
+  runtime_before="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+    python3 "${REPO_ROOT}/scripts/wiki_config.py" get \
+      --wiki "${SHARED_WIKI}" --key routing.fork_to_main)"
+  ( cd "${ATTACKER_WORKSPACE}" && \
+    env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+      XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+      bash "${USE}" "${attempted_mode}" ) 2>/dev/null \
+    && fail "wiki use ${attempted_mode} synchronized another workspace's runtime"
+  [[ "$(cat "${ATTACKER_WORKSPACE}/.wiki-config")" == "${attacker_before}" ]] \
+    || fail "wiki use ${attempted_mode} mutated the untrusted pointer"
+  runtime_after="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+    python3 "${REPO_ROOT}/scripts/wiki_config.py" get \
+      --wiki "${SHARED_WIKI}" --key routing.fork_to_main)"
+  [[ "${runtime_after}" == "${runtime_before}" ]] \
+    || fail "wiki use ${attempted_mode} mutated another workspace's runtime"
+done
 
 # Case 10: actual wiki without local runtime config gets an actionable error.
 NO_LOCAL="${TESTDIR}/actual-without-local"
