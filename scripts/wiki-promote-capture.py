@@ -277,6 +277,7 @@ def publish(title: str, body_file: str) -> int:
         body = body_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise PromotionError(f"cannot read promotion body: {body_path}: {exc}") from exc
+    body = body.rstrip()
     if len(body.encode("utf-8")) < 1500:
         raise PromotionError("promotion body must contain at least 1500 bytes of reusable detail")
 

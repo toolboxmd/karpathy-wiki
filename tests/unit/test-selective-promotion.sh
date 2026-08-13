@@ -80,6 +80,38 @@ test_publish_once_with_portable_provenance() {
   run_promote "${capture}" verify || fail "published decision did not verify"
 }
 
+test_body_floor_uses_normalized_emitted_body() {
+  local capture body before after state_before state_after
+  capture="$(make_source whitespace-floor)"
+  body="${TESTDIR}/whitespace-floor-body.md"
+  printf 'x%1500s' '' > "${body}"
+  before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  state_before="$(find "${PROJECT}/.locks/promotions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+  run_promote "${capture}" publish --title "Whitespace is not detail" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "trailing whitespace satisfied the normalized promotion body floor"
+  after="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  state_after="$(find "${PROJECT}/.locks/promotions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "${after}" -eq "${before}" ]] || fail "short normalized body changed the main queue"
+  grep -q '^promotion_decision: null' "${capture}" \
+    || fail "short normalized body changed the source decision"
+  [[ "${state_after}" -eq "${state_before}" ]] \
+    || fail "short normalized body created promotion intent or receipt state"
+}
+
+test_normalized_body_floor_boundary_succeeds() {
+  local capture body promoted
+  capture="$(make_source normalized-boundary)"
+  body="${TESTDIR}/normalized-boundary-body.md"
+  printf '%1500s' '' | tr ' ' x > "${body}"
+
+  run_promote "${capture}" publish --title "Exact normalized boundary" --body-file "${body}"
+  promoted="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' -exec grep -l '^propagated_from: "cap-normalized-boundary"$' {} +)"
+  [[ -n "${promoted}" ]] || fail "normalized 1500-byte boundary did not publish"
+  grep -q '^promotion_decision: "promoted"' "${capture}" \
+    || fail "normalized boundary source was not marked promoted"
+}
+
 test_repeat_and_concurrent_retry_are_idempotent() {
   local capture body
   capture="${PROJECT}/.wiki-pending/reusable.md.processing"
@@ -218,6 +250,8 @@ test_forged_promoted_decision_is_rejected() {
 
 test_publish_once_with_portable_provenance
 test_repeat_and_concurrent_retry_are_idempotent
+test_body_floor_uses_normalized_emitted_body
+test_normalized_body_floor_boundary_succeeds
 test_failure_after_intent_is_recoverable
 test_failure_after_publish_before_mark_is_recoverable
 test_missing_receipt_after_publish_recovers_existing_target
