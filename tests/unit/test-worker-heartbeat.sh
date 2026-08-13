@@ -42,9 +42,11 @@ auto_commit = false
 EOF
 printf 'heartbeat\n' > "${WIKI}/.wiki-pending/heartbeat.md"
 
+# Keep the fake provider alive well beyond slow Cloud worker startup. Cleanup
+# terminates it after the heartbeat assertions, so this does not extend runtime.
 WIKI_DISPATCH_TEST_MODE=1 \
 WIKI_DISPATCH_TEST_PROVIDER_MODE=hold \
-WIKI_DISPATCH_TEST_PROVIDER_SECONDS=1.2 \
+WIKI_DISPATCH_TEST_PROVIDER_SECONDS=10 \
 WIKI_DISPATCH_TEST_HEARTBEAT_SECONDS=0.1 \
 WIKI_DISPATCH_TEST_NO_REFILL=1 \
   python3 "${DISPATCH}" tick --wiki "${WIKI}" --source manual

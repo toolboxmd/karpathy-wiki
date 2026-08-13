@@ -22,7 +22,11 @@ _wiki_lock_is_stale() {
   local lockfile="$1"
   [[ -f "${lockfile}" ]] || return 1
   local mtime now age
-  mtime="$(stat -f %m "${lockfile}" 2>/dev/null || stat -c %Y "${lockfile}" 2>/dev/null)"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    mtime="$(stat -f %m "${lockfile}")"
+  else
+    mtime="$(stat -c %Y "${lockfile}")"
+  fi
   now="$(date +%s)"
   age=$((now - mtime))
   [[ "${age}" -gt "${WIKI_LOCK_STALE_SECONDS}" ]]

@@ -123,7 +123,7 @@ _manifest_lock_acquire() {
     while true; do
       if [[ -f "${lock_file}" ]]; then
         local mtime now age
-        mtime="$(stat -f %m "${lock_file}" 2>/dev/null || stat -c %Y "${lock_file}" 2>/dev/null || echo 0)"
+        mtime="$(wiki_file_mtime "${lock_file}" 2>/dev/null || echo 0)"
         now="$(date +%s)"; age=$((now - mtime))
         [[ "${age}" -gt 300 ]] && rm -f "${lock_file}"
       fi
@@ -219,7 +219,7 @@ _drift_scan() {
   local f
   for f in "${wiki}/inbox"/*; do
     [[ -f "${f}" ]] || continue
-    mtime="$(stat -f %m "${f}" 2>/dev/null || stat -c %Y "${f}" 2>/dev/null || echo 0)"
+    mtime="$(wiki_file_mtime "${f}" 2>/dev/null || echo 0)"
     age=$((now - mtime))
     if [[ "${age}" -lt 5 ]]; then
       log_info "scan: inbox file mtime within last 5s, deferring: $(basename "${f}")"
@@ -246,7 +246,7 @@ _drift_scan() {
       *) continue ;;
     esac
     abs_src="${wiki}/${src}"
-    mtime="$(stat -f %m "${abs_src}" 2>/dev/null || stat -c %Y "${abs_src}" 2>/dev/null || echo 0)"
+    mtime="$(wiki_file_mtime "${abs_src}" 2>/dev/null || echo 0)"
     age=$((now - mtime))
     if [[ "${age}" -lt 5 ]]; then
       log_info "scan: raw file mtime within last 5s, deferring: ${src}"

@@ -23,10 +23,18 @@ echo "n" | bash "${INIT_MAIN}" 2>/dev/null  # 'n' is a safe choice if the script
   || fail "silent migration: pointer points at wrong path: $(cat "${WIKI_POINTER_FILE}")"
 
 # Case 2: pointer-already-exists no-op
-mtime_before=$(stat -f %m "${WIKI_POINTER_FILE}" 2>/dev/null || stat -c %Y "${WIKI_POINTER_FILE}")
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  mtime_before=$(stat -f %m "${WIKI_POINTER_FILE}")
+else
+  mtime_before=$(stat -c %Y "${WIKI_POINTER_FILE}")
+fi
 sleep 1
 bash "${INIT_MAIN}" >/dev/null 2>&1
-mtime_after=$(stat -f %m "${WIKI_POINTER_FILE}" 2>/dev/null || stat -c %Y "${WIKI_POINTER_FILE}")
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  mtime_after=$(stat -f %m "${WIKI_POINTER_FILE}")
+else
+  mtime_after=$(stat -c %Y "${WIKI_POINTER_FILE}")
+fi
 [[ "${mtime_before}" == "${mtime_after}" ]] || fail "pointer-already-exists: pointer was rewritten"
 
 # Case 3: 'none' choice (no main wiki)

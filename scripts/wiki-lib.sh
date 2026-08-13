@@ -44,6 +44,18 @@ slugify() {
     | sed 's/^-//;s/-$//'
 }
 
+wiki_file_mtime() {
+  # GNU and BSD stat accept overlapping flags with different meanings. Select
+  # the platform syntax before invoking stat so a failed probe cannot leak
+  # filesystem-description text into arithmetic command substitutions.
+  local path="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f %m "${path}"
+  else
+    stat -c %Y "${path}"
+  fi
+}
+
 wiki_root_from_cwd() {
   # Walks up from cwd looking for a dir containing .wiki-config.
   # Prints absolute path or exits 1.
