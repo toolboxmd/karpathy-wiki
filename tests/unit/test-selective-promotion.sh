@@ -139,6 +139,25 @@ test_failure_after_publish_before_mark_is_recoverable() {
     || fail "post-publication retry did not mark source"
 }
 
+test_missing_receipt_after_publish_recovers_existing_target() {
+  local capture body before after
+  capture="$(make_source missing-receipt)"
+  body="${TESTDIR}/missing-receipt-body.md"
+  make_body "${body}"
+  before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+
+  WIKI_PROMOTION_TEST_MODE=1 WIKI_PROMOTION_TEST_FAIL_AFTER_PUBLISH=1 \
+    run_promote "${capture}" publish --title "Missing receipt recovery" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "post-publication injected failure unexpectedly succeeded"
+  rm -f "${PROJECT}/.locks/promotions/prom-"*.json
+
+  run_promote "${capture}" publish --title "Changed retry title" --body-file "${body}"
+  after="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  [[ "${after}" -eq $((before + 1)) ]] || fail "missing-receipt retry duplicated main capture"
+  grep -q '"status": "published"' "${PROJECT}/.locks/promotions/prom-"*.json \
+    || fail "missing-receipt retry did not restore the published receipt"
+}
+
 test_keep_local_and_project_policy_guard() {
   local selective local_only body before after
   selective="$(make_source local-case)"
@@ -181,6 +200,7 @@ test_publish_once_with_portable_provenance
 test_repeat_and_concurrent_retry_are_idempotent
 test_failure_after_intent_is_recoverable
 test_failure_after_publish_before_mark_is_recoverable
+test_missing_receipt_after_publish_recovers_existing_target
 test_keep_local_and_project_policy_guard
 test_forged_promoted_decision_is_rejected
 echo "PASS: selective promotion"

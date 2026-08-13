@@ -153,6 +153,18 @@ def _existing_target(main: Path, name: str) -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
+def _existing_target_by_promotion_id(main: Path, promotion_id: str) -> Path | None:
+    pending = main / ".wiki-pending"
+    candidates = list(pending.glob(f"*-{promotion_id}.md"))
+    candidates.extend(pending.glob(f"*-{promotion_id}.md.processing"))
+    candidates.extend((pending / "failed").glob(f"*-{promotion_id}.md"))
+    candidates.extend((pending / "archive").glob(f"*/*-{promotion_id}.md"))
+    existing = [path for path in candidates if path.is_file()]
+    if len(existing) > 1:
+        raise PromotionError(f"multiple promotion targets found for {promotion_id}")
+    return existing[0] if existing else None
+
+
 def _validate_existing(path: Path, capture_id: str, promotion_id: str) -> None:
     text = path.read_text(encoding="utf-8")
     if _scalar(text, "capture_id") != promotion_id or _scalar(text, "propagated_from") != capture_id:
@@ -274,8 +286,16 @@ def publish(title: str, body_file: str) -> int:
             target_name = str(receipt.get("target_name", ""))
             captured_at = str(receipt.get("captured_at", ""))
         else:
-            captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-            target_name = f"{captured_at}-{promotion_id}.md"
+            recovered = _existing_target_by_promotion_id(main, promotion_id)
+            if recovered is not None:
+                _validate_existing(recovered, capture_id, promotion_id)
+                target_name = recovered.name.removesuffix(".processing")
+                captured_at = _scalar(recovered.read_text(encoding="utf-8"), "captured_at")
+                if not captured_at:
+                    raise PromotionError(f"promotion target lacks captured_at at {recovered}")
+            else:
+                captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+                target_name = f"{captured_at}-{promotion_id}.md"
             receipt = {
                 "promotion_id": promotion_id,
                 "source_capture_id": capture_id,

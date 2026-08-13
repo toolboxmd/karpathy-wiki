@@ -53,9 +53,17 @@ if [[ -e "${archived}" ]]; then
   exit 1
 fi
 
-promotion_policy="$(sed -n 's/^promotion_policy:[[:space:]]*["'\'']\{0,1\}\([^"'\'']*\)["'\'']\{0,1\}[[:space:]]*$/\1/p' "${processing}" | head -n 1)"
+frontmatter_scalar() {
+  local key="$1"
+  local file="$2"
+  awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "${file}" \
+    | sed -n "s/^${key}:[[:space:]]*[\"']\\{0,1\\}\\([^\"']*\\)[\"']\\{0,1\\}[[:space:]]*$/\\1/p" \
+    | head -n 1
+}
+
+promotion_policy="$(frontmatter_scalar promotion_policy "${processing}")"
 if [[ "${promotion_policy}" == "selective" ]]; then
-  promotion_decision="$(sed -n 's/^promotion_decision:[[:space:]]*["'\'']\{0,1\}\([^"'\'']*\)["'\'']\{0,1\}[[:space:]]*$/\1/p' "${processing}" | head -n 1)"
+  promotion_decision="$(frontmatter_scalar promotion_decision "${processing}")"
   case "${promotion_decision}" in
     keep-local|promoted) ;;
     *)

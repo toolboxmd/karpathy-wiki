@@ -89,6 +89,22 @@ external_capture="$(find "${EXTERNAL_PROJECT}/.wiki-pending" -maxdepth 1 -type f
 grep -q '^promotion_policy: "selective"' "${external_capture}" \
   || fail "external runtime both-mode capture lacks selective policy"
 
+# An existing external runtime config is authoritative when it explicitly
+# disables promotion, even if an older parent pointer still says `both`.
+cat > "${TESTDIR}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "./external-project"
+created = "2026-08-12"
+fork_to_main = true
+EOF
+external_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" path --wiki "${EXTERNAL_PROJECT}")"
+sed -i.bak 's/^fork_to_main = true/fork_to_main = false/' "${external_runtime}"
+rm -f "${external_runtime}.bak"
+[[ "$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  bash -c 'source "$1/scripts/wiki-lib.sh"; wiki_promotion_policy "$2"' _ "${REPO_ROOT}" "${EXTERNAL_PROJECT}")" == "none" ]] \
+  || fail "explicit external runtime false fell back to stale parent pointer true"
+
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.
 WIKI_FAIL="${TESTDIR}/publication-failure"

@@ -96,8 +96,21 @@ test_selective_capture_requires_decision() {
   echo "PASS: test_selective_capture_requires_decision"
 }
 
+test_body_promotion_prose_is_not_metadata() {
+  local wiki="${TESTDIR}/body-prose"
+  local capture="${wiki}/.wiki-pending/body-prose.md.processing"
+  make_wiki "${wiki}"
+  printf '%s\n' '---' 'title: "Legacy capture documenting promotion"' '---' '' \
+    'The supported setting is written as:' 'promotion_policy: selective' > "${capture}"
+  run_complete "${wiki}" "${capture}" || fail "body promotion prose was treated as frontmatter"
+  [[ -f "${wiki}/.wiki-pending/archive/$(date +%Y-%m)/body-prose.md" ]] \
+    || fail "legacy capture with body promotion prose was not archived"
+  echo "PASS: test_body_promotion_prose_is_not_metadata"
+}
+
 test_success_and_idempotence
 test_validation_failure_keeps_processing
 test_post_archive_failure_rolls_back
 test_selective_capture_requires_decision
+test_body_promotion_prose_is_not_metadata
 echo "ALL PASS"

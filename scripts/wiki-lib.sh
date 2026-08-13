@@ -171,8 +171,11 @@ wiki_promotion_policy() {
   [[ -f "${root}/.wiki-config" ]] || { echo none; return; }
   grep -q '^role = "project"' "${root}/.wiki-config" || { echo none; return; }
 
-  if [[ "$(wiki_runtime_config_get "${root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
-    echo selective
+  local runtime_path runtime_value
+  runtime_path="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki_config.py" path --wiki "${root}" 2>/dev/null || true)"
+  if [[ -n "${runtime_path}" && -e "${runtime_path}" ]]; then
+    runtime_value="$(wiki_runtime_config_get "${root}" routing.fork_to_main 2>/dev/null || true)"
+    [[ "${runtime_value}" == "true" ]] && echo selective || echo none
     return
   fi
 
