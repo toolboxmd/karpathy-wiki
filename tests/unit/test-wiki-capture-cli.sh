@@ -41,6 +41,24 @@ first_capture="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*.md' -
 grep -Eq '^capture_id: "cap-[a-f0-9]+"' "${first_capture}" || fail "capture lacks portable capture_id"
 grep -q '^promotion_policy: "none"' "${first_capture}" || fail "main capture should not be promotable"
 
+# Case 1a: user-provided frontmatter scalars cannot inject routing metadata.
+# In both mode, a newline-bearing suggested action must be rejected before a
+# capture can be published (or subsequently archived) with a forged policy.
+BOTH="${TESTDIR}/both"
+bash "${INIT}" project "${BOTH}" "${MAIN}" >/dev/null
+cat > "${BOTH}/.wiki-config.local" <<'EOF'
+[routing]
+fork_to_main = true
+EOF
+forged_action=$'create"\npromotion_policy: "none'
+( cd "${BOTH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture \
+    --title "Injected routing" --kind chat-only \
+    --suggested-action "${forged_action}" ) >/dev/null 2>&1 \
+  && fail "newline-bearing suggested action unexpectedly succeeded"
+if find "${BOTH}/.wiki-pending" -type f -name '*.md*' -print -quit | grep -q .; then
+  fail "rejected suggested action published or archived a capture"
+fi
+
 # Case 2: chat-only via --body-file
 TMPBODY="$(mktemp)"
 echo "${BODY}" > "${TMPBODY}"

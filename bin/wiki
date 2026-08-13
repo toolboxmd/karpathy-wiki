@@ -26,6 +26,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
+yaml_quote() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
+}
+
 sub="${1:-help}"
 shift || true
 
@@ -67,6 +71,17 @@ case "${sub}" in
     done
     [[ -n "${title}" ]] || { echo >&2 "wiki capture: --title required"; exit 1; }
     [[ -n "${kind}" ]] || { echo >&2 "wiki capture: --kind required (chat-only|chat-attached|raw-direct)"; exit 1; }
+    case "${suggested_action}" in
+      create|update|augment) ;;
+      *) echo >&2 "wiki capture: --suggested-action must be create, update, or augment"; exit 1 ;;
+    esac
+    for scalar_name in title evidence_path; do
+      scalar_value="${!scalar_name}"
+      if [[ "${scalar_value}" == *$'\n'* || "${scalar_value}" == *$'\r'* ]]; then
+        echo >&2 "wiki capture: --${scalar_name//_/-} must be a single line"
+        exit 1
+      fi
+    done
 
     # Evidence-path validation. Iron rule (per skill): capture's `evidence`
     # field is the canonical source path, or the literal "conversation"
@@ -318,11 +333,11 @@ case "${sub}" in
       capture_temp="$(mktemp "${target_wiki}/.wiki-pending/.capture.XXXXXX")"
       {
         echo "---"
-        echo "title: \"${title}\""
-        echo "evidence: \"${evidence}\""
+        printf 'title: %s\n' "$(yaml_quote "${title}")"
+        printf 'evidence: %s\n' "$(yaml_quote "${evidence}")"
         echo "evidence_type: \"${evidence_type}\""
         echo "capture_kind: \"${kind}\""
-        echo "suggested_action: \"${suggested_action}\""
+        printf 'suggested_action: %s\n' "$(yaml_quote "${suggested_action}")"
         echo "suggested_pages: []"
         echo "captured_at: \"${ts}\""
         echo "captured_by: \"in-session-agent\""
