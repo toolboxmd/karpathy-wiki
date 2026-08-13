@@ -62,6 +62,50 @@ project_capture="$(find "${PROJECT_WIKI}/.wiki-pending" -maxdepth 1 -type f -nam
 grep -q '^promotion_policy: "selective"' "${project_capture}" \
   || fail "both-mode project scanner capture lacks selective policy"
 
+# The normal pointer setup flow must preserve selective routing when init-local
+# creates the target wiki's runtime without an explicit routing flag.
+POINTER_INIT_ROOT="${TESTDIR}/pointer-init"
+POINTER_INIT_WIKI="${POINTER_INIT_ROOT}/wiki"
+POINTER_INIT_CONFIG_HOME="${TESTDIR}/pointer-init-config-home"
+mkdir -p "${POINTER_INIT_ROOT}"
+bash "${INIT}" project "${POINTER_INIT_WIKI}" "${WIKI}" >/dev/null
+cat > "${POINTER_INIT_ROOT}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+created = "2026-08-13"
+fork_to_main = true
+EOF
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${POINTER_INIT_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+    --wiki "${POINTER_INIT_WIKI}" \
+    --trust-workspace "${POINTER_INIT_ROOT}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low >/dev/null
+pointer_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${POINTER_INIT_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" get \
+    --wiki "${POINTER_INIT_WIKI}" --key routing.fork_to_main)"
+[[ "${pointer_runtime}" == "true" ]] \
+  || fail "init-local did not inherit fork=true from the exact project pointer"
+pointer_plan="$(cd "${POINTER_INIT_ROOT}" && \
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${POINTER_INIT_CONFIG_HOME}" \
+    WIKI_POINTER_FILE="${WIKI_POINTER_FILE:-${TESTDIR}/missing-pointer}" \
+    bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)"
+grep -q '"promotion_policy": "selective"' <<< "${pointer_plan}" \
+  || fail "pointer/init-local resolver plan was not selective: ${pointer_plan}"
+printf 'pointer initialized source\n' > "${POINTER_INIT_WIKI}/inbox/pointer.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${POINTER_INIT_WIKI}/inbox/pointer.md"
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${POINTER_INIT_CONFIG_HOME}" \
+  bash "${SCAN}" "${POINTER_INIT_WIKI}" >/dev/null
+pointer_capture="$(find "${POINTER_INIT_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"' "${pointer_capture}" \
+  || fail "pointer/init-local scanner capture was not selective"
+
 # A project wiki with trusted runtime configuration outside the checkout must
 # receive the same selective policy. No obsolete .wiki-config.local file is
 # present in the wiki root.
@@ -104,6 +148,23 @@ rm -f "${external_runtime}.bak"
 [[ "$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
   bash -c 'source "$1/scripts/wiki-lib.sh"; wiki_promotion_policy "$2"' _ "${REPO_ROOT}" "${EXTERNAL_PROJECT}")" == "none" ]] \
   || fail "explicit external runtime false fell back to stale parent pointer true"
+printf '%s\n' "${WIKI}" > "${TESTDIR}/main-pointer"
+external_false_plan="$(cd "${TESTDIR}" && \
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+    WIKI_POINTER_FILE="${TESTDIR}/main-pointer" \
+    bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)"
+grep -q '"promotion_policy": "none"' <<< "${external_false_plan}" \
+  || fail "explicit runtime false did not narrow pointer resolver routing: ${external_false_plan}"
+printf 'explicit local-only source\n' > "${EXTERNAL_PROJECT}/inbox/local-only.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${EXTERNAL_PROJECT}/inbox/local-only.md"
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  bash "${SCAN}" "${EXTERNAL_PROJECT}" >/dev/null
+local_only_capture="$(grep -l 'local-only.md' "${EXTERNAL_PROJECT}/.wiki-pending"/drift-*.md | head -1)"
+grep -q '^promotion_policy: "none"' "${local_only_capture}" \
+  || fail "explicit runtime false scanner capture was not local-only"
 
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.

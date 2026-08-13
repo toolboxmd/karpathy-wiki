@@ -79,9 +79,11 @@ echo "none" > "${WIKI_POINTER_FILE}"
 assert_exit "pointer=none + cwd has config (fork=false)" "${PROJECT}" 0
 assert_returns "pointer=none + cwd has config (fork=false)" "${PROJECT}" "${PROJECT}/wiki"
 
-# Case 3: pointer = none + cwd has .wiki-config with fork_to_main = true → 12
+# Case 3: a pointer true/runtime false mismatch remains local-only, so a main
+# pointer is not required until an explicit synchronization command is run.
 sed -i.bak 's/fork_to_main = false/fork_to_main = true/' "${PROJECT}/.wiki-config"
-assert_exit "pointer=none + cwd has fork_to_main=true" "${PROJECT}" 12
+assert_exit "pointer=none + mismatched runtime false" "${PROJECT}" 0
+assert_returns "pointer=none + mismatched runtime false" "${PROJECT}" "${PROJECT}/wiki"
 sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${PROJECT}/.wiki-config"
 
 # Case 4: pointer = none + cwd unconfigured → 11

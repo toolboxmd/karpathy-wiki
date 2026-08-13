@@ -902,6 +902,18 @@ def _build_runtime_for_write(
     )
     auto_commit = legacy_auto_commit if args.auto_commit is None else args.auto_commit
     legacy_fork = structural.get("fork_to_main", False)
+    if args.command == "init-local" and args.fork_to_main is None:
+        pointer = workspace / ".wiki-config"
+        try:
+            pointer_data = _load_toml(pointer, "workspace project pointer")
+        except ConfigError:
+            pointer_data = {}
+        if pointer_data.get("role") == "project-pointer":
+            target = Path(pointer_data.get("wiki", "./wiki")).expanduser()
+            if not target.is_absolute():
+                target = workspace / target
+            if target.resolve() == root:
+                legacy_fork = pointer_data.get("fork_to_main", False)
     fork_to_main = legacy_fork if args.fork_to_main is None else args.fork_to_main
 
     config = {

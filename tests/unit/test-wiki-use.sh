@@ -132,6 +132,35 @@ structural_before="$(cat "${ACTUAL}/.wiki-config")"
 [[ "$(wiki_runtime_config_get "${ACTUAL}" routing.fork_to_main)" == "false" ]] \
   || fail "actual wiki did not store fork=false locally"
 
+# Case 9b: pointer commands synchronize an existing target runtime so an
+# operator can explicitly resolve an old pointer/runtime mismatch.
+POINTER_RUNTIME="${TESTDIR}/pointer-runtime"
+mkdir -p "${POINTER_RUNTIME}"
+bash "${INIT}" project "${POINTER_RUNTIME}/wiki" "${MAIN}" >/dev/null
+write_runtime_config "${POINTER_RUNTIME}/wiki"
+cat > "${POINTER_RUNTIME}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+created = "2026-08-13"
+fork_to_main = false
+EOF
+( cd "${POINTER_RUNTIME}" && bash "${USE}" both ) >/dev/null \
+  || fail "wiki use both on project pointer with runtime failed"
+[[ "$(wiki_runtime_config_get "${POINTER_RUNTIME}/wiki" routing.fork_to_main)" == "true" ]] \
+  || fail "wiki use both did not synchronize the target runtime true"
+( cd "${POINTER_RUNTIME}" && bash "${USE}" project ) >/dev/null \
+  || fail "wiki use project on project pointer with runtime failed"
+[[ "$(wiki_runtime_config_get "${POINTER_RUNTIME}/wiki" routing.fork_to_main)" == "false" ]] \
+  || fail "wiki use project did not synchronize the target runtime false"
+
+# If target-runtime synchronization fails after the pointer mutation, the
+# pointer choice must roll back rather than leaving a new mismatch.
+printf '\ninvalid = true\n' >> "${POINTER_RUNTIME}/wiki/.wiki-config.local"
+( cd "${POINTER_RUNTIME}" && bash "${USE}" both ) 2>/dev/null \
+  && fail "wiki use both succeeded with an invalid target runtime"
+grep -q '^fork_to_main = false' "${POINTER_RUNTIME}/.wiki-config" \
+  || fail "failed runtime synchronization did not roll back the pointer"
+
 # Case 10: actual wiki without local runtime config gets an actionable error.
 NO_LOCAL="${TESTDIR}/actual-without-local"
 bash "${INIT}" project "${NO_LOCAL}" >/dev/null

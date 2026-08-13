@@ -150,9 +150,15 @@ if [[ "${config_present}" == 1 ]]; then
         --wiki "${wiki_root}" --workspace "${cwd_base}" >/dev/null 2>&1 \
         || exit 14
       # A project pointer belongs to the project checkout, so its routing
-      # choice intentionally remains in the tracked pointer file.
+      # choice remains in the tracked pointer file. An existing target runtime
+      # is its local mirror/narrowing gate, so both values must agree.
       if grep -q '^fork_to_main = true' "${config}"; then
         fork=1
+        runtime_path="$(python3 "${SCRIPT_DIR}/wiki_config.py" path --wiki "${wiki_root}" 2>/dev/null || true)"
+        if [[ -n "${runtime_path}" && -e "${runtime_path}" ]]; then
+          runtime_fork="$(python3 "${SCRIPT_DIR}/wiki_config.py" get --wiki "${wiki_root}" --key routing.fork_to_main 2>/dev/null || true)"
+          [[ "${runtime_fork}" == "true" ]] || fork=0
+        fi
       fi
       ;;
     *)

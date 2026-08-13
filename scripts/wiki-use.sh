@@ -58,6 +58,50 @@ set_runtime_fork() {
   python3 "${CONFIG_TOOL}" update-runtime --wiki "${root}" "${flag}" >/dev/null
 }
 
+pointer_target() {
+  local config="$1" sub
+  sub="$(sed -n 's/^wiki = "\(.*\)"/\1/p' "${config}" | head -1)"
+  [[ -n "${sub}" ]] || sub="./wiki"
+  if [[ "${sub}" == /* ]]; then
+    printf '%s\n' "${sub}"
+  else
+    printf '%s\n' "$(dirname "${config}")/${sub#./}"
+  fi
+}
+
+set_pointer_fork() {
+  local config="$1" enabled="$2" target runtime_path backup
+  target="$(pointer_target "${config}")"
+  backup="${config}.wiki-use-backup.$$"
+  cp "${config}" "${backup}" || return 1
+  if grep -q '^fork_to_main = ' "${config}"; then
+    sed -i.bak "s/^fork_to_main = .*/fork_to_main = ${enabled}/" "${config}" || {
+      rm -f "${backup}" "${config}.bak"
+      return 1
+    }
+    rm -f "${config}.bak"
+  else
+    printf 'fork_to_main = %s\n' "${enabled}" >> "${config}" || {
+      mv "${backup}" "${config}"
+      return 1
+    }
+  fi
+  sed -i.bak '/^main = /d' "${config}" || {
+    mv "${backup}" "${config}"
+    rm -f "${config}.bak"
+    return 1
+  }
+  rm -f "${config}.bak"
+
+  runtime_path="$(python3 "${CONFIG_TOOL}" path --wiki "${target}" 2>/dev/null || true)"
+  if [[ -n "${runtime_path}" && -e "${runtime_path}" ]] \
+    && ! set_runtime_fork "${target}" "${enabled}"; then
+    mv "${backup}" "${config}"
+    return 1
+  fi
+  rm -f "${backup}"
+}
+
 case "${mode}" in
   project)
     main="$(read_main_wiki)"
@@ -74,6 +118,13 @@ case "${mode}" in
           exit 0
           ;;
         project-pointer)
+          if ! set_pointer_fork "$(pwd)/.wiki-config" false; then
+            echo >&2 "wiki use project: could not synchronize project pointer routing"
+            exit 1
+          fi
+          rm -f "$(pwd)/.wiki-mode"
+          echo "wiki use project: $(pwd)/wiki/ (fork_to_main = false)"
+          exit 0
           ;;
         *)
           echo >&2 "wiki use project: unknown role '${role}' in existing .wiki-config"
@@ -129,15 +180,10 @@ EOF
       role=$(grep '^role = ' "$(pwd)/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
       case "${role}" in
         project-pointer)
-          # Set fork_to_main = true in place
-          if grep -q '^fork_to_main = ' "$(pwd)/.wiki-config"; then
-            sed -i.bak 's/^fork_to_main = .*/fork_to_main = true/' "$(pwd)/.wiki-config"
-            rm -f "$(pwd)/.wiki-config.bak"
-          else
-            echo "fork_to_main = true" >> "$(pwd)/.wiki-config"
+          if ! set_pointer_fork "$(pwd)/.wiki-config" true; then
+            echo >&2 "wiki use both: could not synchronize project pointer routing"
+            exit 1
           fi
-          sed -i.bak '/^main = /d' "$(pwd)/.wiki-config"
-          rm -f "$(pwd)/.wiki-config.bak"
           rm -f "$(pwd)/.wiki-mode"
           echo "wiki use both: fork_to_main = true on existing config (role=${role})"
           ;;
