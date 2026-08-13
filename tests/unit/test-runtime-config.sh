@@ -324,7 +324,12 @@ test_init_local_records_runtime_outside_checkout() {
   [[ "${runtime_path}" == "${config_home}/karpathy-wiki/wikis/"*'/runtime.toml' ]] \
     || fail "runtime config is not under the user config home: ${runtime_path}"
   [[ -f "${runtime_path}" ]] || fail "external runtime config was not created"
-  [[ "$(stat -f '%Lp' "${runtime_path}" 2>/dev/null || stat -c '%a' "${runtime_path}")" == "600" ]] \
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    runtime_mode="$(stat -f '%Lp' "${runtime_path}")"
+  else
+    runtime_mode="$(stat -c '%a' "${runtime_path}")"
+  fi
+  [[ "${runtime_mode}" == "600" ]] \
     || fail "external runtime config is not mode 0600"
   [[ ! -e "${wiki}/.wiki-config.local" ]] \
     || fail "init-local wrote executable runtime configuration into the checkout"
@@ -343,6 +348,40 @@ test_init_local_records_runtime_outside_checkout() {
     || fail "world-readable runtime config was accepted"
   chmod 0600 "${runtime_path}"
   echo "PASS: test_init_local_records_runtime_outside_checkout"
+}
+
+test_external_pointer_can_establish_workspace_trust() {
+  local workspace="${TESTDIR}/external-pointer-workspace"
+  local wiki="${TESTDIR}/external-pointer-wiki"
+  local config_home="${TESTDIR}/external-pointer-config-home"
+  mkdir -p "${workspace}"
+  make_wiki "${wiki}" project
+  cat > "${workspace}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${wiki}"
+EOF
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" \
+    --trust-workspace "${workspace}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low >/dev/null \
+    || fail "external pointer workspace could not establish trust"
+
+  local runtime_path canonical_workspace
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" \
+    python3 "${CONFIG}" path --wiki "${wiki}")"
+  canonical_workspace="$(cd "${workspace}" && pwd -P)"
+  grep -Fq "workspace_root = \"${canonical_workspace}\"" "${runtime_path}" \
+    || fail "external pointer trust was not bound to the consenting workspace"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate-pointer \
+    --wiki "${wiki}" --workspace "${workspace}" >/dev/null \
+    || fail "external pointer target did not validate after explicit trust"
+  echo "PASS: test_external_pointer_can_establish_workspace_trust"
 }
 
 test_checkout_resolving_provider_executable_is_rejected() {
@@ -412,6 +451,7 @@ test_update_runtime_changes_only_adapter_owned_fields
 test_existing_local_config_repairs_ignore_entry
 test_checkout_runtime_config_is_not_trusted_implicitly
 test_init_local_records_runtime_outside_checkout
+test_external_pointer_can_establish_workspace_trust
 test_checkout_resolving_provider_executable_is_rejected
 test_semantically_invalid_init_rolls_back_external_config
 echo "ALL PASS"

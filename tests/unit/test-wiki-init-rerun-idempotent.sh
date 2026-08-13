@@ -19,7 +19,11 @@ bash "${INIT}" main "${TESTDIR}/wiki" >/dev/null \
 # 2. Hand-edit an existing artifact to verify it's preserved on re-run
 echo "USER EDIT" > "${TESTDIR}/wiki/index.md"
 echo "USER README" > "${TESTDIR}/wiki/README.md"
-mtime_before=$(stat -f %m "${TESTDIR}/wiki/.wiki-config" 2>/dev/null || stat -c %Y "${TESTDIR}/wiki/.wiki-config")
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  mtime_before=$(stat -f %m "${TESTDIR}/wiki/.wiki-config")
+else
+  mtime_before=$(stat -c %Y "${TESTDIR}/wiki/.wiki-config")
+fi
 
 # 3. Delete inbox/ and .raw-staging/ to simulate v2.3-pre-upgrade state
 rm -rf "${TESTDIR}/wiki/inbox" "${TESTDIR}/wiki/.raw-staging"
@@ -38,7 +42,11 @@ grep -q "USER README" "${TESTDIR}/wiki/README.md" || fail "user-edited README.md
 [[ -d "${TESTDIR}/wiki/.raw-staging" ]] || fail "re-run did not create .raw-staging/"
 
 # 7. .wiki-config not rewritten (preserves created date)
-mtime_after=$(stat -f %m "${TESTDIR}/wiki/.wiki-config" 2>/dev/null || stat -c %Y "${TESTDIR}/wiki/.wiki-config")
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  mtime_after=$(stat -f %m "${TESTDIR}/wiki/.wiki-config")
+else
+  mtime_after=$(stat -c %Y "${TESTDIR}/wiki/.wiki-config")
+fi
 [[ "${mtime_before}" == "${mtime_after}" ]] || fail ".wiki-config was rewritten on re-run"
 
 # 8. Fresh init writes a README (the user one was preserved above; verify a fresh

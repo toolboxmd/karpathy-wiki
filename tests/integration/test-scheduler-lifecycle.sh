@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WIKI_BIN="${REPO_ROOT}/bin/wiki"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
 PYTHON="$(command -v python3)"
+PYTHON_REAL="$(python3 -c 'import sys; print(sys.executable)')"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -147,9 +148,9 @@ grep -Fq 'state: mismatch' <<< "${status_out}" \
   || fail "status missed scheduled + not-installed mismatch"
 
 # Without launchctl, install is actionable and leaves config unchanged.
-NO_LAUNCHCTL_PATH="$(dirname "${PYTHON}")"
+NO_LAUNCHCTL_PATH="$(dirname "${PYTHON_REAL}")"
 set +e
-missing_out="$(PATH="${NO_LAUNCHCTL_PATH}" "${PYTHON}" \
+missing_out="$(PATH="${NO_LAUNCHCTL_PATH}" "${PYTHON_REAL}" \
   "${REPO_ROOT}/scripts/wiki_scheduler.py" install --wiki "${WIKI_FAIL}" 2>&1)"
 missing_rc=$?
 set -e

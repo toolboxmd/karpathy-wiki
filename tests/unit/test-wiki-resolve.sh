@@ -46,6 +46,17 @@ PROJECT="${TESTDIR}/proj"
 bash "${INIT}" main "${MAIN}" >/dev/null
 mkdir -p "${PROJECT}"
 bash "${INIT}" project "${PROJECT}/wiki" "${MAIN}" >/dev/null
+cat > "${PROJECT}/wiki/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "codex_medium"
+
+[ingest.profiles.codex_medium]
+provider = "codex"
+model = "gpt-test"
+reasoning_effort = "medium"
+EOF
 
 # Project-pointer config at PROJECT
 cat > "${PROJECT}/.wiki-config" <<EOF

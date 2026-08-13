@@ -252,7 +252,13 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**Unreleased development branch based on v0.2.8.** Codex is the qualified primary interactive host. Claude Code remains supported, and detached ingest supports Claude Code, Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain best-effort.
+**Unreleased development branch based on v0.2.8.** Codex is the qualified
+primary interactive development host. Claude Code remains supported with its
+existing automated hook coverage. Codex qualification includes recorded
+interactive-host acceptance evidence; it does not claim equivalent automated
+coverage for every Codex lifecycle path. Detached ingest supports Claude Code,
+Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain
+best-effort.
 
 **What works today (v2.4 + 0.2.7 read-protocol restoration + 0.2.8 hardening):**
 - Auto-capture + detached background ingest into a git-versioned wiki.

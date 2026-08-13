@@ -121,23 +121,37 @@ def classify_wiki_root(wiki: str | Path) -> tuple[Path, dict[str, Any]]:
     return root, structural
 
 
-def trusted_workspace_root(root: Path) -> Path:
+def _workspace_pointer_targets(workspace: Path, root: Path) -> bool:
+    """Return whether workspace explicitly points at this wiki root."""
+
+    pointer = workspace / ".wiki-config"
+    if not pointer.is_file():
+        return False
+    try:
+        data = _load_toml(pointer, "project pointer")
+    except ConfigError:
+        return False
+    target = data.get("wiki", "./wiki")
+    if data.get("role") != "project-pointer" or not isinstance(target, str):
+        return False
+    candidate = Path(target).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    return candidate.resolve() == root
+
+
+def trusted_workspace_root(
+    root: Path, pointer_workspace: str | Path | None = None
+) -> Path:
     """Return the checkout whose files must never define an ingest executable."""
 
     parent = root.parent
-    pointer = parent / ".wiki-config"
-    if pointer.is_file():
-        try:
-            data = _load_toml(pointer, "project pointer")
-        except ConfigError:
-            data = {}
-        target = data.get("wiki", "./wiki")
-        if data.get("role") == "project-pointer" and isinstance(target, str):
-            candidate = Path(target).expanduser()
-            if not candidate.is_absolute():
-                candidate = parent / candidate
-            if candidate.resolve() == root:
-                return parent.resolve()
+    if _workspace_pointer_targets(parent, root):
+        return parent.resolve()
+    if pointer_workspace is not None:
+        candidate_workspace = Path(pointer_workspace).expanduser().resolve()
+        if _workspace_pointer_targets(candidate_workspace, root):
+            return candidate_workspace
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
@@ -245,21 +259,23 @@ def _trusted_runtime_file(root: Path) -> tuple[Path, dict[str, Any]]:
     return path, _load_toml(path, "trusted runtime configuration")
 
 
-def _require_workspace_consent(args: argparse.Namespace, root: Path) -> None:
+def _require_workspace_consent(args: argparse.Namespace, root: Path) -> Path:
     if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
-        return
-    expected = trusted_workspace_root(root)
+        return trusted_workspace_root(root)
     supplied = getattr(args, "trust_workspace", None)
     if supplied is None:
+        expected = trusted_workspace_root(root)
         raise ConfigError(
             "wiki config: explicit local trust required\n"
             f"Re-run with: --trust-workspace {shlex.quote(str(expected))}"
         )
     actual = Path(supplied).expanduser().resolve()
+    expected = trusted_workspace_root(root, pointer_workspace=actual)
     if actual != expected:
         raise ConfigError(
             f"wiki config: --trust-workspace must equal the canonical workspace: {expected}"
         )
+    return actual
 
 
 def _is_git_tracked(path: Path) -> bool:
@@ -315,9 +331,12 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
         raise _legacy_config_error(root)
 
     local_path, local = _trusted_runtime_file(root)
-    workspace = trusted_workspace_root(root)
+    trust = local.get("trust")
+    claimed_workspace = (
+        trust.get("workspace_root") if isinstance(trust, dict) else None
+    )
+    workspace = trusted_workspace_root(root, pointer_workspace=claimed_workspace)
     if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") != "1":
-        trust = local.get("trust")
         if not isinstance(trust, dict):
             raise ConfigError(f"wiki: trusted runtime configuration has no [trust] table: {local_path}")
         if trust.get("wiki_root") != str(root):
@@ -517,6 +536,20 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
     }
 
 
+def validate_pointer_target(wiki: str | Path, workspace: str | Path) -> dict[str, Any]:
+    """Require a pointer target to be trusted for the checkout declaring it."""
+
+    config = validate_runtime_config(wiki)
+    expected_workspace = Path(workspace).expanduser().resolve()
+    trusted_workspace = Path(config["trusted_workspace"]).resolve()
+    if trusted_workspace != expected_workspace:
+        raise ConfigError(
+            "wiki: project pointer target is not trusted for this workspace: "
+            f"expected {expected_workspace}, runtime trusts {trusted_workspace}"
+        )
+    return config
+
+
 def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -538,7 +571,9 @@ def _render_structural_config(structural: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_runtime_config(config: dict[str, Any], root: Path) -> str:
+def _render_runtime_config(
+    config: dict[str, Any], root: Path, workspace: Path | None = None
+) -> str:
     ingest = config["ingest"]
     trust = config.get("trust", {})
     trusted_at = trust.get("trusted_at")
@@ -547,7 +582,7 @@ def _render_runtime_config(config: dict[str, Any], root: Path) -> str:
     lines = [
         "[trust]",
         f"wiki_root = {_toml_string(str(root))}",
-        f"workspace_root = {_toml_string(str(trusted_workspace_root(root)))}",
+        f"workspace_root = {_toml_string(str(workspace or trusted_workspace_root(root)))}",
         f"trusted_at = {_toml_string(trusted_at)}",
         "",
         "[ingest]",
@@ -820,6 +855,7 @@ def _build_runtime_for_write(
     *,
     structural: dict[str, Any],
     allow_legacy_inference: bool,
+    workspace: Path,
 ) -> dict[str, Any]:
     root = Path(args.wiki).expanduser().resolve()
     default = _read_explicit_profile(args, "default")
@@ -886,20 +922,19 @@ def _build_runtime_for_write(
         "routing": {"fork_to_main": bool(fork_to_main)},
         "settings": {"auto_commit": bool(auto_commit)},
     }
-    workspace = trusted_workspace_root(root)
     for name, profile in profiles.items():
         _validate_executable_origin(
             profile["executable"], workspace, f"ingest.profiles.{name}.executable"
         )
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config, root)
+    runtime_text = _render_runtime_config(config, root, workspace)
     _validate_generated_texts(structural_text, runtime_text)
     return config
 
 
 def init_local_config(args: argparse.Namespace) -> int:
     root, structural = classify_wiki_root(args.wiki)
-    _require_workspace_consent(args, root)
+    workspace = _require_workspace_consent(args, root)
     if any(key in structural for key in LEGACY_OPERATIONAL_KEYS):
         raise _legacy_config_error(root)
     local_path = runtime_config_path(root)
@@ -922,9 +957,12 @@ def init_local_config(args: argparse.Namespace) -> int:
         return 0
 
     config = _build_runtime_for_write(
-        args, structural=structural, allow_legacy_inference=False
+        args,
+        structural=structural,
+        allow_legacy_inference=False,
+        workspace=workspace,
     )
-    runtime_text = _render_runtime_config(config, root)
+    runtime_text = _render_runtime_config(config, root, workspace)
     _prepare_runtime_parent(local_path)
     replacements = [(local_path, runtime_text, 0o600)]
     if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") == "1":
@@ -941,7 +979,7 @@ def init_local_config(args: argparse.Namespace) -> int:
 
 def migrate_config(args: argparse.Namespace) -> int:
     root, structural = classify_wiki_root(args.wiki)
-    _require_workspace_consent(args, root)
+    workspace = _require_workspace_consent(args, root)
     local_path = runtime_config_path(root)
     legacy = any(key in structural for key in LEGACY_OPERATIONAL_KEYS)
     if not legacy:
@@ -952,10 +990,13 @@ def migrate_config(args: argparse.Namespace) -> int:
         raise _missing_local_error(root)
 
     config = _build_runtime_for_write(
-        args, structural=structural, allow_legacy_inference=True
+        args,
+        structural=structural,
+        allow_legacy_inference=True,
+        workspace=workspace,
     )
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config, root)
+    runtime_text = _render_runtime_config(config, root, workspace)
     if args.dry_run:
         print("--- proposed .wiki-config ---")
         print(structural_text, end="")
@@ -986,7 +1027,7 @@ def migrate_checkout_local_config(args: argparse.Namespace) -> int:
     root, structural = classify_wiki_root(args.wiki)
     if any(key in structural for key in LEGACY_OPERATIONAL_KEYS):
         raise _legacy_config_error(root)
-    _require_workspace_consent(args, root)
+    workspace = _require_workspace_consent(args, root)
     source = root / ".wiki-config.local"
     if not source.is_file() or source.is_symlink():
         raise ConfigError(f"wiki config migrate-local: inactive source missing: {source}")
@@ -1006,7 +1047,6 @@ def migrate_checkout_local_config(args: argparse.Namespace) -> int:
         raise ConfigError(f"cannot migrate runtime configuration: {source}: {exc}") from exc
     if "trust" in source_data:
         raise ConfigError("wiki config migrate-local: source must not define [trust]")
-    workspace = trusted_workspace_root(root)
     trust_text = "\n".join(
         [
             "[trust]",
@@ -1050,7 +1090,9 @@ def update_runtime_config(args: argparse.Namespace) -> int:
     if not changed:
         raise ConfigError("wiki config update-runtime: no update option supplied")
     structural_text = _render_structural_config(structural)
-    runtime_text = _render_runtime_config(config, root)
+    runtime_text = _render_runtime_config(
+        config, root, Path(config["trusted_workspace"])
+    )
     _validate_generated_texts(structural_text, runtime_text)
     _apply_transaction(
         root,
@@ -1112,6 +1154,12 @@ def _build_parser() -> argparse.ArgumentParser:
     get.add_argument("--wiki", required=True)
     get.add_argument("--key", required=True)
 
+    validate_pointer = subparsers.add_parser(
+        "validate-pointer", help="validate a pointer target against workspace trust"
+    )
+    validate_pointer.add_argument("--wiki", required=True)
+    validate_pointer.add_argument("--workspace", required=True)
+
     init_local = subparsers.add_parser(
         "init-local", help="create trusted per-user runtime config"
     )
@@ -1158,6 +1206,10 @@ def main(argv: list[str] | None = None) -> int:
             return migrate_checkout_local_config(args)
         if args.command == "update-runtime":
             return update_runtime_config(args)
+        if args.command == "validate-pointer":
+            config = validate_pointer_target(args.wiki, args.workspace)
+            print(f"project pointer target valid: {config['wiki_root']}")
+            return 0
         config = validate_runtime_config(args.wiki)
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)

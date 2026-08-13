@@ -125,11 +125,16 @@ test_drift_filenames_with_spaces_handled_correctly() {
 
   # Run hook (NOT inside an ingester).
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
-  sleep 1
+  # SessionStart dispatch is detached. Wait for the worker to claim the drift
+  # capture so the filename is stable while the test reads it.
+  for _ in $(seq 1 100); do
+    compgen -G "${WIKI}/.wiki-pending/*drift*.processing" >/dev/null && break
+    sleep 0.1
+  done
 
-  # Find the drift capture — should be exactly one .md file (or .processing).
+  # Find the claimed drift capture.
   local found_capture=""
-  for f in "${WIKI}/.wiki-pending"/*drift*; do
+  for f in "${WIKI}/.wiki-pending"/*drift*.processing; do
     [[ -f "${f}" ]] || continue
     found_capture="${f}"
     break
@@ -164,7 +169,10 @@ test_drift_capture_body_clears_200_byte_floor() {
   # v2.4: backdate so the 5-second mtime defer doesn't apply.
   touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/drift-body-test.md"
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
-  sleep 1
+  for _ in $(seq 1 100); do
+    compgen -G "${WIKI}/.wiki-pending/*drift*drift-body-test*" >/dev/null && break
+    sleep 0.1
+  done
 
   # Drain may have renamed to .md.processing; check both states.
   local cap=""
@@ -206,11 +214,19 @@ test_drift_idempotent_under_concurrent_session_starts() {
     (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null &
   done
   wait
-  sleep 1
+  for _ in $(seq 1 100); do
+    compgen -G "${WIKI}/.wiki-pending/*drift*concurrent-test*" >/dev/null && break
+    sleep 0.1
+  done
 
   # Count drift captures for this source.
   local count
   count="$(find "${WIKI}/.wiki-pending" -maxdepth 1 -name "*drift*concurrent-test*" -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+  if [[ "${count}" -eq 0 ]]; then
+    echo "FAIL: concurrent SessionStart did not create a drift capture"
+    teardown; exit 1
+  fi
 
   if [[ "${count}" -gt 1 ]]; then
     echo "FAIL: ${count} duplicate drift captures created under concurrent SessionStart"

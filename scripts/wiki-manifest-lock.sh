@@ -44,7 +44,7 @@ _lock_is_stale() {
   local f="$1"
   [[ -f "${f}" ]] || return 1
   local mtime now age
-  mtime="$(stat -f %m "${f}" 2>/dev/null || stat -c %Y "${f}" 2>/dev/null)"
+  mtime="$(wiki_file_mtime "${f}")"
   now="$(date +%s)"
   age=$((now - mtime))
   [[ "${age}" -gt "${STALE_SECONDS}" ]]

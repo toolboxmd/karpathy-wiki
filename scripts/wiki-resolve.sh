@@ -45,7 +45,10 @@ if [[ ! -e "${POINTER_FILE}" ]]; then
   exit 10
 fi
 # Follow symlinks for the pointer file itself
-pointer_content="$(cat "${POINTER_FILE}" 2>/dev/null | tr -d '[:space:]')"
+# Trim leading/trailing whitespace (incl. a trailing CR on Windows) only;
+# NEVER strip interior spaces — vault paths like ".../Obsidian Vault/..."
+# legitimately contain them.
+pointer_content="$(cat "${POINTER_FILE}" 2>/dev/null | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 case "${pointer_content}" in
   "")
     exit 10  # Empty pointer file
@@ -137,6 +140,12 @@ if [[ "${config_present}" == 1 ]]; then
           exit 14
         fi
       done
+      # A checkout may select only a wiki whose external runtime trust record
+      # is bound to this exact workspace. Without this gate, an untrusted
+      # checkout could redirect captures into another workspace's trusted wiki.
+      python3 "${SCRIPT_DIR}/wiki_config.py" validate-pointer \
+        --wiki "${wiki_root}" --workspace "${cwd_base}" >/dev/null 2>&1 \
+        || exit 14
       # A project pointer belongs to the project checkout, so its routing
       # choice intentionally remains in the tracked pointer file.
       if grep -q '^fork_to_main = true' "${config}"; then
@@ -150,7 +159,7 @@ if [[ "${config_present}" == 1 ]]; then
   esac
 
 elif [[ "${mode_present}" == 1 ]]; then
-  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | tr -d '[:space:]')
+  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
   case "${mode_value}" in
     main-only)
       [[ -n "${main_wiki}" ]] || exit 12
