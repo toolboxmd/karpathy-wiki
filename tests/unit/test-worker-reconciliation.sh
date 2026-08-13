@@ -10,11 +10,20 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
 cleanup() {
-  local lease pid
+  local lease pid attempt
   while IFS= read -r lease; do
     [[ -n "${lease}" ]] || continue
     pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("wrapper_pid", ""))' "${lease}" 2>/dev/null || true)"
-    if [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -ne "$$" ]]; then kill "${pid}" 2>/dev/null || true; fi
+    if [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -ne "$$" ]]; then
+      kill "${pid}" 2>/dev/null || true
+      # The worker handles SIGTERM asynchronously and may still requeue the
+      # capture. Wait for its lease cleanup or exit before removing the fixture.
+      for attempt in {1..100}; do
+        [[ ! -e "${lease}" ]] && break
+        kill -0 "${pid}" 2>/dev/null || break
+        sleep 0.05
+      done
+    fi
   done < <(find "${TESTDIR}" -type f -path '*/.locks/ingest-slots/*.lock' 2>/dev/null || true)
   rm -rf "${TESTDIR}"
 }
