@@ -81,6 +81,35 @@ if grep -q '^main = ' "${PROJ_BOTH}/.wiki-config"; then
   fail "wiki use both wrote a machine-specific main path into tracked config"
 fi
 
+# Case 5b: a fresh cwd with an existing configured ./wiki must synchronize its
+# trusted runtime before recording the matching project pointer.
+PROJ_BOTH_EXISTING="${TESTDIR}/proj3-existing"
+mkdir -p "${PROJ_BOTH_EXISTING}"
+bash "${INIT}" project "${PROJ_BOTH_EXISTING}/wiki" "${MAIN}" >/dev/null
+cat > "${PROJ_BOTH_EXISTING}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+fork_to_main = false
+EOF
+python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+  --wiki "${PROJ_BOTH_EXISTING}/wiki" \
+  --trust-workspace "${PROJ_BOTH_EXISTING}" \
+  --default-provider codex --default-model test-model \
+  --default-effort low --no-fork-to-main >/dev/null
+rm "${PROJ_BOTH_EXISTING}/.wiki-config"
+[[ "$(wiki_runtime_config_get "${PROJ_BOTH_EXISTING}/wiki" routing.fork_to_main)" == "false" ]] \
+  || fail "fresh existing wiki fixture did not start with runtime false"
+( cd "${PROJ_BOTH_EXISTING}" && bash "${USE}" both ) >/dev/null \
+  || fail "wiki use both failed for a fresh cwd with an existing configured wiki"
+[[ "$(wiki_runtime_config_get "${PROJ_BOTH_EXISTING}/wiki" routing.fork_to_main)" == "true" ]] \
+  || fail "wiki use both did not synchronize the fresh existing wiki runtime true"
+grep -q '^fork_to_main = true' "${PROJ_BOTH_EXISTING}/.wiki-config" \
+  || fail "wiki use both did not persist the matching fresh project pointer"
+existing_plan="$(cd "${PROJ_BOTH_EXISTING}" && bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)" \
+  || fail "resolver rejected fresh existing wiki after wiki use both"
+grep -q '"promotion_policy": "selective"' <<< "${existing_plan}" \
+  || fail "fresh existing wiki did not resolve selective after wiki use both"
+
 # Case 6: wiki use both (when pointer = none) — refused
 echo "none" > "${WIKI_POINTER_FILE}"
 PROJ_BOTH_NOMAIN="${TESTDIR}/proj4"

@@ -214,6 +214,44 @@ EOF
       # Fresh cwd
       if [[ ! -d "$(pwd)/wiki" ]]; then
         bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" "${main}" >/dev/null
+      else
+        # An existing target must already be trusted for this exact workspace.
+        # Synchronize its runtime before publishing the pointer so a successful
+        # `use both` cannot leave the resolver narrowed to project-only mode.
+        target="$(pwd)/wiki"
+        # validate-pointer recognizes the workspace through its pointer. Write
+        # the candidate only for validation, then remove it before changing the
+        # runtime so the final pointer remains the transaction's commit step.
+        if ! write_project_pointer_config "true"; then
+          rm -f "$(pwd)/.wiki-config"
+          echo >&2 "wiki use both: could not prepare project pointer validation"
+          exit 1
+        fi
+        if ! python3 "${CONFIG_TOOL}" validate-pointer \
+          --wiki "${target}" --workspace "$(pwd)" >/dev/null 2>&1; then
+          rm -f "$(pwd)/.wiki-config"
+          echo >&2 "wiki use both: existing ./wiki is not configured and trusted for this workspace"
+          exit 1
+        fi
+        rm -f "$(pwd)/.wiki-config"
+        previous_fork="$(python3 "${CONFIG_TOOL}" get \
+          --wiki "${target}" --key routing.fork_to_main 2>/dev/null)" || {
+          echo >&2 "wiki use both: could not read existing project wiki routing"
+          exit 1
+        }
+        if ! set_runtime_fork "${target}" true; then
+          echo >&2 "wiki use both: could not synchronize existing project wiki routing"
+          exit 1
+        fi
+        if ! write_project_pointer_config "true"; then
+          rm -f "$(pwd)/.wiki-config"
+          set_runtime_fork "${target}" "${previous_fork}" || true
+          echo >&2 "wiki use both: could not persist project pointer routing"
+          exit 1
+        fi
+        rm -f "$(pwd)/.wiki-mode"
+        echo "wiki use both: existing project wiki + fork_to_main = true"
+        exit 0
       fi
       write_project_pointer_config "true"
       rm -f "$(pwd)/.wiki-mode"
