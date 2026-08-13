@@ -158,12 +158,32 @@ test_missing_receipt_after_publish_recovers_existing_target() {
     || fail "missing-receipt retry did not restore the published receipt"
 }
 
+test_keep_local_rejects_published_target_after_receipt_loss() {
+  local capture body
+  capture="$(make_source keep-local-after-publish)"
+  body="${TESTDIR}/keep-local-after-publish-body.md"
+  make_body "${body}"
+
+  WIKI_PROMOTION_TEST_MODE=1 WIKI_PROMOTION_TEST_FAIL_AFTER_PUBLISH=1 \
+    run_promote "${capture}" publish --title "Published before local decision" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "post-publication injected failure unexpectedly succeeded"
+  rm -f "${PROJECT}/.locks/promotions/prom-"*.json
+
+  run_promote "${capture}" keep-local >/dev/null 2>&1 \
+    && fail "keep-local accepted an already-published deterministic target"
+  grep -q '^promotion_decision: null' "${capture}" \
+    || fail "failed keep-local changed the source decision"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -ge 1 ]] \
+    || fail "published target disappeared during keep-local check"
+}
+
 test_keep_local_and_project_policy_guard() {
   local selective local_only body before after
   selective="$(make_source local-case)"
   run_promote "${selective}" keep-local
   grep -q '^promotion_decision: "keep-local"' "${selective}" \
     || fail "keep-local decision was not persisted"
+  run_promote "${selective}" keep-local || fail "repeated keep-local decision was not idempotent"
   run_promote "${selective}" verify || fail "keep-local decision did not verify"
   body="${TESTDIR}/terminal-decision-body.md"
   make_body "${body}"
@@ -201,6 +221,7 @@ test_repeat_and_concurrent_retry_are_idempotent
 test_failure_after_intent_is_recoverable
 test_failure_after_publish_before_mark_is_recoverable
 test_missing_receipt_after_publish_recovers_existing_target
+test_keep_local_rejects_published_target_after_receipt_loss
 test_keep_local_and_project_policy_guard
 test_forged_promoted_decision_is_rejected
 echo "PASS: selective promotion"

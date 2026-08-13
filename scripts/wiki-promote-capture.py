@@ -143,6 +143,19 @@ def _main_wiki() -> Path:
     return main
 
 
+def _configured_main_wiki() -> Path | None:
+    pointer = Path(
+        os.environ.get("WIKI_POINTER_FILE", str(Path.home() / ".wiki-pointer"))
+    ).expanduser()
+    try:
+        value = pointer.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if not value or value == "none":
+        return None
+    return _main_wiki()
+
+
 def _existing_target(main: Path, name: str) -> Path | None:
     candidates = [
         main / ".wiki-pending" / name,
@@ -199,7 +212,7 @@ def _derived_capture(
 
 
 def keep_local() -> int:
-    root, capture, _plugin, _capture_id, promotion_id = _source_context()
+    root, capture, _plugin, capture_id, promotion_id = _source_context()
     state_dir = root / ".locks" / "promotions"
     state_dir.mkdir(parents=True, exist_ok=True)
     with (state_dir / f"{promotion_id}.lock").open("a+", encoding="utf-8") as lock:
@@ -209,6 +222,14 @@ def keep_local() -> int:
         decision = _scalar(capture.read_text(encoding="utf-8"), "promotion_decision")
         if decision == "promoted":
             raise PromotionError("capture is already promoted and cannot become keep-local")
+        if decision == "keep-local":
+            return 0
+        main = _configured_main_wiki()
+        if main is not None:
+            existing = _existing_target_by_promotion_id(main, promotion_id)
+            if existing is not None:
+                _validate_existing(existing, capture_id, promotion_id)
+                raise PromotionError("promotion target already exists and cannot become keep-local")
         _set_scalars(capture, {"promotion_decision": "keep-local", "promotion_id": None})
     return 0
 
