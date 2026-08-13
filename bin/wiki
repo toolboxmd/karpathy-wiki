@@ -215,7 +215,7 @@ case "${sub}" in
         # Cwd unconfigured.
         if [[ "${is_headless}" == 1 ]]; then
           # Read pointer to decide fallback message.
-          ptr=$(cat "${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}" 2>/dev/null | tr -d '[:space:]')
+          ptr=$(cat "${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}" 2>/dev/null | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
           if [[ -z "${ptr}" || "${ptr}" == "none" ]]; then
             reason="headless: cwd unconfigured AND pointer = none/missing"
           else

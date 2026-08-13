@@ -350,6 +350,40 @@ test_init_local_records_runtime_outside_checkout() {
   echo "PASS: test_init_local_records_runtime_outside_checkout"
 }
 
+test_external_pointer_can_establish_workspace_trust() {
+  local workspace="${TESTDIR}/external-pointer-workspace"
+  local wiki="${TESTDIR}/external-pointer-wiki"
+  local config_home="${TESTDIR}/external-pointer-config-home"
+  mkdir -p "${workspace}"
+  make_wiki "${wiki}" project
+  cat > "${workspace}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${wiki}"
+EOF
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" \
+    --trust-workspace "${workspace}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low >/dev/null \
+    || fail "external pointer workspace could not establish trust"
+
+  local runtime_path canonical_workspace
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" \
+    python3 "${CONFIG}" path --wiki "${wiki}")"
+  canonical_workspace="$(cd "${workspace}" && pwd -P)"
+  grep -Fq "workspace_root = \"${canonical_workspace}\"" "${runtime_path}" \
+    || fail "external pointer trust was not bound to the consenting workspace"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate-pointer \
+    --wiki "${wiki}" --workspace "${workspace}" >/dev/null \
+    || fail "external pointer target did not validate after explicit trust"
+  echo "PASS: test_external_pointer_can_establish_workspace_trust"
+}
+
 test_checkout_resolving_provider_executable_is_rejected() {
   local project="${TESTDIR}/provider-checkout"
   local wiki="${project}/wiki"
@@ -417,6 +451,7 @@ test_update_runtime_changes_only_adapter_owned_fields
 test_existing_local_config_repairs_ignore_entry
 test_checkout_runtime_config_is_not_trusted_implicitly
 test_init_local_records_runtime_outside_checkout
+test_external_pointer_can_establish_workspace_trust
 test_checkout_resolving_provider_executable_is_rejected
 test_semantically_invalid_init_rolls_back_external_config
 echo "ALL PASS"

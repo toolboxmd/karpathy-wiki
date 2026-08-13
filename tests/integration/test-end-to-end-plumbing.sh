@@ -125,16 +125,16 @@ test_drift_filenames_with_spaces_handled_correctly() {
 
   # Run hook (NOT inside an ingester).
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
-  # SessionStart dispatch is detached. Poll instead of assuming a loaded Cloud
-  # worker can start, scan, and publish within one second.
+  # SessionStart dispatch is detached. Wait for the worker to claim the drift
+  # capture so the filename is stable while the test reads it.
   for _ in $(seq 1 100); do
-    compgen -G "${WIKI}/.wiki-pending/*drift*" >/dev/null && break
+    compgen -G "${WIKI}/.wiki-pending/*drift*.processing" >/dev/null && break
     sleep 0.1
   done
 
-  # Find the drift capture — should be exactly one .md file (or .processing).
+  # Find the claimed drift capture.
   local found_capture=""
-  for f in "${WIKI}/.wiki-pending"/*drift*; do
+  for f in "${WIKI}/.wiki-pending"/*drift*.processing; do
     [[ -f "${f}" ]] || continue
     found_capture="${f}"
     break

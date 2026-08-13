@@ -24,6 +24,12 @@ export CLAUDE_HEADLESS=1
 # Isolate $HOME so .wiki-forks.jsonl writes land inside TESTDIR.
 export HOME="${TESTDIR}/home"
 mkdir -p "${HOME}"
+# Capture dispatch is part of this integration path, but provider execution is
+# not. Keep the detached worker local and deterministic instead of invoking a
+# real Codex process that can outlive this fixture's temporary HOME.
+export WIKI_DISPATCH_TEST_MODE=1
+export WIKI_DISPATCH_TEST_PROVIDER_MODE=success_no_complete
+export WIKI_DISPATCH_TEST_NO_REFILL=1
 
 BODY=$(printf 'Real chat-only body that easily exceeds the 1500-byte floor.\n%.0s' {1..40})
 

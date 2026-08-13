@@ -37,7 +37,10 @@ if [[ ! -e "${POINTER_FILE}" ]]; then
   exit 10
 fi
 # Follow symlinks for the pointer file itself
-pointer_content="$(cat "${POINTER_FILE}" 2>/dev/null | tr -d '[:space:]')"
+# Trim leading/trailing whitespace (incl. a trailing CR on Windows) only;
+# NEVER strip interior spaces — vault paths like ".../Obsidian Vault/..."
+# legitimately contain them.
+pointer_content="$(cat "${POINTER_FILE}" 2>/dev/null | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 case "${pointer_content}" in
   "")
     exit 10  # Empty pointer file
@@ -145,7 +148,7 @@ if [[ "${config_present}" == 1 ]]; then
   esac
 
 elif [[ "${mode_present}" == 1 ]]; then
-  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | tr -d '[:space:]')
+  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
   case "${mode_value}" in
     main-only)
       [[ -n "${main_wiki}" ]] || exit 12
