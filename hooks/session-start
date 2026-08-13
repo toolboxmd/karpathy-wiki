@@ -37,7 +37,8 @@ if [[ -f "${LOADER_PATH}" ]]; then
   }
 
   loader_escaped="$(escape_for_json "${loader_content}")"
-  context_prefix='<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Below is the full content of the using-karpathy-wiki loader skill — auto-loaded into every conversation. For all other karpathy-wiki skills (capture, read, ingest), use the Skill tool when their moment arrives:**\n\n'
+  wiki_cli_escaped="$(escape_for_json "${REPO_ROOT}/bin/wiki")"
+  context_prefix="<EXTREMELY_IMPORTANT>\nYou have karpathy-wiki rules.\n\n**Runtime CLI for this session:** execute \`${wiki_cli_escaped}\` whenever a wiki skill refers to \`bin/wiki\` or \`wiki\`. This path belongs to the installed plugin; do not rely on a global symlink or PATH entry.\n\n**Below is the full content of the using-karpathy-wiki loader skill, auto-loaded into every conversation. For all other karpathy-wiki skills (capture, read, ingest), use the Skill tool when their moment arrives:**\n\n"
   context_suffix='\n</EXTREMELY_IMPORTANT>'
   session_context="${context_prefix}${loader_escaped}${context_suffix}"
 
@@ -52,14 +53,15 @@ fi
 
 wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
 [[ -n "${wiki}" ]] || exit 0
-export WIKI_INGEST_LOG="${WIKI_INGEST_LOG:-${wiki}/.ingest.log}"
 
 config_json="$(python3 "${REPO_ROOT}/scripts/wiki_config.py" show --wiki "${wiki}" 2>&1)"
 config_exit=$?
 if [[ "${config_exit}" -ne 0 ]]; then
-  log_warn "session-start: dispatcher not started | ${config_json//$'\n'/ | }"
+  printf 'karpathy-wiki: dispatcher not started: %s\n' \
+    "${config_json//$'\n'/ | }" >&2
   exit 0
 fi
+export WIKI_INGEST_LOG="${WIKI_INGEST_LOG:-${wiki}/.ingest.log}"
 
 dispatch_mode="$(printf '%s' "${config_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ingest"]["dispatch_mode"])' 2>/dev/null || echo "")"
 case "${dispatch_mode}" in

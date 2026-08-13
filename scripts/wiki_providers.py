@@ -36,7 +36,9 @@ class ProviderInvocation:
     output_last_message_path: Path | None = None
 
 
-def resolve_executable(executable: str) -> str:
+def resolve_executable(
+    executable: str, *, forbidden_roots: tuple[Path, ...] = ()
+) -> str:
     """Resolve one executable scalar without ever parsing it as a command."""
 
     if not isinstance(executable, str) or not executable.strip():
@@ -51,11 +53,22 @@ def resolve_executable(executable: str) -> str:
         path = path.resolve()
         if not path.is_file() or not os.access(path, os.X_OK):
             raise ProviderError(f"provider executable is missing or not executable: {path}")
-        return str(path)
-    resolved = shutil.which(expanded)
-    if resolved is None:
-        raise ProviderError(f"provider executable not found on PATH: {expanded}")
-    return resolved
+        resolved_path = path
+    else:
+        resolved = shutil.which(expanded)
+        if resolved is None:
+            raise ProviderError(f"provider executable not found on PATH: {expanded}")
+        resolved_path = Path(resolved).resolve()
+    for raw_root in forbidden_roots:
+        root = Path(raw_root).expanduser().resolve()
+        try:
+            resolved_path.relative_to(root)
+        except ValueError:
+            continue
+        raise ProviderError(
+            f"provider executable resolves inside the trusted workspace: {resolved_path}"
+        )
+    return str(resolved_path)
 
 
 def _safe_run_id(run_id: str) -> str:

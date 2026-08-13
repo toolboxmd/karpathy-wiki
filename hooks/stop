@@ -18,6 +18,11 @@ source "${REPO_ROOT}/scripts/wiki-lib.sh"
 wiki="$(wiki_root_from_cwd 2>/dev/null || echo "")"
 [[ -n "${wiki}" ]] || exit 0
 
+# Never write into a checkout merely because it advertises a wiki. The same
+# external runtime record that enables ingest is the local trust decision.
+python3 "${REPO_ROOT}/scripts/wiki_config.py" validate --wiki "${wiki}" \
+  >/dev/null 2>&1 || exit 0
+
 log_info "stop: session ended, wiki=${wiki}"
 
 # Post-MVP: spawn cheap-model sweep of "${CLAUDE_TRANSCRIPT:-}" if set.

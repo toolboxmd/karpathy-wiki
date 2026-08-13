@@ -63,6 +63,22 @@ test_hook_emits_loader_context_in_normal_session() {
   teardown
 }
 
+test_hook_emits_installed_cli_path() {
+  setup
+  local output expected_cli
+  expected_cli="${REPO_ROOT}/bin/wiki"
+  output="$(cd "${WIKI}" && env -u WIKI_CAPTURE -u CLAUDE_AGENT_PARENT bash "${HOOK}")"
+
+  if echo "${output}" | grep -Fq "${expected_cli}" \
+     && echo "${output}" | grep -Fq 'do not rely on a global symlink or PATH entry'; then
+    echo "PASS: test_hook_emits_installed_cli_path"
+  else
+    echo "FAIL: loader context did not expose the plugin-owned wiki CLI: '${output:0:240}...'"
+    teardown; exit 1
+  fi
+  teardown
+}
+
 test_hook_emits_empty_context_in_subagent_or_ingester() {
   setup
   local output_capture output_subagent
@@ -146,6 +162,7 @@ test_scheduled_mode_is_loader_only() {
 }
 
 test_hook_emits_loader_context_in_normal_session
+test_hook_emits_installed_cli_path
 test_hook_emits_empty_context_in_subagent_or_ingester
 test_hook_dispatches_pending_capture
 test_hook_exits_fast

@@ -170,11 +170,9 @@ case "${sub}" in
             fork_requested=0
             case "${cwd_role}" in
               main|project)
-                if [[ -f "$(pwd)/.wiki-config.local" ]] \
-                   && [[ "$(wiki_runtime_config_get "$(pwd)" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+                if [[ "$(wiki_runtime_config_get "$(pwd)" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
                   fork_requested=1
-                elif [[ ! -f "$(pwd)/.wiki-config.local" ]] \
-                     && grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
+                elif grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
                   fork_requested=1
                 fi
                 ;;
@@ -377,12 +375,12 @@ case "${sub}" in
   config)
     config_action="${1:-}"
     [[ -n "${config_action}" ]] || {
-      echo >&2 "usage: wiki config init-local|migrate|validate|show|update-runtime <wiki-path> [options]"
+      echo >&2 "usage: wiki config init-local|migrate|migrate-local|validate|show|path|update-runtime <wiki-path> [options]"
       exit 1
     }
     shift
     case "${config_action}" in
-      init-local|migrate|validate|show|update-runtime)
+      init-local|migrate|migrate-local|validate|show|path|update-runtime)
         config_wiki="${1:-}"
         [[ -n "${config_wiki}" ]] || {
           echo >&2 "wiki config ${config_action}: <wiki-path> required"
@@ -392,7 +390,7 @@ case "${sub}" in
         python3 "${REPO_ROOT}/scripts/wiki_config.py" "${config_action}" --wiki "${config_wiki}" "$@"
         ;;
       *)
-        echo >&2 "wiki config: unknown action '${config_action}'; valid: init-local|migrate|validate|show|update-runtime"
+        echo >&2 "wiki config: unknown action '${config_action}'; valid: init-local|migrate|migrate-local|validate|show|path|update-runtime"
         exit 1
         ;;
     esac

@@ -40,7 +40,9 @@ EOF
 wait_for() {
   local expression="$1"
   local i
-  for i in $(seq 1 300); do
+  # Detached workers can take several seconds to start on a loaded Cloud host.
+  # Poll up to 20 seconds while still returning immediately on completion.
+  for i in $(seq 1 1000); do
     if eval "${expression}"; then return 0; fi
     sleep 0.02
   done

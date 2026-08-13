@@ -84,7 +84,8 @@ test_live_stale_lease_is_preserved_and_flagged() {
   make_stale "${wiki}/.wiki-pending/x.md.processing"
   write_lease "${wiki}" live-run $$ $$
 
-  python3 "${DISPATCH}" tick --wiki "${wiki}" --source manual
+  WIKI_DISPATCH_TEST_MODE=1 \
+    python3 "${DISPATCH}" tick --wiki "${wiki}" --source manual
   grep -q 'live-run' "${wiki}/.locks/ingest-slots/1.lock" || fail "live stale lease was replaced"
   [[ "$(find "${wiki}/.wiki-pending" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1 ]] \
     || fail "live stale capture was duplicated"

@@ -8,33 +8,136 @@ For day-to-day usage and the workflow walkthrough, see [MANUAL.md](MANUAL.md).
 
 ## What it does
 
-As you work with Claude Code, any durable knowledge — research findings, resolved confusions, validated patterns, gotchas, architectural decisions — gets written as a small capture file and processed by a detached background worker into a persistent wiki. The wiki is git-versioned. Your flow is never interrupted.
+As you work with Codex or Claude Code, durable knowledge such as research findings, resolved confusions, validated patterns, gotchas, and architectural decisions gets written as a small capture file and processed by a detached background worker into a persistent wiki. The wiki is git-versioned. Your flow is never interrupted.
 
-User commands:
+Agent-facing CLI commands are listed below. In normal plugin use, ask Codex in
+natural language and the SessionStart hook supplies the installed CLI path. From
+a source checkout, operators can invoke the same commands as `./bin/wiki ...`.
+No global `wiki` command is required.
 
 - `wiki status` — content and ingest-runtime health report: queue depth, active slots, profiles, cooldowns, heartbeat stalls, scheduler state, failed/deferred captures, quality, drift, issues, and fork-asymmetry.
 - `wiki capture` — write a chat-driven capture (the agent's canonical entry point; supports `--kind chat-only|chat-attached`, body via stdin or `--body-file`).
 - `wiki ingest-now` — drift-scan + drain `inbox/` on demand.
 - `wiki issues` — show recent ingester-reported issues, grouped and severity-ordered.
 - `wiki use project|main|both` — change per-cwd wiki mode.
-- `wiki config init-local|migrate|validate|show` — manage ignored, per-machine provider and dispatcher settings.
+- `wiki config init-local|migrate|migrate-local|validate|show` — manage trusted, per-machine provider and dispatcher settings outside the checkout.
 - `wiki scheduler install|uninstall|status` — manage the macOS cron-like LaunchAgent adapter.
 - `wiki tick` — run one short, bounded dispatcher pass (also usable from an external scheduler).
 - `wiki init-main` — bootstrap `~/.wiki-pointer` (interactive).
 - `wiki doctor` — deep lint + smartest-model re-rate of quality blocks. **Not yet implemented (stub returns "not implemented" exit 1).** Deferred to a future ship; tracked in `TODO.md`.
 
-The plugin handles both a main knowledge base (`~/wiki/`) and per-project wikis (`<project>/wiki/`) via the `wiki-resolve.sh` resolver. Each machine chooses one automatic activation mode: SessionStart, or a local scheduler. Drop a file into a wiki's `inbox/` and the next scan ingests it directly — no fabricated wrapper capture required.
+The plugin handles both a main knowledge base and per-project wikis via the
+`wiki-resolve.sh` resolver. The default main-wiki location is `~/wiki/`, but
+the actual path is selected by `wiki init-main` and stored in
+`~/.wiki-pointer`. A project wiki lives at `<project>/wiki/`. Each machine
+chooses one automatic activation mode: SessionStart, or a local scheduler.
+Drop a file into a wiki's `inbox/` and the next scan ingests it directly. No
+fabricated wrapper capture is required.
 
-## Install
+## Install in Codex
 
-Clone the repo and the user CLI symlink:
+The public repository is a Codex marketplace containing one plugin. Install it
+from Codex CLI:
+
+```bash
+codex plugin marketplace add toolboxmd/karpathy-wiki --ref main
+codex plugin add karpathy-wiki@toolboxmd
+```
+
+Then start a new Codex session. Review and trust the plugin's `SessionStart`
+and `Stop` hooks through `/hooks`. The installed SessionStart hook tells the
+agent the exact plugin-owned CLI path, so no global `wiki` symlink or separate
+skill copy is required.
+
+To update a GitHub installation:
+
+1. In the current Codex session, ask Codex to run
+   `wiki scheduler uninstall <wiki-path>` with the plugin-owned Runtime CLI
+   path for every wiki using scheduled activation. Do this while the old
+   snapshot still exists. Do not invoke a global `wiki` command.
+2. Run the plugin lifecycle commands in your shell:
+
+```bash
+codex plugin marketplace upgrade toolboxmd
+codex plugin remove karpathy-wiki@toolboxmd
+codex plugin add karpathy-wiki@toolboxmd
+```
+
+3. Start a new Codex session, review the new hook hash through `/hooks`, then
+   ask Codex to run `wiki scheduler install <wiki-path>` with the new
+   plugin-owned Runtime CLI path for every wiki that previously used scheduling.
+
+The uninstall and reinstall steps are required for scheduled wikis because the
+LaunchAgent stores the absolute path to the installed plugin snapshot. Removing
+the plugin first can leave the agent pointing at a deleted or obsolete snapshot.
+
+Start a new session after each install or update. If a hook definition changed,
+review and trust its new hash through `/hooks`.
+
+For development from a local checkout:
 
 ```bash
 git clone https://github.com/toolboxmd/karpathy-wiki ~/dev/karpathy-wiki
-ln -s ~/dev/karpathy-wiki/bin/wiki ~/.local/bin/wiki   # or anywhere on PATH
+cd ~/dev/karpathy-wiki
+codex plugin marketplace add "$PWD"
+codex plugin add karpathy-wiki@toolboxmd
 ```
 
-Then register the plugin with Claude Code by adding two entries to `~/.claude/settings.json` — the marketplace pointer and the enabled-plugins flag:
+Codex installs a snapshot from the marketplace. During local development,
+refresh it by first asking Codex in the current session to run
+`wiki scheduler uninstall <wiki-path>` for each scheduled wiki. Then remove and
+add the snapshot in your shell:
+
+```bash
+codex plugin remove karpathy-wiki@toolboxmd
+codex plugin add karpathy-wiki@toolboxmd
+```
+
+Open a new session and ask Codex to run
+`wiki scheduler install <wiki-path>` through the new plugin-owned Runtime CLI
+for each wiki that should return to scheduled mode.
+
+Do not install duplicate copies of these skills under `~/.agents/skills` or
+`~/.codex/skills`.
+
+### Where the plugin and wiki data live
+
+- Codex installs the plugin code into its managed plugin cache. The bundled
+  `bin/wiki` is the executable, not a wiki-data directory.
+- `~/.wiki-pointer` stores the selected main-wiki path. `~/wiki/` is the
+  default, not a required location.
+- `${XDG_CONFIG_HOME:-~/.config}/karpathy-wiki/wikis/<wiki-hash>/runtime.toml`
+  stores the local trust record and provider settings. It is never read from a
+  project checkout.
+- Project-specific data lives in `<project>/wiki/` after project mode is
+  configured.
+- Removing or updating the plugin does not remove `~/.wiki-pointer`, a main
+  wiki, or any project wiki.
+
+### Uninstall from Codex
+
+If a wiki uses scheduled activation, first ask Codex to run
+`wiki scheduler uninstall <wiki-path>` while the plugin is still installed.
+Then remove the plugin:
+
+```bash
+codex plugin remove karpathy-wiki@toolboxmd
+```
+
+Optionally remove the configured marketplace as well:
+
+```bash
+codex plugin marketplace remove toolboxmd
+```
+
+These commands remove the Codex plugin bundle and optional marketplace source.
+They intentionally preserve all wiki data and `~/.wiki-pointer`.
+
+## Claude Code compatibility
+
+Clone the repository, then register it with Claude Code by adding two entries
+to `~/.claude/settings.json`: the marketplace pointer and the enabled-plugin
+flag.
 
 ```json
 {
@@ -52,9 +155,14 @@ Then register the plugin with Claude Code by adding two entries to `~/.claude/se
 }
 ```
 
-Replace `/Users/<you>/dev/karpathy-wiki` with your actual repo path. Then run `/reload-plugins` in any Claude Code session. Hooks, commands, and the SKILL are auto-discovered from the plugin manifest — no manual hook wiring required.
+Replace `/Users/<you>/dev/karpathy-wiki` with the actual checkout path. Then
+run `/reload-plugins` in a Claude Code session. Hooks, commands, and skills are
+discovered from the plugin manifest. No global CLI symlink or manual hook wiring
+is required.
 
-> **Note on local install:** Claude Code's plugin system requires plugins to come from a registered marketplace, even for local-directory sources. The `extraKnownMarketplaces` entry above declares this repo IS a (single-plugin) marketplace; `.claude-plugin/marketplace.json` makes that real. A bare `~/.claude/plugins/karpathy-wiki` symlink is NOT enough — Claude Code won't load slash commands from it.
+Claude Code requires plugins to come from a registered marketplace, including
+local-directory sources. The `extraKnownMarketplaces` entry declares this repo
+as a single-plugin marketplace, backed by `.claude-plugin/marketplace.json`.
 
 ## How it works
 
@@ -79,12 +187,16 @@ Either way, one dispatcher atomically claims captures and enforces the configure
 
 ## Per-machine ingest configuration
 
-Tracked `.wiki-config` contains only wiki identity. Provider/model choices, concurrency, activation mode, routing, and auto-commit live in `.wiki-config.local`, which is ignored by Git and configured separately by every user or machine.
+Tracked `.wiki-config` contains only wiki identity. Provider/model choices,
+concurrency, activation mode, routing, auto-commit, and the explicit local trust
+record live outside the checkout under the user's config home. A checkout cannot
+enable its own provider execution by committing configuration files.
 
 Example (profile choices are illustrative, not defaults):
 
 ```bash
 wiki config init-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> \
   --default-provider grok --default-model grok-4.5 --default-effort medium \
   --fallback-provider claude --fallback-model sonnet --fallback-effort low \
   --max-processes 10 --dispatch-mode session_start
@@ -92,16 +204,36 @@ wiki config validate <wiki>
 wiki config show <wiki>
 ```
 
-Supported provider adapters in this release are `grok`, `claude`, and `codex`; model IDs are not hard-coded. `executable` is one executable name or absolute path, never an arbitrary shell command.
+Supported provider adapters in this release are `grok`, `claude`, and `codex`;
+model IDs are not hard-coded. `executable` is one executable name or absolute
+path, never an arbitrary shell command. An executable that resolves inside the
+trusted project checkout is rejected, including through a symlink or `PATH`.
 
 For an older tracked operational config, inspect the split before applying it:
 
 ```bash
-wiki config migrate <wiki> --dry-run
-wiki config migrate <wiki> [explicit provider/model/effort options if needed]
+wiki config migrate <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> --dry-run
+wiki config migrate <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> \
+  [explicit provider/model/effort options if needed]
 ```
 
 This only migrates configuration layout. It does not move or rewrite wiki content.
+
+If a previous plugin snapshot already created an ignored
+`<wiki>/.wiki-config.local`, import it into the external trust store explicitly:
+
+```bash
+wiki config migrate-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> --dry-run
+wiki config migrate-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root>
+```
+
+The importer refuses a Git-tracked source. After a successful import, the old
+checkout file remains as an inactive copy so the operator can inspect and remove
+it deliberately.
 
 ## Activation modes
 
@@ -114,7 +246,13 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**Unreleased development branch based on v0.2.8.** Claude Code remains the loader-hook host; detached ingest supports Claude Code, Codex, and Grok. Multi-platform loader JSON shapes are emitted defensively but remain less tested than Claude Code.
+**Unreleased development branch based on v0.2.8.** Codex is the qualified
+primary interactive development host. Claude Code remains supported with its
+existing automated hook coverage. Codex qualification includes recorded
+interactive-host acceptance evidence; it does not claim equivalent automated
+coverage for every Codex lifecycle path. Detached ingest supports Claude Code,
+Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain
+best-effort.
 
 **What works today (v2.4 + 0.2.7 read-protocol restoration + 0.2.8 hardening):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
@@ -137,16 +275,36 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 - `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
 - Stop-hook gate for turn-closure enforcement (`hooks/stop` is currently a stub).
 - `.ingest.log` → `.ingest.jsonl` migration (dual-artifact pattern, scheduled for v2.5).
-- Test coverage for non-Claude-Code platforms (Cursor / Copilot CLI / Codex / OpenCode / Gemini).
+- Test coverage for non-Claude-Code platforms other than the qualified Codex
+  plugin host (Cursor / Copilot CLI / OpenCode / Gemini).
 
 The shipped surface is enough for daily personal use; rough edges remain. PRs welcome once the repo opens for external contributions.
 
 ## Tests
 
 ```bash
+# Fast inner loop for the affected contract surface
+bash tests/run-all.sh skill
+bash tests/run-all.sh capture
+bash tests/run-all.sh dispatcher
+
+# Inspect a selection without executing it
+bash tests/run-all.sh --list provider
+
+# Deterministic final gate
 bash tests/run-all.sh
 bash tests/self-review.sh
 ```
+
+Focused groups are `skill`, `capture`, `scanner`, `dispatcher`, `provider`,
+`config`, `scheduler`, and `schema`. Tests that span multiple subsystems or
+cover low-frequency operator flows are assigned to `full-only` and still run
+from the default `full` gate. Use the smallest group that owns the changed
+contract during development, then run the full gate once at the integration
+boundary.
+
+Real provider and interactive-host acceptance evidence is retained under
+`tests/acceptance/` and is not part of the default deterministic loop.
 
 ## Credits
 

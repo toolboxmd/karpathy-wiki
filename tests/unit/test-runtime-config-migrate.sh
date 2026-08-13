@@ -69,7 +69,7 @@ test_dry_run_is_complete_and_non_mutating() {
   [[ ! -e "${wiki}/.wiki-config.local" ]] || fail "dry-run created local config"
   find "${wiki}" -maxdepth 1 -name '.wiki-config.backup-*' | grep -q . && fail "dry-run created backup"
   grep -Fq -- '--- proposed .wiki-config ---' <<< "${output}" || fail "dry-run omitted structural proposal"
-  grep -Fq -- '--- proposed .wiki-config.local ---' <<< "${output}" || fail "dry-run omitted local proposal"
+  grep -Fq -- '--- proposed trusted runtime config:' <<< "${output}" || fail "dry-run omitted trusted runtime proposal"
   grep -Fq 'default_profile = "grok_medium"' <<< "${output}" || fail "dry-run omitted selected default"
   grep -Fq 'fallback_profile = "claude_low"' <<< "${output}" || fail "dry-run omitted selected fallback"
   echo "PASS: test_dry_run_is_complete_and_non_mutating"
@@ -91,7 +91,7 @@ test_real_migration_splits_config_and_preserves_user_gitignore() {
   bash "${REPO_ROOT}/bin/wiki" config validate "${wiki}" >/dev/null || fail "public wiki config validate wrapper failed"
   grep -q '^fork_to_main = true' "${wiki}/.wiki-config.local" || fail "routing flag not preserved locally"
   grep -q '^auto_commit = false' "${wiki}/.wiki-config.local" || fail "auto_commit not preserved locally"
-  [[ "$(grep -c '^\.wiki-config\.local$' "${wiki}/.gitignore")" -eq 1 ]] || fail "local config ignore entry missing or duplicated"
+  [[ "$(grep -c '^\.wiki-config\.local$' "${wiki}/.gitignore")" -eq 0 ]] || fail "migration added an obsolete local-config ignore entry"
   grep -q '^custom-user-line$' "${wiki}/.gitignore" || fail "custom gitignore line lost"
   local backup_count
   backup_count="$(find "${wiki}" -maxdepth 1 -name '.wiki-config.backup-*' | wc -l | tr -d ' ')"
@@ -232,6 +232,106 @@ EOF
   echo "PASS: test_relative_executable_path_is_rejected"
 }
 
+test_migrate_local_requires_untracked_source_and_explicit_trust() {
+  local project="${TESTDIR}/migrate-local"
+  local wiki="${project}/wiki"
+  local config_home="${TESTDIR}/migrate-local-config"
+  mkdir -p "${project}"
+  git -C "${project}" init -q
+  mkdir -p "${wiki}/.wiki-pending"
+  printf '# Schema\n' > "${wiki}/schema.md"
+  printf '# Index\n' > "${wiki}/index.md"
+  printf 'role = "project"\n' > "${wiki}/.wiki-config"
+  local canonical_project
+  canonical_project="$(cd "${project}" && pwd -P)"
+  cat > "${wiki}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "codex_low"
+[ingest.profiles.codex_low]
+provider = "codex"
+model = "test-model"
+reasoning_effort = "low"
+EOF
+
+  local output
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" migrate-local \
+    --wiki "${wiki}" --trust-workspace "${wiki}" --dry-run 2>&1 || true)"
+  grep -Fq "must equal the canonical workspace: ${canonical_project}" <<< "${output}" \
+    || fail "migrate-local accepted the wrong trust root"
+
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" migrate-local \
+    --wiki "${wiki}" --trust-workspace "${project}" --dry-run)" \
+    || fail "migrate-local dry-run failed"
+  grep -Fq "trusted workspace: ${canonical_project}" <<< "${output}" \
+    || fail "migrate-local dry-run omitted the canonical workspace"
+
+  git -C "${project}" add -f wiki/.wiki-config.local
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" migrate-local \
+    --wiki "${wiki}" --trust-workspace "${project}" 2>&1 || true)"
+  grep -Fq 'refusing Git-tracked runtime config' <<< "${output}" \
+    || fail "migrate-local imported a Git-tracked provider config"
+  git -C "${project}" rm --cached -q wiki/.wiki-config.local
+
+  printf '#!/bin/sh\nexit 0\n' > "${project}/evil-provider"
+  chmod +x "${project}/evil-provider"
+  sed -i.bak "/provider = \"codex\"/a\\
+executable = \"${project}/evil-provider\"
+" "${wiki}/.wiki-config.local"
+  rm -f "${wiki}/.wiki-config.local.bak"
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" migrate-local \
+    --wiki "${wiki}" --trust-workspace "${project}" 2>&1 || true)"
+  grep -Fq 'resolves inside the project checkout' <<< "${output}" \
+    || fail "migrate-local accepted a checkout executable: ${output}"
+  local target
+  target="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" path --wiki "${wiki}")"
+  [[ ! -e "${target}" ]] \
+    || fail "failed migrate-local left an invalid trusted runtime file"
+  sed -i.bak '/evil-provider/d' "${wiki}/.wiki-config.local"
+  rm -f "${wiki}/.wiki-config.local.bak"
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" migrate-local \
+    --wiki "${wiki}" --trust-workspace "${project}" >/dev/null \
+    || fail "migrate-local did not import an ignored local config"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate \
+    --wiki "${wiki}" >/dev/null || fail "migrated external config is invalid"
+  [[ -f "${wiki}/.wiki-config.local" ]] \
+    || fail "migrate-local removed the inactive legacy copy"
+  echo "PASS: test_migrate_local_requires_untracked_source_and_explicit_trust"
+}
+
+test_semantically_invalid_legacy_migration_restores_structural_config() {
+  local wiki="${TESTDIR}/invalid-legacy-migration"
+  make_legacy_wiki "${wiki}"
+  local before_config
+  before_config="$(shasum -a 256 "${wiki}/.wiki-config")"
+
+  local args=()
+  while IFS= read -r arg; do args+=("${arg}"); done < <(migration_args)
+  local output rc
+  set +e
+  output="$(python3 "${CONFIG}" migrate --wiki "${wiki}" "${args[@]}" \
+    --heartbeat-seconds 30 --stale-after-seconds 60 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "semantically invalid legacy migration succeeded"
+  grep -Fq 'ingest.stale_after_seconds' <<< "${output}" \
+    || fail "invalid migration did not report the semantic key"
+  [[ "$(shasum -a 256 "${wiki}/.wiki-config")" == "${before_config}" ]] \
+    || fail "invalid migration did not restore structural config"
+  [[ ! -e "${wiki}/.wiki-config.local" ]] \
+    || fail "invalid migration left runtime config"
+  echo "PASS: test_semantically_invalid_legacy_migration_restores_structural_config"
+}
+
 test_dry_run_is_complete_and_non_mutating
 test_real_migration_splits_config_and_preserves_user_gitignore
 test_completed_migration_is_idempotent
@@ -240,4 +340,6 @@ test_pointer_and_unknown_legacy_command_are_rejected
 test_atomic_failure_restores_every_file
 test_same_provider_and_effort_can_use_distinct_models
 test_relative_executable_path_is_rejected
+test_migrate_local_requires_untracked_source_and_explicit_trust
+test_semantically_invalid_legacy_migration_restores_structural_config
 echo "ALL PASS"

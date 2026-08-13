@@ -44,6 +44,18 @@ slugify() {
     | sed 's/^-//;s/-$//'
 }
 
+wiki_file_mtime() {
+  # GNU and BSD stat accept overlapping flags with different meanings. Select
+  # the platform syntax before invoking stat so a failed probe cannot leak
+  # filesystem-description text into arithmetic command substitutions.
+  local path="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f %m "${path}"
+  else
+    stat -c %Y "${path}"
+  fi
+}
+
 _wiki_deref_pointer() {
   # If <dir>/.wiki-config has role "project-pointer", print the pointed wiki
   # path (the config's `wiki = "..."` value, resolved against <dir>);
@@ -138,7 +150,9 @@ wiki_runtime_config_get() {
   # wiki_runtime_config_get <wiki_root> <key.subkey>
   local root="$1"
   local key="$2"
-  _wiki_config_read_file "${root}/.wiki-config.local" "${key}"
+  local script
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki_config.py"
+  python3 "${script}" get --wiki "${root}" --key "${key}"
 }
 
 wiki_config_get() {

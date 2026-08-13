@@ -39,9 +39,15 @@ def build_launch_agent(
     label: str,
     interval: int,
     path_value: str,
+    runtime_config_home: Path | None = None,
 ) -> dict[str, Any]:
     root = Path(wiki).expanduser().resolve()
     executable = Path(wiki_executable).expanduser().resolve()
+    environment = {"PATH": path_value}
+    if runtime_config_home is not None:
+        environment["WIKI_CONFIG_HOME"] = str(
+            Path(runtime_config_home).expanduser().resolve()
+        )
     return {
         "Label": label,
         "ProgramArguments": [
@@ -56,7 +62,7 @@ def build_launch_agent(
         "StartInterval": interval,
         "RunAtLoad": True,
         "ProcessType": "Background",
-        "EnvironmentVariables": {"PATH": path_value},
+        "EnvironmentVariables": environment,
         "StandardOutPath": str(root / ".ingest.log"),
         "StandardErrorPath": str(root / ".ingest.log"),
     }
@@ -180,12 +186,17 @@ def install(wiki: str | Path) -> dict[str, Any]:
     launchctl = _launchctl()
     label, plist_path = scheduler_identity(root, _home())
     interval = config["ingest"]["schedule_interval_seconds"]
+    runtime_path = Path(config["runtime_config_path"])
+    runtime_home = None
+    if os.environ.get("WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME") != "1":
+        runtime_home = runtime_path.parents[2]
     payload = build_launch_agent(
         root,
         _plugin_root() / "bin" / "wiki",
         label,
         interval,
         os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        runtime_home,
     )
     candidate = _plist_bytes(payload)
     try:

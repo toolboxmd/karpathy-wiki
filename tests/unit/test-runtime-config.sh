@@ -5,6 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
@@ -114,7 +115,7 @@ EOF
   set -e
   [[ "${rc}" -ne 0 ]] || fail "legacy config should fail"
   grep -Fq "legacy ingest configuration detected in ${canonical_wiki}/.wiki-config" <<< "${output}" || fail "legacy config not identified"
-  grep -Fq "Run: wiki config migrate ${canonical_wiki} --dry-run" <<< "${output}" || fail "migration command not reported"
+  grep -Fq "Run: wiki config migrate ${canonical_wiki} --trust-workspace" <<< "${output}" || fail "migration command not reported"
   echo "PASS: test_legacy_structural_config_requires_migration"
 }
 
@@ -281,6 +282,163 @@ test_existing_local_config_repairs_ignore_entry() {
   echo "PASS: test_existing_local_config_repairs_ignore_entry"
 }
 
+test_checkout_runtime_config_is_not_trusted_implicitly() {
+  local wiki="${TESTDIR}/untrusted-checkout"
+  make_wiki "${wiki}" project
+  write_valid_local "${wiki}"
+
+  local output rc
+  set +e
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${TESTDIR}/untrusted-config-home" \
+    python3 "${CONFIG}" validate --wiki "${wiki}" 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "checkout runtime config was trusted implicitly"
+  grep -Fq 'trusted runtime configuration missing' <<< "${output}" \
+    || fail "missing external trust error is not actionable: ${output}"
+  grep -Fq 'wiki config init-local' <<< "${output}" \
+    || fail "missing external trust error omitted the consent command"
+  echo "PASS: test_checkout_runtime_config_is_not_trusted_implicitly"
+}
+
+test_init_local_records_runtime_outside_checkout() {
+  local wiki="${TESTDIR}/external-runtime"
+  local config_home="${TESTDIR}/external-config-home"
+  make_wiki "${wiki}" project
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" \
+    --trust-workspace "${wiki}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low >/dev/null \
+    || fail "external init-local failed"
+
+  local runtime_path
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" \
+    python3 "${CONFIG}" path --wiki "${wiki}")" \
+    || fail "runtime path command failed"
+  [[ "${runtime_path}" == "${config_home}/karpathy-wiki/wikis/"*'/runtime.toml' ]] \
+    || fail "runtime config is not under the user config home: ${runtime_path}"
+  [[ -f "${runtime_path}" ]] || fail "external runtime config was not created"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    runtime_mode="$(stat -f '%Lp' "${runtime_path}")"
+  else
+    runtime_mode="$(stat -c '%a' "${runtime_path}")"
+  fi
+  [[ "${runtime_mode}" == "600" ]] \
+    || fail "external runtime config is not mode 0600"
+  [[ ! -e "${wiki}/.wiki-config.local" ]] \
+    || fail "init-local wrote executable runtime configuration into the checkout"
+  grep -Fq "wiki_root = \"$(cd "${wiki}" && pwd -P)\"" "${runtime_path}" \
+    || fail "external runtime config is not bound to its trusted wiki root"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate \
+    --wiki "${wiki}" >/dev/null || fail "external runtime config did not validate"
+
+  chmod 0644 "${runtime_path}"
+  local output
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate \
+    --wiki "${wiki}" 2>&1 || true)"
+  grep -Fq 'must have mode 0600' <<< "${output}" \
+    || fail "world-readable runtime config was accepted"
+  chmod 0600 "${runtime_path}"
+  echo "PASS: test_init_local_records_runtime_outside_checkout"
+}
+
+test_external_pointer_can_establish_workspace_trust() {
+  local workspace="${TESTDIR}/external-pointer-workspace"
+  local wiki="${TESTDIR}/external-pointer-wiki"
+  local config_home="${TESTDIR}/external-pointer-config-home"
+  mkdir -p "${workspace}"
+  make_wiki "${wiki}" project
+  cat > "${workspace}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${wiki}"
+EOF
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" \
+    --trust-workspace "${workspace}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low >/dev/null \
+    || fail "external pointer workspace could not establish trust"
+
+  local runtime_path canonical_workspace
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" \
+    python3 "${CONFIG}" path --wiki "${wiki}")"
+  canonical_workspace="$(cd "${workspace}" && pwd -P)"
+  grep -Fq "workspace_root = \"${canonical_workspace}\"" "${runtime_path}" \
+    || fail "external pointer trust was not bound to the consenting workspace"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" validate-pointer \
+    --wiki "${wiki}" --workspace "${workspace}" >/dev/null \
+    || fail "external pointer target did not validate after explicit trust"
+  echo "PASS: test_external_pointer_can_establish_workspace_trust"
+}
+
+test_checkout_resolving_provider_executable_is_rejected() {
+  local project="${TESTDIR}/provider-checkout"
+  local wiki="${project}/wiki"
+  local config_home="${TESTDIR}/provider-config-home"
+  make_wiki "${wiki}" project
+  cat > "${project}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+EOF
+  mkdir -p "${project}/bin"
+  printf '#!/bin/bash\nexit 0\n' > "${project}/bin/evil-provider"
+  chmod +x "${project}/bin/evil-provider"
+
+  local output rc
+  set +e
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" \
+    --trust-workspace "${project}" \
+    --default-provider codex \
+    --default-executable "${project}/bin/evil-provider" \
+    --default-model test-model \
+    --default-effort low 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "checkout executable was accepted"
+  grep -Fq 'resolves inside the project checkout' <<< "${output}" \
+    || fail "checkout executable rejection is not actionable: ${output}"
+  echo "PASS: test_checkout_resolving_provider_executable_is_rejected"
+}
+
+test_semantically_invalid_init_rolls_back_external_config() {
+  local wiki="${TESTDIR}/invalid-external-init"
+  local config_home="${TESTDIR}/invalid-external-config-home"
+  make_wiki "${wiki}" main
+
+  local output rc runtime_path
+  set +e
+  output="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" init-local \
+    --wiki "${wiki}" --trust-workspace "${wiki}" \
+    --default-provider codex --default-model test-model --default-effort low \
+    --heartbeat-seconds 30 --stale-after-seconds 60 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "semantically invalid init-local succeeded"
+  grep -Fq 'ingest.stale_after_seconds' <<< "${output}" \
+    || fail "invalid init-local did not report the semantic key"
+  runtime_path="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${config_home}" python3 "${CONFIG}" path --wiki "${wiki}")"
+  [[ ! -e "${runtime_path}" ]] \
+    || fail "semantically invalid init-local left a trusted runtime file"
+  echo "PASS: test_semantically_invalid_init_rolls_back_external_config"
+}
+
 test_valid_config_returns_normalized_json
 test_missing_local_is_actionable
 test_legacy_structural_config_requires_migration
@@ -291,4 +449,9 @@ test_project_pointer_is_not_a_wiki_runtime_root
 test_shell_readers_do_not_cross_config_scopes
 test_update_runtime_changes_only_adapter_owned_fields
 test_existing_local_config_repairs_ignore_entry
+test_checkout_runtime_config_is_not_trusted_implicitly
+test_init_local_records_runtime_outside_checkout
+test_external_pointer_can_establish_workspace_trust
+test_checkout_resolving_provider_executable_is_rejected
+test_semantically_invalid_init_rolls_back_external_config
 echo "ALL PASS"

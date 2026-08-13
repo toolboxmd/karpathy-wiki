@@ -8,7 +8,7 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 
 - Ingest is bounded by `max_processes`; no SessionStart fan-out can exceed the per-wiki or per-profile ceiling.
 - Claude Code, Codex, and Grok are supported as detached ingest providers. Every profile names an exact model and reasoning effort.
-- `.wiki-config` is tracked structural identity. `.wiki-config.local` is ignored, per user/machine, and owns providers, models, limits, activation, routing, and auto-commit.
+- `.wiki-config` is tracked structural identity. The local trust record plus providers, models, limits, activation, routing, and auto-commit live outside the checkout under `${XDG_CONFIG_HOME:-~/.config}/karpathy-wiki/`.
 - Automatic activation is mutually exclusive: `session_start` or `scheduled` (the macOS LaunchAgent adapter).
 - Live work has a heartbeat. Technical failures retry deterministically, rate limits wait without consuming attempts, and exhausted captures move to `.wiki-pending/failed/`.
 - CodexBar is optional advisory preflight. Without it, ingestion remains fully functional in reactive mode.
@@ -52,10 +52,11 @@ Wiki identity/routing and ingest execution are configured separately.
 
 2. **A main wiki at the path the pointer references.** Structurally requires `.wiki-config` (with `role = "main"`), `schema.md`, `index.md`, and `.wiki-pending/` directory. Created by `wiki-init.sh main <path>`. Default path is `~/wiki/`.
 
-3. **Ignored runtime configuration for every wiki this machine ingests.** Create it explicitly; the plugin does not guess a provider or model:
+3. **Trusted external runtime configuration for every wiki this machine ingests.** Create it explicitly; the plugin does not guess a provider or model:
 
 ```bash
 wiki config init-local <wiki> \
+  --trust-workspace <canonical-project-or-wiki-root> \
   --default-provider grok --default-model grok-4.5 --default-effort medium \
   --fallback-provider claude --fallback-model sonnet --fallback-effort low \
   --max-processes 10 --dispatch-mode session_start
@@ -71,8 +72,9 @@ wiki config show <wiki>
 For an older config that still contains an operational command, first preview and then explicitly apply the split:
 
 ```bash
-wiki config migrate <wiki> --dry-run
-wiki config migrate <wiki> [provider/model/effort options if inference is impossible]
+wiki config migrate <wiki> --trust-workspace <canonical-project-or-wiki-root> --dry-run
+wiki config migrate <wiki> --trust-workspace <canonical-project-or-wiki-root> \
+  [provider/model/effort options if inference is impossible]
 ```
 
 Configuration migration does not migrate, move, or rewrite wiki content.
@@ -91,7 +93,7 @@ Without `wiki use`, interactive capture prompts for a mode. Headless capture pre
 
 ## What "automatic" means
 
-With a valid `.wiki-config.local`, the selected activation mode is automatic:
+With a valid external trust and runtime record, the selected activation mode is automatic:
 
 - SessionStart hook injects the loader skill (`using-karpathy-wiki/SKILL.md`) as `additionalContext`. The agent has Iron Rules 1-4, the trigger taxonomy, and the resist-table loaded in every conversation.
 - In `session_start` mode, the hook starts exactly one short scan/tick. In `scheduled` mode, it is loader-only and never touches the queue.
@@ -176,7 +178,7 @@ The selected provider/model ingester reads the file directly (no wrapper capture
 
 ### Scenario 5 — `wiki use project` in a new directory
 
-Writes `<cwd>/.wiki-config` as a project pointer and initializes `./wiki/` with `role = "project"` if missing. From this point, captures from `<cwd>` (or any subdir) write to `./wiki/.wiki-pending/` instead of the main wiki. Run `wiki config init-local ./wiki ...` once on each machine that should ingest this project wiki.
+Writes `<cwd>/.wiki-config` as a project pointer and initializes `./wiki/` with `role = "project"` if missing. From this point, captures from `<cwd>` (or any subdir) write to `./wiki/.wiki-pending/` instead of the main wiki. Run `wiki config init-local ./wiki --trust-workspace "$(pwd)" ...` once on each machine that should ingest this project wiki.
 
 ## CLI surface
 

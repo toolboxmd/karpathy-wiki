@@ -1,0 +1,20 @@
+{
+  "name": "toolboxmd",
+  "interface": {
+    "displayName": "toolbox.md"
+  },
+  "plugins": [
+    {
+      "name": "karpathy-wiki",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

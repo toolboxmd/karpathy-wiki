@@ -38,3 +38,20 @@ migrated, or mutated.
 Raw hook events, provider runtime events, stderr, and local paths are retained
 only under the Git-ignored `raw/2026-08-11T15-34-39Z-clean-sessions/`
 directory.
+
+## External-trust rerun on 2026-08-12
+
+The acceptance was rerun after moving runtime configuration outside the
+checkout. The disposable wiki used an explicitly bound external trust record.
+Both clean sessions emitted:
+
+```text
+Using the karpathy-wiki skill to answer from wiki.
+```
+
+The SessionStart run completed one bounded tick, scheduled mode remained
+loader-only, and the temporary real LaunchAgent completed one scheduled tick
+before a verified uninstall. The LaunchAgent received the exact external
+runtime config home rather than depending on the caller's shell environment.
+Raw evidence is retained only under the Git-ignored
+`raw/2026-08-12T18-48-04Z-clean-sessions/` directory.

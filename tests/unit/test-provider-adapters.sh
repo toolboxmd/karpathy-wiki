@@ -136,4 +136,36 @@ else:
     raise AssertionError("relative executable path accepted")
 PY
 
+python3 - "${TESTDIR}" <<'PY' || fail "workspace executable containment failed"
+import os
+import pathlib
+import sys
+from wiki_providers import ProviderError, resolve_executable
+
+workspace = pathlib.Path(sys.argv[1]) / "checkout"
+workspace.mkdir()
+executable = workspace / "provider"
+executable.write_text("#!/bin/sh\nexit 0\n")
+executable.chmod(0o755)
+link = pathlib.Path(sys.argv[1]) / "provider-link"
+link.symlink_to(executable)
+
+for candidate in (str(executable), str(link)):
+    try:
+        resolve_executable(candidate, forbidden_roots=(workspace,))
+    except ProviderError as exc:
+        assert "trusted workspace" in str(exc)
+    else:
+        raise AssertionError(f"workspace executable accepted: {candidate}")
+
+old_path = os.environ.get("PATH", "")
+os.environ["PATH"] = f"{workspace}:{old_path}"
+try:
+    resolve_executable("provider", forbidden_roots=(workspace,))
+except ProviderError as exc:
+    assert "trusted workspace" in str(exc)
+else:
+    raise AssertionError("PATH-resolved workspace executable accepted")
+PY
+
 echo "PASS: provider adapters preserve argv boundaries, model, effort, and paths"
