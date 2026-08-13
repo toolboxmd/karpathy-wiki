@@ -89,10 +89,11 @@ pointer_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
     --wiki "${POINTER_INIT_WIKI}" --key routing.fork_to_main)"
 [[ "${pointer_runtime}" == "true" ]] \
   || fail "init-local did not inherit fork=true from the exact project pointer"
+printf '%s\n' "${WIKI}" > "${TESTDIR}/pointer-init-main-pointer"
 pointer_plan="$(cd "${POINTER_INIT_ROOT}" && \
   env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
     XDG_CONFIG_HOME="${POINTER_INIT_CONFIG_HOME}" \
-    WIKI_POINTER_FILE="${WIKI_POINTER_FILE:-${TESTDIR}/missing-pointer}" \
+    WIKI_POINTER_FILE="${TESTDIR}/pointer-init-main-pointer" \
     bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)"
 grep -q '"promotion_policy": "selective"' <<< "${pointer_plan}" \
   || fail "pointer/init-local resolver plan was not selective: ${pointer_plan}"
@@ -112,11 +113,17 @@ grep -q '^promotion_policy: "selective"' "${pointer_capture}" \
 EXTERNAL_PROJECT="${TESTDIR}/external-project"
 EXTERNAL_CONFIG_HOME="${TESTDIR}/external-config-home"
 bash "${INIT}" project "${EXTERNAL_PROJECT}" "${WIKI}" >/dev/null
+cat > "${TESTDIR}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "./external-project"
+created = "2026-08-12"
+fork_to_main = true
+EOF
 env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
   XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
   python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
     --wiki "${EXTERNAL_PROJECT}" \
-    --trust-workspace "${EXTERNAL_PROJECT}" \
+    --trust-workspace "${TESTDIR}" \
     --default-provider codex \
     --default-model test-model \
     --default-effort low \
@@ -135,12 +142,6 @@ grep -q '^promotion_policy: "selective"' "${external_capture}" \
 
 # An existing external runtime config is authoritative when it explicitly
 # disables promotion, even if an older parent pointer still says `both`.
-cat > "${TESTDIR}/.wiki-config" <<EOF
-role = "project-pointer"
-wiki = "./external-project"
-created = "2026-08-12"
-fork_to_main = true
-EOF
 external_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
   python3 "${REPO_ROOT}/scripts/wiki_config.py" path --wiki "${EXTERNAL_PROJECT}")"
 sed -i.bak 's/^fork_to_main = true/fork_to_main = false/' "${external_runtime}"

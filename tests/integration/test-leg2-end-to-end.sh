@@ -34,7 +34,8 @@ export WIKI_DISPATCH_TEST_NO_REFILL=1
 BODY=$(printf 'Real chat-only body that easily exceeds the 1500-byte floor.\n%.0s' {1..40})
 
 write_test_runtime() {
-  cat > "$1/.wiki-config.local" <<'EOF'
+  local fork="${2:-false}"
+  cat > "$1/.wiki-config.local" <<EOF
 [ingest]
 dispatch_mode = "scheduled"
 max_processes = 1
@@ -44,6 +45,9 @@ default_profile = "codex_medium"
 provider = "codex"
 model = "gpt-test"
 reasoning_effort = "medium"
+
+[routing]
+fork_to_main = ${fork}
 EOF
 }
 
@@ -65,7 +69,7 @@ fi
 BOTH="${TESTDIR}/both"
 mkdir -p "${BOTH}"
 ( cd "${BOTH}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" both ) >/dev/null
-write_test_runtime "${BOTH}/wiki"
+write_test_runtime "${BOTH}/wiki" true
 ( cd "${BOTH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "BothTest" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "both mode capture failed"
 sleep 0.3

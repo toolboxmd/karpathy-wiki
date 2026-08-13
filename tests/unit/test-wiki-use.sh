@@ -155,7 +155,9 @@ EOF
 
 # If target-runtime synchronization fails after the pointer mutation, the
 # pointer choice must roll back rather than leaving a new mismatch.
-printf '\ninvalid = true\n' >> "${POINTER_RUNTIME}/wiki/.wiki-config.local"
+sed -i.bak 's/^fork_to_main = false/fork_to_main = "invalid"/' \
+  "${POINTER_RUNTIME}/wiki/.wiki-config.local"
+rm -f "${POINTER_RUNTIME}/wiki/.wiki-config.local.bak"
 ( cd "${POINTER_RUNTIME}" && bash "${USE}" both ) 2>/dev/null \
   && fail "wiki use both succeeded with an invalid target runtime"
 grep -q '^fork_to_main = false' "${POINTER_RUNTIME}/.wiki-config" \
