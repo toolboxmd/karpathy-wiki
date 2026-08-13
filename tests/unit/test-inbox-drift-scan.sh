@@ -62,6 +62,33 @@ project_capture="$(find "${PROJECT_WIKI}/.wiki-pending" -maxdepth 1 -type f -nam
 grep -q '^promotion_policy: "selective"' "${project_capture}" \
   || fail "both-mode project scanner capture lacks selective policy"
 
+# A project wiki with trusted runtime configuration outside the checkout must
+# receive the same selective policy. No obsolete .wiki-config.local file is
+# present in the wiki root.
+EXTERNAL_PROJECT="${TESTDIR}/external-project"
+EXTERNAL_CONFIG_HOME="${TESTDIR}/external-config-home"
+bash "${INIT}" project "${EXTERNAL_PROJECT}" "${WIKI}" >/dev/null
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+    --wiki "${EXTERNAL_PROJECT}" \
+    --trust-workspace "${EXTERNAL_PROJECT}" \
+    --default-provider codex \
+    --default-model test-model \
+    --default-effort low \
+    --fork-to-main >/dev/null
+[[ ! -e "${EXTERNAL_PROJECT}/.wiki-config.local" ]] \
+  || fail "external runtime setup wrote checkout-local config"
+printf 'external project source\n' > "${EXTERNAL_PROJECT}/inbox/external.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${EXTERNAL_PROJECT}/inbox/external.md"
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${EXTERNAL_CONFIG_HOME}" \
+  bash "${SCAN}" "${EXTERNAL_PROJECT}" >/dev/null
+external_capture="$(find "${EXTERNAL_PROJECT}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"' "${external_capture}" \
+  || fail "external runtime both-mode capture lacks selective policy"
+
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.
 WIKI_FAIL="${TESTDIR}/publication-failure"

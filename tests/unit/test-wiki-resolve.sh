@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RESOLVE="${REPO_ROOT}/scripts/wiki-resolve.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 

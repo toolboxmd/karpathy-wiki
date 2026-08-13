@@ -22,6 +22,7 @@ echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 export WIKI_ORPHANS_DIR="${TESTDIR}/.wiki-orphans"
 export CLAUDE_HEADLESS=1
 export HOME="${TESTDIR}/home"
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 mkdir -p "${HOME}"
 # Capture dispatch is part of this integration path, but provider execution is
 # not. Keep the detached worker local and deterministic instead of invoking a

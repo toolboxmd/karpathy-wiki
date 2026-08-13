@@ -171,8 +171,7 @@ wiki_promotion_policy() {
   [[ -f "${root}/.wiki-config" ]] || { echo none; return; }
   grep -q '^role = "project"' "${root}/.wiki-config" || { echo none; return; }
 
-  if [[ -f "${root}/.wiki-config.local" ]] \
-    && [[ "$(wiki_runtime_config_get "${root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
+  if [[ "$(wiki_runtime_config_get "${root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
     echo selective
     return
   fi
