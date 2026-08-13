@@ -170,13 +170,13 @@ test_drift_capture_body_clears_200_byte_floor() {
   touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/drift-body-test.md"
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
   for _ in $(seq 1 100); do
-    compgen -G "${WIKI}/.wiki-pending/*drift*drift-body-test*" >/dev/null && break
+    compgen -G "${WIKI}/.wiki-pending/*drift*drift-body-test*.processing" >/dev/null && break
     sleep 0.1
   done
 
-  # Drain may have renamed to .md.processing; check both states.
+  # Read only after the worker claim makes the capture name stable.
   local cap=""
-  for f in "${WIKI}/.wiki-pending"/*drift*drift-body-test*; do
+  for f in "${WIKI}/.wiki-pending"/*drift*drift-body-test*.processing; do
     [[ -f "${f}" ]] && cap="${f}" && break
   done
 
