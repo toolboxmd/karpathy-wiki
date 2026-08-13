@@ -324,7 +324,12 @@ test_init_local_records_runtime_outside_checkout() {
   [[ "${runtime_path}" == "${config_home}/karpathy-wiki/wikis/"*'/runtime.toml' ]] \
     || fail "runtime config is not under the user config home: ${runtime_path}"
   [[ -f "${runtime_path}" ]] || fail "external runtime config was not created"
-  [[ "$(stat -f '%Lp' "${runtime_path}" 2>/dev/null || stat -c '%a' "${runtime_path}")" == "600" ]] \
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    runtime_mode="$(stat -f '%Lp' "${runtime_path}")"
+  else
+    runtime_mode="$(stat -c '%a' "${runtime_path}")"
+  fi
+  [[ "${runtime_mode}" == "600" ]] \
     || fail "external runtime config is not mode 0600"
   [[ ! -e "${wiki}/.wiki-config.local" ]] \
     || fail "init-local wrote executable runtime configuration into the checkout"

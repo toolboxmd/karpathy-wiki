@@ -126,6 +126,12 @@ if [[ "${config_present}" == 1 ]]; then
           exit 14
         fi
       done
+      # A checkout may select only a wiki whose external runtime trust record
+      # is bound to this exact workspace. Without this gate, an untrusted
+      # checkout could redirect captures into another workspace's trusted wiki.
+      python3 "${SCRIPT_DIR}/wiki_config.py" validate-pointer \
+        --wiki "${wiki_root}" --workspace "${cwd_base}" >/dev/null 2>&1 \
+        || exit 14
       # A project pointer belongs to the project checkout, so its routing
       # choice intentionally remains in the tracked pointer file.
       if grep -q '^fork_to_main = true' "${config}"; then

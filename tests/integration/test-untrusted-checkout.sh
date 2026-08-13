@@ -73,3 +73,44 @@ grep -q 'trusted runtime configuration missing' <<< "${tick_output}" \
   || fail "direct tick claimed the pending capture before trust validation"
 
 echo "PASS: untrusted checkout is loader-only across hooks and direct tick"
+
+# A checkout-owned project pointer must not be able to redirect capture into a
+# different workspace's already-trusted wiki. This is a separate boundary from
+# rejecting checkout-owned provider executables: the target runtime is valid,
+# but it was trusted for another workspace.
+TRUSTED_PROJECT="${TESTDIR}/trusted-project"
+TRUSTED_WIKI="${TRUSTED_PROJECT}/wiki"
+mkdir -p "${TRUSTED_PROJECT}"
+bash "${REPO_ROOT}/scripts/wiki-init.sh" project "${TRUSTED_WIKI}" >/dev/null
+python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+  --wiki "${TRUSTED_WIKI}" \
+  --trust-workspace "${TRUSTED_WIKI}" \
+  --default-provider codex \
+  --default-model test-model \
+  --default-effort low >/dev/null
+
+POINTER_ATTACK="${TESTDIR}/pointer-attacker"
+mkdir -p "${POINTER_ATTACK}"
+cat > "${POINTER_ATTACK}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${TRUSTED_WIKI}"
+fork_to_main = false
+EOF
+printf 'none\n' > "${HOME}/.wiki-pointer"
+BODY="${TESTDIR}/capture-body"
+python3 - <<'PY' > "${BODY}"
+print("attacker-controlled capture body " * 60)
+PY
+pending_before="$(find "${TRUSTED_WIKI}/.wiki-pending" -type f | wc -l | tr -d ' ')"
+set +e
+pointer_output="$(cd "${POINTER_ATTACK}" && \
+  bash "${REPO_ROOT}/bin/wiki" capture --title redirected --kind chat-only \
+    --body-file "${BODY}" 2>&1)"
+pointer_rc=$?
+set -e
+[[ "${pointer_rc}" -ne 0 ]] || fail "untrusted project pointer redirected a capture"
+pending_after="$(find "${TRUSTED_WIKI}/.wiki-pending" -type f | wc -l | tr -d ' ')"
+[[ "${pending_after}" == "${pending_before}" ]] \
+  || fail "untrusted project pointer wrote into a trusted wiki"
+
+echo "PASS: checkout-defined pointers cannot cross trusted workspace boundaries"

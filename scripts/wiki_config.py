@@ -517,6 +517,20 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
     }
 
 
+def validate_pointer_target(wiki: str | Path, workspace: str | Path) -> dict[str, Any]:
+    """Require a pointer target to be trusted for the checkout declaring it."""
+
+    config = validate_runtime_config(wiki)
+    expected_workspace = Path(workspace).expanduser().resolve()
+    trusted_workspace = Path(config["trusted_workspace"]).resolve()
+    if trusted_workspace != expected_workspace:
+        raise ConfigError(
+            "wiki: project pointer target is not trusted for this workspace: "
+            f"expected {expected_workspace}, runtime trusts {trusted_workspace}"
+        )
+    return config
+
+
 def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1112,6 +1126,12 @@ def _build_parser() -> argparse.ArgumentParser:
     get.add_argument("--wiki", required=True)
     get.add_argument("--key", required=True)
 
+    validate_pointer = subparsers.add_parser(
+        "validate-pointer", help="validate a pointer target against workspace trust"
+    )
+    validate_pointer.add_argument("--wiki", required=True)
+    validate_pointer.add_argument("--workspace", required=True)
+
     init_local = subparsers.add_parser(
         "init-local", help="create trusted per-user runtime config"
     )
@@ -1158,6 +1178,10 @@ def main(argv: list[str] | None = None) -> int:
             return migrate_checkout_local_config(args)
         if args.command == "update-runtime":
             return update_runtime_config(args)
+        if args.command == "validate-pointer":
+            config = validate_pointer_target(args.wiki, args.workspace)
+            print(f"project pointer target valid: {config['wiki_root']}")
+            return 0
         config = validate_runtime_config(args.wiki)
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
