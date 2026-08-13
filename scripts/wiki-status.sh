@@ -231,9 +231,20 @@ for path in (root / ".wiki-pending").rglob("*.md*"):
         text = path.read_text(encoding="utf-8")
     except OSError:
         continue
-    if not re.search(r'^promotion_policy:\s*["\']?selective["\']?\s*$', text, re.M):
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
         continue
-    match = re.search(r'^promotion_decision:\s*["\']?([^"\'\n]+)["\']?\s*$', text, re.M)
+    try:
+        frontmatter_end = next(
+            index for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
+    except StopIteration:
+        continue
+    frontmatter = "\n".join(lines[1:frontmatter_end])
+    if not re.search(r'^promotion_policy:\s*["\']?selective["\']?\s*$', frontmatter, re.M):
+        continue
+    match = re.search(r'^promotion_decision:\s*["\']?([^"\'\n]+)["\']?\s*$', frontmatter, re.M)
     decision = match.group(1).strip() if match else "null"
     if decision in {"", "null", "~"}:
         counts["awaiting decision"] += 1

@@ -343,6 +343,25 @@ EOF
   teardown
 }
 
+test_status_ignores_promotion_fields_in_capture_body() {
+  setup
+  cat > "${WIKI}/.wiki-pending/legacy.md" <<'EOF'
+---
+source_type: manual
+---
+
+This body documents an example, not routing metadata:
+promotion_policy: selective
+promotion_decision: promoted
+EOF
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  ! grep -q '^## Selective promotion$' <<< "${output}" \
+    || { echo "FAIL: body promotion prose affected status"; teardown; exit 1; }
+  echo "PASS: test_status_ignores_promotion_fields_in_capture_body"
+  teardown
+}
+
 test_status_on_empty_wiki
 test_status_reports_runtime_and_scheduler_state
 test_status_reports_legacy_migration_action
@@ -355,4 +374,5 @@ test_status_includes_ideas_directory
 test_status_depth_violation_count
 test_status_soft_ceiling_line
 test_status_reports_selective_promotion_decisions
+test_status_ignores_promotion_fields_in_capture_body
 echo "ALL PASS"

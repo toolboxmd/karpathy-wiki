@@ -166,6 +166,31 @@ sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${ACTUAL}/.wiki-config
 output=$( cd "${ACTUAL}" && bash "${RESOLVE}" )
 [[ "${output}" == "${ACTUAL}" ]] || fail "local fork=false should return only actual wiki, got '${output}'"
 
+# A stale runtime flag written by legacy `wiki use both` must not make a main
+# wiki conflict with itself or create a second target.
+cat > "${MAIN}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "session_start"
+max_processes = 1
+default_profile = "codex_medium"
+
+[ingest.profiles.codex_medium]
+provider = "codex"
+model = "gpt-test"
+reasoning_effort = "medium"
+
+[routing]
+fork_to_main = true
+EOF
+output=$( cd "${MAIN}" && bash "${RESOLVE}" )
+[[ "${output}" == "${MAIN}" ]] \
+  || fail "legacy main fork=true should resolve exactly once to main, got '${output}'"
+plan=$( cd "${MAIN}" && bash "${RESOLVE}" --plan )
+echo "${plan}" | grep -q '"promotion_policy": "none"' \
+  || fail "legacy main fork=true should normalize to non-promotable"
+echo "${plan}" | grep -q '"main_wiki": null' \
+  || fail "legacy main fork=true should not create a duplicate main target"
+
 # Case 12: pointer-target half-built (project-pointer's wiki dir missing schema) → 14
 BROKEN_MAIN="${TESTDIR}/broken-main"
 mkdir -p "${BROKEN_MAIN}/.wiki-pending"
