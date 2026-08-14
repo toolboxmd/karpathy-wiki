@@ -72,8 +72,8 @@ case "${sub}" in
     [[ -n "${title}" ]] || { echo >&2 "wiki capture: --title required"; exit 1; }
     [[ -n "${kind}" ]] || { echo >&2 "wiki capture: --kind required (chat-only|chat-attached|raw-direct)"; exit 1; }
     case "${suggested_action}" in
-      create|update|augment) ;;
-      *) echo >&2 "wiki capture: --suggested-action must be create, update, or augment"; exit 1 ;;
+      create|update|augment|auto) ;;
+      *) echo >&2 "wiki capture: --suggested-action must be create, update, augment, or auto"; exit 1 ;;
     esac
     for scalar_name in title evidence_path; do
       scalar_value="${!scalar_name}"

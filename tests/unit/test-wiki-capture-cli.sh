@@ -41,6 +41,24 @@ first_capture="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*.md' -
 grep -Eq '^capture_id: "cap-[a-f0-9]+"' "${first_capture}" || fail "capture lacks portable capture_id"
 grep -q '^promotion_policy: "none"' "${first_capture}" || fail "main capture should not be promotable"
 
+# The public CLI accepts every action in the canonical capture schema,
+# including scanner-compatible auto, and preserves that exact scalar.
+( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture \
+    --title "AutoAction" --kind chat-only --suggested-action auto ) >/dev/null 2>&1 \
+  || fail "documented auto suggested action was rejected"
+auto_capture="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -iname '*autoaction*.md' -print -quit)"
+[[ -n "${auto_capture}" ]] || fail "auto suggested action did not publish a capture"
+[[ "$(grep -c '^suggested_action: "auto"$' "${auto_capture}")" -eq 1 ]] \
+  || fail "auto capture did not emit exactly suggested_action: \"auto\""
+
+unsupported_err="${TESTDIR}/unsupported-action.err"
+( cd "${PROJ}" && echo "${BODY}" | bash "${WIKI_BIN}" capture \
+    --title "UnsupportedAction" --kind chat-only --suggested-action delete ) \
+    >/dev/null 2>"${unsupported_err}" \
+  && fail "unsupported suggested action unexpectedly succeeded"
+grep -q '^wiki capture: --suggested-action must be create, update, augment, or auto$' "${unsupported_err}" \
+  || fail "unsupported suggested action validation message is incomplete"
+
 # Case 1a: user-provided frontmatter scalars cannot inject routing metadata.
 # In both mode, a newline-bearing suggested action must be rejected before a
 # capture can be published (or subsequently archived) with a forged policy.
