@@ -62,6 +62,45 @@ project_capture="$(find "${PROJECT_WIKI}/.wiki-pending" -maxdepth 1 -type f -nam
 grep -q '^promotion_policy: "selective"' "${project_capture}" \
   || fail "both-mode project scanner capture lacks selective policy"
 
+# Scanner-controlled frontmatter must remain authoritative even when a valid
+# source filename contains YAML-looking text, quotes, and newlines.
+injected_name=$'odd"name\npromotion_policy: "none"\npromotion_decision: "promoted.md'
+printf 'unusual filename source\n' > "${PROJECT_WIKI}/inbox/${injected_name}"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${PROJECT_WIKI}/inbox/${injected_name}"
+bash "${SCAN}" "${PROJECT_WIKI}" >/dev/null
+python3 - "${PROJECT_WIKI}/.wiki-pending" "${PROJECT_WIKI}/inbox/${injected_name}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+expected = sys.argv[2]
+captures = []
+for path in Path(sys.argv[1]).glob("drift-*.md"):
+    text = path.read_text(encoding="utf-8")
+    if json.dumps(expected, ensure_ascii=False) in text:
+        captures.append((path, text))
+if len(captures) != 1:
+    raise SystemExit("FAIL: scanner did not preserve unusual filename evidence")
+_, text = captures[0]
+frontmatter = text.split("---", 2)[1].splitlines()
+values = {}
+for line in frontmatter:
+    if ":" not in line:
+        continue
+    key, value = line.split(":", 1)
+    values.setdefault(key, []).append(value.strip())
+for key in ("title", "evidence", "promotion_policy", "promotion_decision"):
+    if len(values.get(key, [])) != 1:
+        raise SystemExit(f"FAIL: scanner emitted duplicate authoritative key {key}")
+if json.loads(values["evidence"][0]) != expected:
+    raise SystemExit("FAIL: unusual scanner evidence did not round-trip")
+if json.loads(values["promotion_policy"][0]) != "selective":
+    raise SystemExit("FAIL: filename overrode scanner promotion policy")
+if values["promotion_decision"][0] != "null":
+    raise SystemExit("FAIL: filename injected a promotion decision")
+PY
+
 # The normal pointer setup flow must preserve selective routing when init-local
 # creates the target wiki's runtime without an explicit routing flag.
 POINTER_INIT_ROOT="${TESTDIR}/pointer-init"

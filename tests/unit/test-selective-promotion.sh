@@ -14,8 +14,10 @@ trap 'rm -rf "${TESTDIR}"' EXIT
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
 
 MAIN="${TESTDIR}/main"
+SECOND_MAIN="${TESTDIR}/second-main"
 PROJECT="${TESTDIR}/project"
 bash "${INIT}" main "${MAIN}" >/dev/null
+bash "${INIT}" main "${SECOND_MAIN}" >/dev/null
 bash "${INIT}" project "${PROJECT}" "${MAIN}" >/dev/null
 echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 
@@ -190,6 +192,30 @@ test_missing_receipt_after_publish_recovers_existing_target() {
     || fail "missing-receipt retry did not restore the published receipt"
 }
 
+test_missing_receipt_and_changed_main_recovers_original_target() {
+  local capture body original_before second_before
+  capture="$(make_source changed-main-retry)"
+  body="${TESTDIR}/changed-main-retry-body.md"
+  make_body "${body}"
+  original_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  second_before="$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+
+  WIKI_PROMOTION_TEST_MODE=1 WIKI_PROMOTION_TEST_FAIL_AFTER_PUBLISH=1 \
+    run_promote "${capture}" publish --title "Pinned publication" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "changed-main fixture did not stop after publication"
+  rm -f "${PROJECT}/.locks/promotions/prom-"*.json
+  echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+
+  run_promote "${capture}" publish --title "Retry after pointer change" --body-file "${body}"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq $((original_before + 1)) ]] \
+    || fail "changed-main retry did not retain the original published target"
+  [[ "$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq "${second_before}" ]] \
+    || fail "changed-main retry published the promotion identity in a second main queue"
+  grep -q '"main_wiki": .*\/main"' "${PROJECT}/.locks/promotions/prom-"*.json \
+    || fail "changed-main retry did not restore the original main receipt"
+  echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+}
+
 test_keep_local_rejects_published_target_after_receipt_loss() {
   local capture body
   capture="$(make_source keep-local-after-publish)"
@@ -255,6 +281,7 @@ test_normalized_body_floor_boundary_succeeds
 test_failure_after_intent_is_recoverable
 test_failure_after_publish_before_mark_is_recoverable
 test_missing_receipt_after_publish_recovers_existing_target
+test_missing_receipt_and_changed_main_recovers_original_target
 test_keep_local_rejects_published_target_after_receipt_loss
 test_keep_local_and_project_policy_guard
 test_forged_promoted_decision_is_rejected

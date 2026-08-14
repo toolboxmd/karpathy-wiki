@@ -61,6 +61,24 @@ frontmatter_scalar() {
     | head -n 1
 }
 
+if ! awk '
+  NR == 1 { if ($0 != "---") exit 1; next }
+  $0 == "---" { closed = 1; exit }
+  /^[A-Za-z_][A-Za-z0-9_]*:/ {
+    key = $0
+    sub(/:.*/, "", key)
+    if (key == "capture_id" || key == "promotion_policy" ||
+        key == "promotion_decision" || key == "promotion_id" ||
+        key == "promotion_main_wiki" || key == "propagated_from") {
+      if (++seen[key] > 1) exit 2
+    }
+  }
+  END { if (!closed) exit 1 }
+' "${processing}"; then
+  echo >&2 "wiki complete: duplicate or invalid authoritative frontmatter"
+  exit 1
+fi
+
 promotion_policy="$(frontmatter_scalar promotion_policy "${processing}")"
 if [[ "${promotion_policy}" == "selective" ]]; then
   promotion_decision="$(frontmatter_scalar promotion_decision "${processing}")"

@@ -34,17 +34,28 @@ def _frontmatter(text: str) -> tuple[list[str], int]:
 def _scalar(text: str, key: str) -> str | None:
     lines, closing = _frontmatter(text)
     pattern = re.compile(rf"^{re.escape(key)}:\s*(.*?)\s*$")
+    matches: list[str] = []
     for line in lines[1:closing]:
         match = pattern.match(line.rstrip("\r\n"))
         if not match:
             continue
-        value = match.group(1)
-        if value in {"null", "~", ""}:
-            return None
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        return value
-    return None
+        matches.append(match.group(1))
+    if len(matches) > 1:
+        raise PromotionError(f"duplicate authoritative frontmatter key: {key}")
+    if not matches or matches[0] in {"null", "~", ""}:
+        return None
+    value = matches[0]
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise PromotionError(f"invalid JSON-compatible scalar for {key}") from exc
+        if not isinstance(decoded, str):
+            raise PromotionError(f"frontmatter scalar {key} must be a string")
+        return decoded
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
 
 
 def _set_scalars(path: Path, updates: dict[str, str | None]) -> None:
@@ -120,17 +131,8 @@ def _source_context() -> tuple[Path, Path, Path, str, str]:
     return root, capture, plugin, capture_id, promotion_id
 
 
-def _main_wiki() -> Path:
-    pointer = Path(
-        os.environ.get("WIKI_POINTER_FILE", str(Path.home() / ".wiki-pointer"))
-    ).expanduser()
-    try:
-        value = pointer.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise PromotionError(f"main wiki pointer is unavailable: {pointer}: {exc}") from exc
-    if not value or value == "none":
-        raise PromotionError("selective promotion requires a configured main wiki")
-    main = Path(value).expanduser().resolve()
+def _validate_main_wiki(main: Path) -> Path:
+    main = main.expanduser().resolve()
     try:
         structural = (main / ".wiki-config").read_text(encoding="utf-8")
     except OSError as exc:
@@ -141,6 +143,19 @@ def _main_wiki() -> Path:
         if not (main / required).exists():
             raise PromotionError(f"main wiki pointer target is incomplete: missing {required}")
     return main
+
+
+def _main_wiki() -> Path:
+    pointer = Path(
+        os.environ.get("WIKI_POINTER_FILE", str(Path.home() / ".wiki-pointer"))
+    ).expanduser()
+    try:
+        value = pointer.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise PromotionError(f"main wiki pointer is unavailable: {pointer}: {exc}") from exc
+    if not value or value == "none":
+        raise PromotionError("selective promotion requires a configured main wiki")
+    return _validate_main_wiki(Path(value))
 
 
 def _configured_main_wiki() -> Path | None:
@@ -219,11 +234,15 @@ def keep_local() -> int:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         if _read_json(state_dir / f"{promotion_id}.json") is not None:
             raise PromotionError("promotion intent already exists and cannot become keep-local")
-        decision = _scalar(capture.read_text(encoding="utf-8"), "promotion_decision")
+        source_text = capture.read_text(encoding="utf-8")
+        decision = _scalar(source_text, "promotion_decision")
         if decision == "promoted":
             raise PromotionError("capture is already promoted and cannot become keep-local")
         if decision == "keep-local":
             return 0
+        pinned_main = _scalar(source_text, "promotion_main_wiki")
+        if pinned_main is not None:
+            raise PromotionError("promotion intent already exists and cannot become keep-local")
         main = _configured_main_wiki()
         if main is not None:
             existing = _existing_target_by_promotion_id(main, promotion_id)
@@ -281,7 +300,6 @@ def publish(title: str, body_file: str) -> int:
     if len(body.encode("utf-8")) < 1500:
         raise PromotionError("promotion body must contain at least 1500 bytes of reusable detail")
 
-    main = _main_wiki()
     state_dir = root / ".locks" / "promotions"
     state_dir.mkdir(parents=True, exist_ok=True)
     lock_path = state_dir / f"{promotion_id}.lock"
@@ -299,12 +317,26 @@ def publish(title: str, body_file: str) -> int:
         if source_decision == "promoted" and source_promotion_id != promotion_id:
             raise PromotionError("source capture has a conflicting promotion identity")
         receipt = _read_json(receipt_path)
+        pinned_main_value = _scalar(
+            capture.read_text(encoding="utf-8"), "promotion_main_wiki"
+        )
+        if pinned_main_value is not None:
+            main = _validate_main_wiki(Path(pinned_main_value))
+        elif receipt is not None:
+            receipt_main = receipt.get("main_wiki")
+            if not isinstance(receipt_main, str) or not receipt_main:
+                raise PromotionError("promotion receipt lacks its pinned main wiki")
+            main = _validate_main_wiki(Path(receipt_main))
+            _set_scalars(capture, {"promotion_main_wiki": str(main)})
+        else:
+            main = _main_wiki()
+            _set_scalars(capture, {"promotion_main_wiki": str(main)})
         if receipt is not None:
             if receipt.get("source_capture_id") != capture_id:
                 raise PromotionError("promotion receipt source identity mismatch")
             pinned_main = Path(str(receipt.get("main_wiki", ""))).resolve()
             if pinned_main != main:
-                raise PromotionError("main wiki pointer changed after promotion intent")
+                raise PromotionError("promotion receipt conflicts with pinned main wiki")
             target_name = str(receipt.get("target_name", ""))
             captured_at = str(receipt.get("captured_at", ""))
         else:
