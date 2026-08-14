@@ -74,6 +74,7 @@ PROJECT_ROOT="${TESTDIR}/project-both"
 PROJECT_WIKI="${PROJECT_ROOT}/wiki"
 mkdir -p "${PROJECT_ROOT}"
 bash "${INIT}" project "${PROJECT_WIKI}" "${WIKI}" >/dev/null
+PROJECT_WIKI_CANONICAL="$(cd "${PROJECT_WIKI}" && pwd -P)"
 cat > "${PROJECT_ROOT}/.wiki-config" <<'EOF'
 role = "project-pointer"
 wiki = "./wiki"
@@ -95,7 +96,7 @@ printf 'unusual filename source\n' > "${PROJECT_WIKI}/inbox/${injected_name}"
 touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
   "${PROJECT_WIKI}/inbox/${injected_name}"
 bash "${SCAN}" "${PROJECT_WIKI}" >/dev/null
-python3 - "${PROJECT_WIKI}/.wiki-pending" "${PROJECT_WIKI}/inbox/${injected_name}" <<'PY'
+python3 - "${PROJECT_WIKI}/.wiki-pending" "${PROJECT_WIKI_CANONICAL}/inbox/${injected_name}" <<'PY'
 import json
 import sys
 from pathlib import Path
