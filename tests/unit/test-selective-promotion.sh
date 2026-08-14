@@ -120,7 +120,8 @@ test_forged_tracked_pin_cannot_redirect_first_publication() {
   capture="$(make_source forged-pin-redirect)"
   body="${TESTDIR}/forged-pin-redirect-body.md"
   make_body "${body}"
-  sed -i "/^promotion_id:/a promotion_main_wiki: \"${SECOND_MAIN}\"" "${capture}"
+  sed -i.bak "/^promotion_id:/a promotion_main_wiki: \"${SECOND_MAIN}\"" "${capture}"
+  rm -f "${capture}.bak"
   main_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
   second_before="$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
 
@@ -461,7 +462,8 @@ test_keep_local_and_project_policy_guard() {
 test_inline_comment_policy_is_eligible_for_both_decisions() {
   local local_capture publish_capture body promoted
   local_capture="$(make_source inline-comment-local)"
-  sed -i 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${local_capture}"
+  sed -i.bak 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${local_capture}"
+  rm -f "${local_capture}.bak"
 
   run_promote "${local_capture}" keep-local \
     || fail "inline-comment selective policy was not eligible for keep-local"
@@ -469,7 +471,8 @@ test_inline_comment_policy_is_eligible_for_both_decisions() {
     || fail "inline-comment selective policy was not eligible for keep-local"
 
   publish_capture="$(make_source inline-comment-publish)"
-  sed -i 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${publish_capture}"
+  sed -i.bak 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${publish_capture}"
+  rm -f "${publish_capture}.bak"
   body="${TESTDIR}/inline-comment-publish-body.md"
   make_body "${body}"
   run_promote "${publish_capture}" publish --title "Inline comment policy" --body-file "${body}" \
@@ -481,7 +484,8 @@ test_inline_comment_policy_is_eligible_for_both_decisions() {
 
   local quoted_capture
   quoted_capture="$(make_source quoted-comment-marker)"
-  sed -i 's/^promotion_policy: "selective"$/promotion_policy: "selective # literal"/' "${quoted_capture}"
+  sed -i.bak 's/^promotion_policy: "selective"$/promotion_policy: "selective # literal"/' "${quoted_capture}"
+  rm -f "${quoted_capture}.bak"
   run_promote "${quoted_capture}" keep-local >/dev/null 2>&1 \
     && fail "quoted comment marker was stripped from the policy scalar"
   grep -q '^promotion_decision: null' "${quoted_capture}" \
