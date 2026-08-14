@@ -97,13 +97,16 @@ test_publish_once_with_portable_provenance() {
     || fail "trusted promotion pin is not owner-only"
   python3 - "${pin}" "${PROJECT}" "${MAIN}" <<'PY' || fail "trusted promotion pin bindings are incomplete"
 import json, sys
+import os
 pin = json.load(open(sys.argv[1], encoding="utf-8"))
+expected_project_wiki = os.path.realpath(sys.argv[2])
+expected_main_wiki = os.path.realpath(sys.argv[3])
 assert pin["schema_version"] == 1
 assert pin["source_capture_id"] == "cap-reusable"
 assert pin["promotion_id"].startswith("prom-")
-assert pin["canonical_project_wiki"] == sys.argv[2]
+assert pin["canonical_project_wiki"] == expected_project_wiki
 assert pin["canonical_workspace"]
-assert pin["canonical_main_wiki"] == sys.argv[3]
+assert pin["canonical_main_wiki"] == expected_main_wiki
 assert pin["target_name"].endswith(f'-{pin["promotion_id"]}.md')
 assert pin["created_at"]
 PY
