@@ -122,15 +122,44 @@ test_hook_dispatches_pending_capture() {
 
 test_hook_exits_fast() {
   setup
-  local start end elapsed
-  start="$(date +%s)"
-  (cd "${WIKI}" && bash "${HOOK}") >/dev/null
-  end="$(date +%s)"
-  elapsed=$((end - start))
-  [[ "${elapsed}" -le 3 ]] || {
-    echo "FAIL: hook took ${elapsed}s, should be <=3"; teardown; exit 1
+  export WIKI_DISPATCH_TEST_PROVIDER_MODE=hold
+  export WIKI_DISPATCH_TEST_PROVIDER_SECONDS=10
+  cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
+    "${WIKI}/.wiki-pending/detach-contract.md"
+
+  # A generous outer guard detects a hung hook. The contract itself is
+  # behavioral: the hook must return while its deliberately held worker is
+  # still active, before any terminal worker event exists.
+  (cd "${WIKI}" && bash "${HOOK}") >/dev/null &
+  local hook_pid=$! deadline=$((SECONDS + 20))
+  while kill -0 "${hook_pid}" 2>/dev/null && [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    sleep 0.05
+  done
+  if kill -0 "${hook_pid}" 2>/dev/null; then
+    kill "${hook_pid}" 2>/dev/null || true
+    wait "${hook_pid}" 2>/dev/null || true
+    echo "FAIL: SessionStart did not return within the outer hang guard"
+    teardown; exit 1
+  fi
+  wait "${hook_pid}" || {
+    echo "FAIL: SessionStart returned an error"
+    teardown; exit 1
   }
-  echo "PASS: test_hook_exits_fast (${elapsed}s)"
+  deadline=$((SECONDS + 15))
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    grep -q '"status":"started"' "${WIKI}/.ingest-runs.jsonl" 2>/dev/null && break
+    sleep 0.05
+  done
+  grep -q '"status":"started"' "${WIKI}/.ingest-runs.jsonl" 2>/dev/null \
+    || { echo "FAIL: detached worker never recorded started"; teardown; exit 1; }
+  if grep -Eq '"status":"(completed|failed|transient_failure|provider_rate_limited|configuration_or_auth_failure)"' \
+      "${WIKI}/.ingest-runs.jsonl"; then
+    echo "FAIL: SessionStart did not return before the held worker completed"
+    teardown; exit 1
+  fi
+  [[ -f "${WIKI}/.wiki-pending/detach-contract.md.processing" ]] \
+    || { echo "FAIL: held detached worker did not retain its claimed capture"; teardown; exit 1; }
+  echo "PASS: test_hook_exits_fast (returned before held worker completed)"
   teardown
 }
 

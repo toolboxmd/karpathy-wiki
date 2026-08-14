@@ -28,7 +28,8 @@ mkdir -p "${HOME}"
 # not. Keep the detached worker local and deterministic instead of invoking a
 # real Codex process that can outlive this fixture's temporary HOME.
 export WIKI_DISPATCH_TEST_MODE=1
-export WIKI_DISPATCH_TEST_PROVIDER_MODE=success_no_complete
+export WIKI_DISPATCH_TEST_PROVIDER_MODE=hold
+export WIKI_DISPATCH_TEST_PROVIDER_SECONDS=2
 export WIKI_DISPATCH_TEST_NO_REFILL=1
 
 BODY=$(printf 'Real chat-only body that easily exceeds the 1500-byte floor.\n%.0s' {1..40})
@@ -72,12 +73,23 @@ mkdir -p "${BOTH}"
 write_test_runtime "${BOTH}/wiki" true
 ( cd "${BOTH}" && echo "${BODY}" | bash "${WIKI_BIN}" capture --title "BothTest" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   || fail "both mode capture failed"
-sleep 0.3
 ls "${BOTH}/wiki/.wiki-pending/" | grep -qi bothtest || fail "both mode: project capture missing"
 if ls "${MAIN}/.wiki-pending/" 2>/dev/null | grep -qi bothtest; then
   fail "both mode published the original capture to main before semantic judgment"
 fi
-both_capture="$(find "${BOTH}/wiki/.wiki-pending" -maxdepth 1 -type f -iname '*bothtest*.md' -print -quit)"
+# The dispatcher may be holding the capture as .processing. Wait for the
+# unsuccessful test worker to durably requeue the original .md before reading
+# it, rather than assuming the accepted name remains stable between commands.
+both_capture=""
+for _ in $(seq 1 200); do
+  both_capture="$(find "${BOTH}/wiki/.wiki-pending" -maxdepth 1 -type f -iname '*bothtest*.md' -print -quit)"
+  [[ -n "${both_capture}" ]] && break
+  sleep 0.05
+done
+[[ -n "${both_capture}" ]] || {
+  [[ -f "${BOTH}/wiki/.ingest-runs.jsonl" ]] && cat "${BOTH}/wiki/.ingest-runs.jsonl" >&2
+  fail "both mode capture was not durably requeued after worker exit"
+}
 grep -q '^promotion_policy: "selective"' "${both_capture}" \
   || fail "both mode capture lacks selective promotion policy"
 [[ ! -e "${HOME}/.wiki-forks.jsonl" ]] \

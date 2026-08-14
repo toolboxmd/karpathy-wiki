@@ -64,17 +64,24 @@ test_capture_drop_plus_hook_plus_dispatch() {
   # Run session-start hook
   (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
 
-  deadline=$((SECONDS + 5))
+  # Wait for durable lifecycle evidence rather than racing a fixed startup
+  # budget. The outer bound still fails promptly if dispatch never starts.
+  deadline=$((SECONDS + 30))
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
-    if [[ -f "${WIKI}/.wiki-pending/2026-04-22T14-30-test.md.processing" ]] \
-       && grep -q '"status":"started"' "${WIKI}/.ingest-runs.jsonl" 2>/dev/null; then
+    if grep -q '"status":"started"' "${WIKI}/.ingest-runs.jsonl" 2>/dev/null; then
+      [[ -f "${WIKI}/.wiki-pending/2026-04-22T14-30-test.md.processing" ]] || {
+        echo "FAIL: dispatcher recorded started without retaining claimed queue state"
+        cat "${WIKI}/.ingest-runs.jsonl"
+        [[ -f "${WIKI}/.ingest.log" ]] && cat "${WIKI}/.ingest.log"
+        teardown; exit 1
+      }
       echo "PASS: test_capture_drop_plus_hook_plus_dispatch"
       teardown
       return
     fi
     sleep 0.05
   done
-  echo "FAIL: capture was not claimed through the bounded dispatcher"
+  echo "FAIL: bounded dispatcher never recorded a started lifecycle event"
   ls -la "${WIKI}/.wiki-pending/"
   [[ -f "${WIKI}/.ingest.log" ]] && cat "${WIKI}/.ingest.log"
   teardown; exit 1

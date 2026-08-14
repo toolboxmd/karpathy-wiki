@@ -25,7 +25,9 @@ max_processes = 3
 default_profile = "grok_medium"
 fallback_profile = "sonnet_low"
 heartbeat_seconds = 5
-stale_after_seconds = 15
+# Use an explicit fixture threshold comfortably above the injected suite-load
+# delay; production's 15-second threshold is exercised elsewhere.
+stale_after_seconds = 30
 usage_monitor = "${usage}"
 
 [ingest.profiles.grok_medium]
@@ -105,8 +107,10 @@ test_status_reports_queue_runtime_health() {
     "${WIKI}/.wiki-pending/stalled.md.processing"
   cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
     "${WIKI}/.wiki-pending/fresh.md.processing"
-  touch -t "$(date -v-60S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '60 seconds ago' '+%Y%m%d%H%M.%S')" \
+  touch -t "$(date -v-300S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '300 seconds ago' '+%Y%m%d%H%M.%S')" \
     "${WIKI}/.wiki-pending/stalled.md.processing"
+  touch -t "$(date '+%Y%m%d%H%M.%S')" \
+    "${WIKI}/.wiki-pending/fresh.md.processing"
   cat > "${WIKI}/.locks/ingest-slots/1.lock" <<'EOF'
 {"run_id":"run-stalled","slot":1,"capture":"stalled.md.processing","profile":"grok_medium"}
 EOF
@@ -127,6 +131,9 @@ not-json
 {"run_id":"rate-1","capture":"x.md","status":"provider_rate_limited","profile":"grok_medium","provider":"grok","model":"grok-test","retry_after":"${retry_after}","at":"2026-08-11T00:00:00Z"}
 {"run_id":"concurrent-older","capture":"older.md","status":"completed","profile":"grok_medium","provider":"grok","model":"grok-test","at":"2026-08-11T00:00:01Z"}
 EOF
+  # Simulate aggregate-suite scheduling pressure. The fresh fixture remains
+  # well inside 30 seconds while the stalled fixture remains well outside it.
+  sleep 2
   local output
   output="$(bash "${STATUS}" "${WIKI}")"
   grep -q "active ingests: 2 / 3" <<< "${output}" \
