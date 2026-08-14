@@ -176,7 +176,7 @@ def _workspace_identity(root: Path) -> Path:
 
 def _pin_path(root: Path, promotion_id: str) -> tuple[Path, Path]:
     workspace = _workspace_identity(root)
-    identity = hashlib.sha256(f"{workspace}\0{root}".encode("utf-8")).hexdigest()[:32]
+    identity = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
     return _config_home() / "promotions" / identity / f"{promotion_id}.json", workspace
 
 
@@ -217,7 +217,7 @@ def _atomic_write_private(path: Path, value: dict[str, Any], root: Path, main: P
 
 
 def _read_pin(root: Path, capture_id: str, promotion_id: str) -> dict[str, Any] | None:
-    path, workspace = _pin_path(root, promotion_id)
+    path, _workspace = _pin_path(root, promotion_id)
     if not path.exists() and not path.is_symlink():
         return None
     _ensure_private_pin_parent(path, root)
@@ -234,10 +234,11 @@ def _read_pin(root: Path, capture_id: str, promotion_id: str) -> dict[str, Any] 
         "source_capture_id": capture_id,
         "promotion_id": promotion_id,
         "canonical_project_wiki": str(root),
-        "canonical_workspace": str(workspace),
     }
     if pin is None or any(pin.get(key) != value for key, value in expected.items()):
         raise PromotionError("promotion pin canonical identity mismatch")
+    if not isinstance(pin.get("canonical_workspace"), str) or not pin["canonical_workspace"]:
+        raise PromotionError("promotion pin lacks its historical canonical workspace")
     main_value, target_name = pin.get("canonical_main_wiki"), pin.get("target_name")
     if not isinstance(main_value, str) or not isinstance(target_name, str):
         raise PromotionError("promotion pin lacks its canonical target")

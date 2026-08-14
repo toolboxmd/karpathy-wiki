@@ -342,6 +342,65 @@ test_missing_receipt_and_changed_main_recovers_original_target() {
   echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 }
 
+test_external_pin_lookup_survives_parent_pointer_removal() {
+  local workspace nested capture body original_before second_before pin promotion_id other
+  workspace="${TESTDIR}/standalone-workspace"
+  nested="${workspace}/wiki"
+  mkdir -p "${workspace}"
+  bash "${INIT}" project "${nested}" "${MAIN}" >/dev/null
+  cat > "${workspace}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${nested}"
+fork_to_main = true
+EOF
+  capture="${nested}/.wiki-pending/stable-root.md.processing"
+  sed 's/cap-reusable/cap-stable-root/g; s/title: "reusable"/title: "stable-root"/' \
+    "$(make_source reusable)" > "${capture}"
+  body="${TESTDIR}/stable-root-body.md"
+  make_body "${body}"
+  original_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  second_before="$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+
+  WIKI_ROOT="${nested}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="test-run" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${PROMOTE}" publish \
+      --title "Stable root pin" --body-file "${body}"
+  promotion_id="$(sed -n 's/^promotion_id: "\([^"]*\)"$/\1/p' "${capture}")"
+  pin="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name "${promotion_id}.json" -exec grep -l 'cap-stable-root' {} +)"
+  [[ -n "${pin}" ]] || fail "stable-root fixture did not create an external pin"
+  [[ "$(basename "$(dirname "${pin}")")" == "$(python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "${nested}")" ]] \
+    || fail "external pin directory is not the full canonical project-wiki digest"
+
+  rm -f "${nested}/.locks/promotions/${promotion_id}.json" "${workspace}/.wiki-config"
+  echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+  WIKI_ROOT="${nested}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="test-run" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${PROMOTE}" publish \
+      --title "Stable root retry" --body-file "${body}"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name "*-${promotion_id}.md" | wc -l | tr -d ' ')" -eq 1 ]] \
+    || fail "parent-pointer removal did not recover exactly one original-main target"
+  [[ "$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name "*-${promotion_id}.md" | wc -l | tr -d ' ')" -eq 0 ]] \
+    || fail "parent-pointer removal redirected retry to the current main"
+  [[ "$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name "${promotion_id}.json" | wc -l | tr -d ' ')" -eq 1 ]] \
+    || fail "parent-pointer removal created a second external pin"
+  grep -q '"status": "published"' "${nested}/.locks/promotions/${promotion_id}.json" \
+    || fail "parent-pointer removal did not reconstruct the receipt"
+
+  other="${TESTDIR}/isolated-stable-root"
+  bash "${INIT}" project "${other}" "${SECOND_MAIN}" >/dev/null
+  capture="${other}/.wiki-pending/stable-root.md.processing"
+  sed 's/cap-reusable/cap-stable-root/g; s/title: "reusable"/title: "stable-root"/' \
+    "$(make_source reusable)" > "${capture}"
+  WIKI_ROOT="${other}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="test-run" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${PROMOTE}" publish \
+      --title "Isolated stable root" --body-file "${body}"
+  [[ "$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name "${promotion_id}.json" | wc -l | tr -d ' ')" -eq 2 ]] \
+    || fail "same capture ID in another project wiki reused the first external pin"
+  echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq $((original_before + 1)) ]] \
+    || fail "stable-root recovery changed unrelated original-main targets"
+  [[ "$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq $((second_before + 1)) ]] \
+    || fail "cross-project isolation did not publish exactly once to its own main"
+}
+
 test_keep_local_rejects_published_target_after_receipt_loss() {
   local capture body
   capture="$(make_source keep-local-after-publish)"
@@ -481,6 +540,7 @@ test_failure_after_intent_is_recoverable
 test_failure_after_publish_before_mark_is_recoverable
 test_missing_receipt_after_publish_recovers_existing_target
 test_missing_receipt_and_changed_main_recovers_original_target
+test_external_pin_lookup_survives_parent_pointer_removal
 test_keep_local_rejects_published_target_after_receipt_loss
 test_keep_local_and_project_policy_guard
 test_inline_comment_policy_is_eligible_for_both_decisions
