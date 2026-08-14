@@ -108,9 +108,48 @@ test_body_promotion_prose_is_not_metadata() {
   echo "PASS: test_body_promotion_prose_is_not_metadata"
 }
 
+test_crlf_legacy_capture_completes_without_changing_content() {
+  local wiki="${TESTDIR}/crlf-legacy"
+  local capture="${wiki}/.wiki-pending/crlf-legacy.md.processing"
+  local expected="${TESTDIR}/crlf-legacy.expected"
+  make_wiki "${wiki}"
+  printf '%s\r\n' '---' 'title: "CRLF legacy capture"' '---' '' \
+    'Body line preserved with CRLF.' > "${capture}"
+  cp "${capture}" "${expected}"
+
+  run_complete "${wiki}" "${capture}" || fail "valid CRLF legacy capture did not complete"
+  local archived="${wiki}/.wiki-pending/archive/$(date +%Y-%m)/crlf-legacy.md"
+  [[ -f "${archived}" ]] || fail "valid CRLF legacy capture was not archived"
+  cmp -s "${expected}" "${archived}" \
+    || fail "completion changed CRLF legacy capture content"
+  echo "PASS: test_crlf_legacy_capture_completes_without_changing_content"
+}
+
+test_crlf_selective_capture_completes() {
+  local wiki="${TESTDIR}/crlf-selective"
+  local capture="${wiki}/.wiki-pending/crlf-selective.md.processing"
+  local expected="${TESTDIR}/crlf-selective.expected"
+  make_wiki "${wiki}"
+  printf 'role = "project"\n' > "${wiki}/.wiki-config"
+  printf '%s\r\n' '---' 'title: "CRLF selective capture"' \
+    'capture_id: "cap-crlf-selective"' 'promotion_policy: "selective"' \
+    'promotion_decision: "keep-local"' 'promotion_id: null' '---' '' \
+    'Selective body preserved with CRLF.' > "${capture}"
+  cp "${capture}" "${expected}"
+
+  run_complete "${wiki}" "${capture}" || fail "valid CRLF selective capture did not complete"
+  local archived="${wiki}/.wiki-pending/archive/$(date +%Y-%m)/crlf-selective.md"
+  [[ -f "${archived}" ]] || fail "valid CRLF selective capture was not archived"
+  cmp -s "${expected}" "${archived}" \
+    || fail "completion changed CRLF selective capture content"
+  echo "PASS: test_crlf_selective_capture_completes"
+}
+
 test_success_and_idempotence
 test_validation_failure_keeps_processing
 test_post_archive_failure_rolls_back
 test_selective_capture_requires_decision
 test_body_promotion_prose_is_not_metadata
+test_crlf_legacy_capture_completes_without_changing_content
+test_crlf_selective_capture_completes
 echo "ALL PASS"

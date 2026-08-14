@@ -56,16 +56,20 @@ fi
 frontmatter_scalar() {
   local key="$1"
   local file="$2"
-  awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "${file}" \
+  awk '{ line = $0; sub(/\r$/, "", line) }
+       NR == 1 { if (line != "---") exit; next }
+       line == "---" { exit }
+       { print line }' "${file}" \
     | sed -n "s/^${key}:[[:space:]]*[\"']\\{0,1\\}\\([^\"']*\\)[\"']\\{0,1\\}[[:space:]]*$/\\1/p" \
     | head -n 1
 }
 
 if ! awk '
-  NR == 1 { if ($0 != "---") exit 1; next }
-  $0 == "---" { closed = 1; exit }
-  /^[A-Za-z_][A-Za-z0-9_]*:/ {
-    key = $0
+  { line = $0; sub(/\r$/, "", line) }
+  NR == 1 { if (line != "---") exit 1; next }
+  line == "---" { closed = 1; exit }
+  line ~ /^[A-Za-z_][A-Za-z0-9_]*:/ {
+    key = line
     sub(/:.*/, "", key)
     if (key == "capture_id" || key == "promotion_policy" ||
         key == "promotion_decision" || key == "promotion_id" ||
