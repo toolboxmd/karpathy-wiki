@@ -168,7 +168,13 @@ def _configured_main_wiki() -> Path | None:
         return None
     if not value or value == "none":
         return None
-    return _main_wiki()
+    try:
+        return _validate_main_wiki(Path(value))
+    except PromotionError:
+        # This lookup is only a defensive search for a publication that might
+        # predate durable intent. With no receipt or source pin, an unavailable
+        # current pointer is not evidence that a publication target exists.
+        return None
 
 
 def _existing_target(main: Path, name: str) -> Path | None:

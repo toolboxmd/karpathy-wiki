@@ -261,6 +261,44 @@ test_keep_local_and_project_policy_guard() {
   [[ "${after}" -eq "${before}" ]] || fail "project-only refusal changed main queue"
 }
 
+test_keep_local_without_intent_ignores_unavailable_current_main() {
+  local scenario capture queue_before queue_after
+  for scenario in missing moved incomplete; do
+    capture="$(make_source "keep-local-${scenario}")"
+    case "${scenario}" in
+      missing)
+        echo "${TESTDIR}/missing-main" > "${WIKI_POINTER_FILE}"
+        ;;
+      moved)
+        mv "${SECOND_MAIN}" "${SECOND_MAIN}.moved"
+        echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+        ;;
+      incomplete)
+        echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+        rm -f "${SECOND_MAIN}/index.md"
+        ;;
+    esac
+    queue_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+    run_promote "${capture}" keep-local \
+      || fail "keep-local rejected an unavailable ${scenario} current main without publication intent"
+    queue_after="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+    grep -q '^promotion_decision: "keep-local"' "${capture}" \
+      || fail "unavailable ${scenario} main did not persist keep-local"
+    ! grep -q '^promotion_main_wiki:' "${capture}" \
+      || fail "unavailable ${scenario} main created a durable main pin"
+    [[ "${queue_after}" -eq "${queue_before}" ]] \
+      || fail "unavailable ${scenario} main changed main publication state"
+    ! find "${PROJECT}/.locks/promotions" -maxdepth 1 -type f -name 'prom-*.json' \
+      -exec grep -l "cap-keep-local-${scenario}" {} + | grep -q . \
+      || fail "unavailable ${scenario} main created a promotion receipt"
+    case "${scenario}" in
+      moved) mv "${SECOND_MAIN}.moved" "${SECOND_MAIN}" ;;
+      incomplete) printf '# Index\n' > "${SECOND_MAIN}/index.md" ;;
+    esac
+  done
+  echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+}
+
 test_forged_promoted_decision_is_rejected() {
   local capture
   capture="$(make_source forged)"
@@ -284,5 +322,6 @@ test_missing_receipt_after_publish_recovers_existing_target
 test_missing_receipt_and_changed_main_recovers_original_target
 test_keep_local_rejects_published_target_after_receipt_loss
 test_keep_local_and_project_policy_guard
+test_keep_local_without_intent_ignores_unavailable_current_main
 test_forged_promoted_decision_is_rejected
 echo "PASS: selective promotion"

@@ -59,6 +59,33 @@ grep -q '^fork_to_main = false' "${PROJ}/.wiki-config" || fail "fork_to_main sho
 ( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
   || fail "wiki use project re-run failed"
 
+# Case 2b: a fresh cwd with an existing configured ./wiki must synchronize a
+# stale selective runtime before recording project-only routing.
+PROJ_EXISTING_LOCAL="${TESTDIR}/proj1-existing"
+mkdir -p "${PROJ_EXISTING_LOCAL}"
+bash "${INIT}" project "${PROJ_EXISTING_LOCAL}/wiki" "${MAIN}" >/dev/null
+cat > "${PROJ_EXISTING_LOCAL}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+fork_to_main = true
+EOF
+python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+  --wiki "${PROJ_EXISTING_LOCAL}/wiki" \
+  --trust-workspace "${PROJ_EXISTING_LOCAL}" \
+  --default-provider codex --default-model test-model \
+  --default-effort low --fork-to-main >/dev/null
+rm "${PROJ_EXISTING_LOCAL}/.wiki-config"
+( cd "${PROJ_EXISTING_LOCAL}" && bash "${USE}" project ) >/dev/null \
+  || fail "wiki use project failed for a fresh cwd with an existing configured wiki"
+[[ "$(wiki_runtime_config_get "${PROJ_EXISTING_LOCAL}/wiki" routing.fork_to_main)" == "false" ]] \
+  || fail "wiki use project left the fresh existing wiki runtime true"
+local_plan="$(cd "${PROJ_EXISTING_LOCAL}" && bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)" \
+  || fail "resolver rejected fresh existing wiki after wiki use project"
+grep -q '"promotion_policy": "none"' <<< "${local_plan}" \
+  || fail "resolver did not report local-only after fresh wiki use project"
+[[ "$(wiki_promotion_policy "${PROJ_EXISTING_LOCAL}/wiki")" == "none" ]] \
+  || fail "scanner and resolver disagree after fresh wiki use project"
+
 # Case 3: wiki use main (fresh cwd, no pre-existing config)
 PROJ_MAIN="${TESTDIR}/proj2"
 mkdir -p "${PROJ_MAIN}"
