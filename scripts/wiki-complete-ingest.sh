@@ -80,7 +80,7 @@ parse_frontmatter_value() {
     \'*) parsed="$(printf '%s\n' "${value}" \
       | sed -n "s/^'\([^']*\)'[[:space:]]*\(#.*\)\{0,1\}$/\1/p")" ;;
     *) parsed="$(printf '%s\n' "${value}" \
-      | sed 's/[[:space:]]\+#.*$//; s/[[:space:]]*$//')" ;;
+      | sed 's/[[:space:]][[:space:]]*#.*$//; s/[[:space:]]*$//')" ;;
   esac
   [[ -n "${parsed}" ]] || return 2
   printf '%s\n' "${parsed}"
