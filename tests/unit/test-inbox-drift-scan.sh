@@ -206,6 +206,59 @@ local_only_capture="$(grep -l 'local-only.md' "${EXTERNAL_PROJECT}/.wiki-pending
 grep -q '^promotion_policy: "none"' "${local_only_capture}" \
   || fail "explicit runtime false scanner capture was not local-only"
 
+# A legacy standalone project wiki with no runtime record or matching parent
+# pointer retains its exact structural fork flag. Resolver and scanner policy
+# must agree until that legacy routing is migrated.
+LEGACY_PROJECT="${TESTDIR}/legacy-structural-project"
+LEGACY_CONFIG_HOME="${TESTDIR}/legacy-structural-config-home"
+bash "${INIT}" project "${LEGACY_PROJECT}" "${WIKI}" >/dev/null
+cat >> "${LEGACY_PROJECT}/.wiki-config" <<'EOF'
+fork_to_main = true
+EOF
+mkdir -p "${LEGACY_CONFIG_HOME}"
+legacy_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${LEGACY_CONFIG_HOME}" \
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" path --wiki "${LEGACY_PROJECT}")"
+[[ ! -e "${legacy_runtime}" ]] || fail "legacy structural fixture unexpectedly has a runtime record"
+cat > "${TESTDIR}/unrelated-parent-config" <<'EOF'
+role = "project-pointer"
+wiki = "./somewhere-else"
+created = "2026-08-14"
+fork_to_main = true
+EOF
+cp "${TESTDIR}/unrelated-parent-config" "${TESTDIR}/.wiki-config"
+printf '%s\n' "${WIKI}" > "${TESTDIR}/legacy-main-pointer"
+legacy_plan="$(cd "${LEGACY_PROJECT}" && \
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    XDG_CONFIG_HOME="${LEGACY_CONFIG_HOME}" \
+    WIKI_POINTER_FILE="${TESTDIR}/legacy-main-pointer" \
+    bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan)"
+grep -q '"promotion_policy": "selective"' <<< "${legacy_plan}" \
+  || fail "legacy structural resolver plan was not selective: ${legacy_plan}"
+[[ "$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${LEGACY_CONFIG_HOME}" \
+  bash -c 'source "$1/scripts/wiki-lib.sh"; wiki_promotion_policy "$2"' _ "${REPO_ROOT}" "${LEGACY_PROJECT}")" == "selective" ]] \
+  || fail "legacy structural promotion policy was not selective"
+printf 'legacy structural source\n' > "${LEGACY_PROJECT}/inbox/legacy.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${LEGACY_PROJECT}/inbox/legacy.md"
+env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${LEGACY_CONFIG_HOME}" \
+  bash "${SCAN}" "${LEGACY_PROJECT}" >/dev/null
+legacy_capture="$(find "${LEGACY_PROJECT}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"' "${legacy_capture}" \
+  || fail "legacy structural scanner capture was not selective"
+
+LEGACY_LOCAL_PROJECT="${TESTDIR}/legacy-structural-local"
+bash "${INIT}" project "${LEGACY_LOCAL_PROJECT}" "${WIKI}" >/dev/null
+cat >> "${LEGACY_LOCAL_PROJECT}/.wiki-config" <<'EOF'
+fork_to_main = false
+EOF
+[[ "$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+  XDG_CONFIG_HOME="${LEGACY_CONFIG_HOME}" \
+  bash -c 'source "$1/scripts/wiki-lib.sh"; wiki_promotion_policy "$2"' _ "${REPO_ROOT}" "${LEGACY_LOCAL_PROJECT}")" == "none" ]] \
+  || fail "unrelated parent pointer made a structural fork=false wiki selective"
+
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.
 WIKI_FAIL="${TESTDIR}/publication-failure"

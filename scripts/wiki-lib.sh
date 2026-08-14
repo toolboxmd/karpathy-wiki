@@ -179,7 +179,7 @@ wiki_promotion_policy() {
     return
   fi
 
-  local parent config sub candidate
+  local parent config sub candidate structural_value
   parent="$(dirname "${root}")"
   config="${parent}/.wiki-config"
   if [[ -f "${config}" ]] \
@@ -196,6 +196,16 @@ wiki_promotion_policy() {
       echo selective
       return
     fi
+  fi
+
+  # Compatibility for standalone project wikis created before routing moved
+  # into external runtime state. Runtime state and an exactly matching parent
+  # pointer remain authoritative when present; only then consult this wiki's
+  # own structural flag.
+  structural_value="$(wiki_structural_config_get "${root}" fork_to_main 2>/dev/null || true)"
+  if [[ "${structural_value}" == "true" ]]; then
+    echo selective
+    return
   fi
   echo none
 }
