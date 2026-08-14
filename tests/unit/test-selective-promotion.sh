@@ -120,8 +120,20 @@ test_forged_tracked_pin_cannot_redirect_first_publication() {
   capture="$(make_source forged-pin-redirect)"
   body="${TESTDIR}/forged-pin-redirect-body.md"
   make_body "${body}"
-  sed -i.bak "/^promotion_id:/a promotion_main_wiki: \"${SECOND_MAIN}\"" "${capture}"
-  rm -f "${capture}.bak"
+  python3 - "${capture}" "${SECOND_MAIN}" <<'PY'
+import pathlib
+import sys
+
+capture = pathlib.Path(sys.argv[1])
+lines = capture.read_text(encoding="utf-8").splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if line.startswith("promotion_id:"):
+        lines.insert(index + 1, f'promotion_main_wiki: "{sys.argv[2]}"\n')
+        break
+else:
+    raise SystemExit("promotion_id field missing")
+capture.write_text("".join(lines), encoding="utf-8")
+PY
   main_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
   second_before="$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
 
