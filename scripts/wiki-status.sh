@@ -218,9 +218,47 @@ fi
 # routing.
 python3 - "${wiki}" <<'PYEOF'
 from collections import Counter
+import json
 from pathlib import Path
 import re
 import sys
+
+def without_yaml_inline_comment(value):
+    single_quoted = False
+    double_quoted = False
+    escaped = False
+    for index, character in enumerate(value):
+        if double_quoted and character == "\\" and not escaped:
+            escaped = True
+            continue
+        if character == '"' and not single_quoted and not escaped:
+            double_quoted = not double_quoted
+        elif character == "'" and not double_quoted:
+            single_quoted = not single_quoted
+        elif (character == "#" and not single_quoted and not double_quoted
+              and (index == 0 or value[index - 1].isspace())):
+            return value[:index].rstrip()
+        escaped = False
+    return value
+
+def frontmatter_scalar(lines, key):
+    pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.*?)\s*$")
+    matches = [match.group(1) for line in lines if (match := pattern.match(line))]
+    if len(matches) > 1:
+        raise ValueError(f"duplicate authoritative frontmatter key: {key}")
+    if not matches:
+        return None
+    value = without_yaml_inline_comment(matches[0])
+    if value in {"", "null", "~"}:
+        return None
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        decoded = json.loads(value)
+        if not isinstance(decoded, str):
+            raise ValueError(f"frontmatter scalar {key} must be a string")
+        return decoded
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
 
 root = Path(sys.argv[1])
 counts = Counter()
@@ -243,12 +281,16 @@ for path in (root / ".wiki-pending").rglob("*.md*"):
         )
     except StopIteration:
         continue
-    frontmatter = "\n".join(lines[1:frontmatter_end])
-    if not re.search(r'^promotion_policy:\s*["\']?selective["\']?\s*$', frontmatter, re.M):
+    frontmatter = lines[1:frontmatter_end]
+    try:
+        policy = frontmatter_scalar(frontmatter, "promotion_policy")
+        decision = frontmatter_scalar(frontmatter, "promotion_decision")
+    except (ValueError, json.JSONDecodeError):
+        unreadable += 1
         continue
-    match = re.search(r'^promotion_decision:\s*["\']?([^"\'\n]+)["\']?\s*$', frontmatter, re.M)
-    decision = match.group(1).strip() if match else "null"
-    if decision in {"", "null", "~"}:
+    if policy != "selective":
+        continue
+    if decision is None:
         counts["awaiting decision"] += 1
     elif decision == "keep-local":
         counts["kept local"] += 1

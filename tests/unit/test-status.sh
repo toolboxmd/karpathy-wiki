@@ -362,6 +362,38 @@ EOF
   teardown
 }
 
+test_status_parses_inline_comments_in_promotion_metadata() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  printf '%s\r\n' \
+    '---' \
+    'promotion_policy: selective # routing note' \
+    'promotion_decision: keep-local # terminal choice' \
+    '---' > "${WIKI}/.wiki-pending/archive/2026-08/local.md"
+  cat > "${WIKI}/.wiki-pending/archive/2026-08/promoted.md" <<'EOF'
+---
+promotion_policy: selective # routing note
+promotion_decision: promoted # terminal choice
+---
+EOF
+  cat > "${WIKI}/.wiki-pending/quoted-hash.md" <<'EOF'
+---
+promotion_policy: "selective # literal"
+promotion_decision: null
+---
+EOF
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  grep -q "1 kept local" <<< "${output}" \
+    || { echo "FAIL: inline-comment keep-local decision was not counted"; teardown; exit 1; }
+  grep -q "1 promoted" <<< "${output}" \
+    || { echo "FAIL: inline-comment promoted decision was not counted"; teardown; exit 1; }
+  ! grep -q "awaiting decision" <<< "${output}" \
+    || { echo "FAIL: quoted hash policy was reinterpreted as selective"; teardown; exit 1; }
+  echo "PASS: test_status_parses_inline_comments_in_promotion_metadata"
+  teardown
+}
+
 test_status_survives_invalid_utf8_in_all_scanned_queues() {
   setup
   mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
@@ -399,5 +431,6 @@ test_status_depth_violation_count
 test_status_soft_ceiling_line
 test_status_reports_selective_promotion_decisions
 test_status_ignores_promotion_fields_in_capture_body
+test_status_parses_inline_comments_in_promotion_metadata
 test_status_survives_invalid_utf8_in_all_scanned_queues
 echo "ALL PASS"
