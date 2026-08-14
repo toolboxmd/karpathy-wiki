@@ -392,7 +392,7 @@ EOF
   promotion_id="$(sed -n 's/^promotion_id: "\([^"]*\)"$/\1/p' "${capture}")"
   pin="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name "${promotion_id}.json" -exec grep -l 'cap-stable-root' {} +)"
   [[ -n "${pin}" ]] || fail "stable-root fixture did not create an external pin"
-  [[ "$(basename "$(dirname "${pin}")")" == "$(python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "${nested}")" ]] \
+  [[ "$(basename "$(dirname "${pin}")")" == "$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest())' "${nested}")" ]] \
     || fail "external pin directory is not the full canonical project-wiki digest"
 
   rm -f "${nested}/.locks/promotions/${promotion_id}.json" "${workspace}/.wiki-config"
