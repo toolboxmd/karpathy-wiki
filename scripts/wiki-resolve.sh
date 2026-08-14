@@ -127,7 +127,6 @@ if [[ "${config_present}" == 1 ]]; then
       fi
       ;;
     project-pointer)
-      resolved_role="project"
       sub=$(grep '^wiki = ' "${config}" | head -1 | sed 's/^wiki = "\(.*\)"/\1/')
       [[ -n "${sub}" ]] || exit 14
       # Resolve relative path against cwd_base (the dir holding .wiki-config)
@@ -138,6 +137,8 @@ if [[ "${config_present}" == 1 ]]; then
       fi
       # Validate structure
       [[ -f "${wiki_root}/.wiki-config" ]] || exit 14
+      pointed_role=$(grep '^role = ' "${wiki_root}/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
+      [[ "${pointed_role}" == "project" ]] || exit 14
       for required in schema.md index.md .wiki-pending; do
         if [[ ! -e "${wiki_root}/${required}" ]]; then
           exit 14
@@ -149,6 +150,7 @@ if [[ "${config_present}" == 1 ]]; then
       python3 "${SCRIPT_DIR}/wiki_config.py" validate-pointer \
         --wiki "${wiki_root}" --workspace "${cwd_base}" >/dev/null 2>&1 \
         || exit 14
+      resolved_role="project"
       # A project pointer belongs to the project checkout, so its routing
       # choice remains in the tracked pointer file. An existing target runtime
       # is its local mirror/narrowing gate, so both values must agree.

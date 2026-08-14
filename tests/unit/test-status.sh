@@ -362,6 +362,30 @@ EOF
   teardown
 }
 
+test_status_survives_invalid_utf8_in_all_scanned_queues() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  cat > "${WIKI}/.wiki-pending/valid.md" <<'EOF'
+---
+promotion_policy: "selective"
+promotion_decision: null
+---
+EOF
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md"
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md.processing"
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md.failed"
+  printf '\377\376' > "${WIKI}/.wiki-pending/archive/2026-08/invalid.md"
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")" \
+    || { echo "FAIL: invalid UTF-8 aborted wiki status"; teardown; exit 1; }
+  grep -q "1 awaiting decision" <<< "${output}" \
+    || { echo "FAIL: valid selective capture was not counted"; teardown; exit 1; }
+  grep -q "4 invalid/unreadable" <<< "${output}" \
+    || { echo "FAIL: invalid UTF-8 outcomes were not reported"; teardown; exit 1; }
+  echo "PASS: test_status_survives_invalid_utf8_in_all_scanned_queues"
+  teardown
+}
+
 test_status_on_empty_wiki
 test_status_reports_runtime_and_scheduler_state
 test_status_reports_legacy_migration_action
@@ -375,4 +399,5 @@ test_status_depth_violation_count
 test_status_soft_ceiling_line
 test_status_reports_selective_promotion_decisions
 test_status_ignores_promotion_fields_in_capture_body
+test_status_survives_invalid_utf8_in_all_scanned_queues
 echo "ALL PASS"

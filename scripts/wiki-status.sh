@@ -224,12 +224,14 @@ import sys
 
 root = Path(sys.argv[1])
 counts = Counter()
+unreadable = 0
 for path in (root / ".wiki-pending").rglob("*.md*"):
     if not path.is_file():
         continue
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
+        unreadable += 1
         continue
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -255,10 +257,12 @@ for path in (root / ".wiki-pending").rglob("*.md*"):
     else:
         counts["invalid decision"] += 1
 
-if counts:
+if counts or unreadable:
     print()
     print("## Selective promotion")
     for label in ("awaiting decision", "kept local", "promoted", "invalid decision"):
         if counts[label]:
             print(f"  {counts[label]} {label}")
+    if unreadable:
+        print(f"  {unreadable} invalid/unreadable")
 PYEOF

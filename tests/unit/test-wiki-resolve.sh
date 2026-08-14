@@ -116,6 +116,32 @@ sed -i.bak '/^\[routing\]$/,$d' "${PROJECT}/wiki/.wiki-config.local"
 rm -f "${PROJECT}/wiki/.wiki-config.local.bak"
 sed -i.bak 's/fork_to_main = true/fork_to_main = false/' "${PROJECT}/.wiki-config"
 
+# A project-pointer must never relabel a trusted main wiki as a project. Fail
+# before emitting either a capture target or a selective promotion plan.
+POINTER_TO_MAIN="${TESTDIR}/pointer-to-main"
+mkdir -p "${POINTER_TO_MAIN}"
+cat > "${POINTER_TO_MAIN}/.wiki-config" <<EOF
+role = "project-pointer"
+wiki = "${MAIN}"
+created = "2026-08-14"
+fork_to_main = true
+EOF
+POINTER_RUNTIME_HOME="${TESTDIR}/pointer-runtime"
+XDG_CONFIG_HOME="${POINTER_RUNTIME_HOME}" WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=0 \
+python3 "${REPO_ROOT}/scripts/wiki_config.py" init-local \
+  --wiki "${MAIN}" --trust-workspace "${POINTER_TO_MAIN}" \
+  --default-provider codex --default-model gpt-test \
+  --default-effort medium --max-processes 1 \
+  --dispatch-mode session_start >/dev/null
+pointer_output="${TESTDIR}/pointer-to-main.out"
+if ( cd "${POINTER_TO_MAIN}" && \
+  XDG_CONFIG_HOME="${POINTER_RUNTIME_HOME}" WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=0 \
+  bash "${RESOLVE}" --plan >"${pointer_output}" 2>/dev/null ); then
+  fail "project-pointer accepted a role=main target"
+fi
+[[ ! -s "${pointer_output}" ]] \
+  || fail "invalid project-pointer emitted a capture or promotion plan"
+
 # Case 7: cwd has .wiki-mode = main-only + pointer valid → 0, returns [main]
 echo "main-only" > "${UNCONFIGURED}/.wiki-mode"
 assert_exit "cwd .wiki-mode=main-only + pointer valid" "${UNCONFIGURED}" 0
