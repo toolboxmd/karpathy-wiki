@@ -68,6 +68,17 @@ wait_for() {
   return 1
 }
 
+wait_for_test_processes() {
+  local pid
+  for _ in $(seq 1 300); do
+    pid="$(pgrep -f -- "${TESTDIR}" | head -n 1 || true)"
+    [[ -z "${pid}" ]] && return 0
+    sleep 0.02
+  done
+  ps -ef | grep -F -- "${TESTDIR}" | grep -v grep >&2 || true
+  return 1
+}
+
 future="2099-01-01T00:00:00Z"
 past="2020-01-01T00:00:00Z"
 
@@ -212,4 +223,5 @@ test_all_profiles_cooling_keeps_capture_pending
 test_expired_or_changed_profile_is_available
 test_codexbar_exhaustion_uses_fallback
 test_live_provider_failure_refills_with_fallback
+wait_for_test_processes || fail "detached provider workers did not exit before cleanup"
 echo "ALL PASS"
