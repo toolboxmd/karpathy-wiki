@@ -156,6 +156,66 @@ test_inline_comment_selective_policy_requires_decision() {
   echo "PASS: test_inline_comment_selective_policy_requires_decision"
 }
 
+test_inline_comment_terminal_decision_completes() {
+  local wiki="${TESTDIR}/inline-comment-decision"
+  local capture="${wiki}/.wiki-pending/inline-comment-decision.md.processing"
+  local expected="${TESTDIR}/inline-comment-decision.expected"
+  make_wiki "${wiki}"
+  printf 'role = "project"\n' > "${wiki}/.wiki-config"
+  printf '%s\r\n' '---' 'title: "Inline comment decision"' \
+    'capture_id: "cap-inline-comment-decision"' \
+    'promotion_policy: selective # routing note' \
+    'promotion_decision: null' 'promotion_id: null' '---' '' \
+    'Selective body preserved with CRLF.' > "${capture}"
+  WIKI_ROOT="${wiki}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="in-test" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${REPO_ROOT}/scripts/wiki-promote-capture.py" keep-local \
+    || fail "keep-local helper failed for inline-comment decision fixture"
+  python3 - "${capture}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+old = b'promotion_decision: "keep-local"\n'
+new = b'promotion_decision: keep-local # terminal choice\n'
+if data.count(old) != 1:
+    raise SystemExit("expected one persisted keep-local decision")
+path.write_bytes(data.replace(old, new).replace(b'\n', b'\r\n'))
+PY
+  cp "${capture}" "${expected}"
+
+  run_complete "${wiki}" "${capture}" \
+    || fail "inline-comment terminal decision did not complete"
+  local archived="${wiki}/.wiki-pending/archive/$(date +%Y-%m)/inline-comment-decision.md"
+  [[ -f "${archived}" ]] || fail "inline-comment terminal decision was not archived"
+  cmp -s "${expected}" "${archived}" \
+    || fail "completion changed inline-comment terminal capture bytes"
+  echo "PASS: test_inline_comment_terminal_decision_completes"
+}
+
+test_nonterminal_decisions_fail_closed() {
+  local value label
+  for label in quoted-literal unsupported malformed; do
+    case "${label}" in
+      quoted-literal) value='"keep-local # literal"' ;;
+      unsupported) value='deferred' ;;
+      malformed) value='"keep-local" trailing-text' ;;
+    esac
+    local wiki="${TESTDIR}/decision-${label}"
+    local capture="${wiki}/.wiki-pending/decision-${label}.md.processing"
+    make_wiki "${wiki}"
+    printf 'role = "project"\n' > "${wiki}/.wiki-config"
+    printf '%s\n' '---' "title: \"Decision ${label}\"" \
+      "capture_id: \"cap-decision-${label}\"" 'promotion_policy: selective' \
+      "promotion_decision: ${value}" 'promotion_id: null' '---' > "${capture}"
+
+    run_complete "${wiki}" "${capture}" >/dev/null 2>&1 \
+      && fail "${label} promotion decision unexpectedly completed"
+    [[ -f "${capture}" ]] || fail "${label} decision lost recoverable processing capture"
+  done
+  echo "PASS: test_nonterminal_decisions_fail_closed"
+}
+
 test_crlf_legacy_capture_completes_without_changing_content() {
   local wiki="${TESTDIR}/crlf-legacy"
   local capture="${wiki}/.wiki-pending/crlf-legacy.md.processing"
@@ -199,6 +259,8 @@ test_post_archive_failure_rolls_back
 test_selective_capture_requires_decision
 test_body_promotion_prose_is_not_metadata
 test_inline_comment_selective_policy_requires_decision
+test_inline_comment_terminal_decision_completes
+test_nonterminal_decisions_fail_closed
 test_explicit_unsupported_policy_fails_closed
 test_explicit_malformed_policy_fails_closed
 test_crlf_legacy_capture_completes_without_changing_content

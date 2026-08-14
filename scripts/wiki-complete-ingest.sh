@@ -53,17 +53,6 @@ if [[ -e "${archived}" ]]; then
   exit 1
 fi
 
-frontmatter_scalar() {
-  local key="$1"
-  local file="$2"
-  awk '{ line = $0; sub(/\r$/, "", line) }
-       NR == 1 { if (line != "---") exit; next }
-       line == "---" { exit }
-       { print line }' "${file}" \
-    | sed -n "s/^${key}:[[:space:]]*[\"']\\{0,1\\}\\([^\"']*\\)[\"']\\{0,1\\}[[:space:]]*$/\\1/p" \
-    | head -n 1
-}
-
 frontmatter_raw_value() {
   local key="$1"
   local file="$2"
@@ -79,7 +68,7 @@ frontmatter_raw_value() {
   ' "${file}"
 }
 
-parse_promotion_policy() {
+parse_frontmatter_value() {
   local field="$1"
   local value parsed
   [[ "${field}" == present:* ]] || return 3
@@ -93,8 +82,24 @@ parse_promotion_policy() {
     *) parsed="$(printf '%s\n' "${value}" \
       | sed 's/[[:space:]]\+#.*$//; s/[[:space:]]*$//')" ;;
   esac
+  [[ -n "${parsed}" ]] || return 2
+  printf '%s\n' "${parsed}"
+}
+
+parse_promotion_policy() {
+  local parsed
+  parsed="$(parse_frontmatter_value "$1")" || return $?
   case "${parsed}" in
     none|selective) printf '%s\n' "${parsed}" ;;
+    *) return 2 ;;
+  esac
+}
+
+parse_promotion_decision() {
+  local parsed
+  parsed="$(parse_frontmatter_value "$1")" || return $?
+  case "${parsed}" in
+    keep-local|promoted) printf '%s\n' "${parsed}" ;;
     *) return 2 ;;
   esac
 }
@@ -128,14 +133,15 @@ if [[ -n "${policy_field}" ]]; then
   fi
 fi
 if [[ "${promotion_policy}" == "selective" ]]; then
-  promotion_decision="$(frontmatter_scalar promotion_decision "${processing}")"
-  case "${promotion_decision}" in
-    keep-local|promoted) ;;
-    *)
-      echo >&2 "wiki complete: selective capture requires keep-local or promoted decision"
-      exit 1
-      ;;
-  esac
+  decision_field="$(frontmatter_raw_value promotion_decision "${processing}")"
+  if [[ -z "${decision_field}" ]]; then
+    echo >&2 "wiki complete: selective capture requires a promotion decision"
+    exit 1
+  fi
+  if ! promotion_decision="$(parse_promotion_decision "${decision_field}")"; then
+    echo >&2 "wiki complete: selective capture requires keep-local or promoted decision"
+    exit 1
+  fi
   if ! WIKI_PLUGIN_ROOT="${WIKI_PLUGIN_ROOT:-${SCRIPT_DIR}/..}" \
     python3 "${SCRIPT_DIR}/wiki-promote-capture.py" verify >&2; then
     echo >&2 "wiki complete: selective promotion decision verification failed"
