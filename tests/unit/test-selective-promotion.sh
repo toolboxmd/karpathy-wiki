@@ -12,6 +12,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 TESTDIR="$(mktemp -d)"
 trap 'rm -rf "${TESTDIR}"' EXIT
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 MAIN="${TESTDIR}/main"
 SECOND_MAIN="${TESTDIR}/second-main"
@@ -60,7 +61,7 @@ run_promote() {
 }
 
 test_publish_once_with_portable_provenance() {
-  local capture body promoted
+  local capture body promoted pin
   capture="$(make_source reusable)"
   body="${TESTDIR}/reusable-body.md"
   make_body "${body}"
@@ -77,9 +78,134 @@ test_publish_once_with_portable_provenance() {
   grep -q '^promotion_decision: "promoted"' "${capture}" \
     || fail "source capture was not marked promoted"
   grep -q '^promotion_id: "prom-' "${capture}" || fail "source capture lacks promotion id"
+  ! grep -q '^promotion_main_wiki:' "${capture}" \
+    || fail "source capture leaked an absolute main path"
+  find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' \
+    -exec grep -l '"canonical_main_wiki"' {} + | grep -q . \
+    || fail "trusted external promotion pin missing"
+  pin="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' -exec grep -l 'cap-reusable' {} +)"
+  [[ "$(stat -c '%a' "${pin}")" == "600" && "$(stat -c '%a' "$(dirname "${pin}")")" == "700" ]] \
+    || fail "trusted promotion pin is not owner-only"
+  python3 - "${pin}" "${PROJECT}" "${MAIN}" <<'PY' || fail "trusted promotion pin bindings are incomplete"
+import json, sys
+pin = json.load(open(sys.argv[1], encoding="utf-8"))
+assert pin["schema_version"] == 1
+assert pin["source_capture_id"] == "cap-reusable"
+assert pin["promotion_id"].startswith("prom-")
+assert pin["canonical_project_wiki"] == sys.argv[2]
+assert pin["canonical_workspace"]
+assert pin["canonical_main_wiki"] == sys.argv[3]
+assert pin["target_name"].endswith(f'-{pin["promotion_id"]}.md')
+assert pin["created_at"]
+PY
   [[ "$(find "${PROJECT}/.locks/promotions" -maxdepth 1 -type f -name 'prom-*.json' | wc -l | tr -d ' ')" -eq 1 ]] \
     || fail "durable local promotion receipt missing"
   run_promote "${capture}" verify || fail "published decision did not verify"
+}
+
+test_forged_tracked_pin_cannot_redirect_first_publication() {
+  local capture body main_before second_before
+  capture="$(make_source forged-pin-redirect)"
+  body="${TESTDIR}/forged-pin-redirect-body.md"
+  make_body "${body}"
+  sed -i "/^promotion_id:/a promotion_main_wiki: \"${SECOND_MAIN}\"" "${capture}"
+  main_before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+  second_before="$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+
+  run_promote "${capture}" publish --title "Trusted route wins" --body-file "${body}"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq $((main_before + 1)) ]] \
+    || fail "forged tracked pin redirected first publication away from trusted main"
+  [[ "$(find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq "${second_before}" ]] \
+    || fail "forged tracked pin redirected first publication to writable second main"
+  ! grep -q '^promotion_main_wiki:' "${capture}" \
+    || fail "forged tracked pin remained in the source capture"
+}
+
+test_receipt_loss_verification_reconstructs_from_external_pin() {
+  local capture body
+  capture="$(make_source verify-reconstruct)"
+  body="${TESTDIR}/verify-reconstruct-body.md"
+  make_body "${body}"
+  run_promote "${capture}" publish --title "Verification recovery" --body-file "${body}"
+  rm -f "${PROJECT}/.locks/promotions/prom-"*.json
+
+  run_promote "${capture}" verify \
+    || fail "receipt-loss verification did not reconstruct from trusted durable state"
+  grep -q '"status": "published"' "${PROJECT}/.locks/promotions/prom-"*.json \
+    || fail "verification did not reconstruct the transient receipt"
+}
+
+test_pin_precedes_receipt_and_publication() {
+  local capture body before
+  capture="$(make_source pin-first-crash)"
+  body="${TESTDIR}/pin-first-crash-body.md"
+  make_body "${body}"
+  before="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')"
+
+  WIKI_PROMOTION_TEST_MODE=1 WIKI_PROMOTION_TEST_FAIL_AFTER_PIN=1 \
+    run_promote "${capture}" publish --title "Pin first" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "injected pin-first crash unexpectedly succeeded"
+  find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' \
+    -exec grep -l 'cap-pin-first-crash' {} + | grep -q . \
+    || fail "pin-first crash did not leave the trusted external pin"
+  ! find "${PROJECT}/.locks/promotions" -type f -name 'prom-*.json' \
+    -exec grep -l 'cap-pin-first-crash' {} + | grep -q . \
+    || fail "pin-first crash wrote the receipt before the external pin boundary"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq "${before}" ]] \
+    || fail "pin-first crash published before the external pin boundary"
+  run_promote "${capture}" keep-local >/dev/null 2>&1 \
+    && fail "keep-local accepted trusted intent before publication"
+  echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+  run_promote "${capture}" publish --title "Pin first retry" --body-file "${body}"
+  [[ "$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' | wc -l | tr -d ' ')" -eq $((before + 1)) ]] \
+    || fail "retry did not publish to the pinned original main"
+  echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+}
+
+test_pin_mismatch_fails_closed() {
+  local capture body pin
+  capture="$(make_source pin-mismatch)"
+  body="${TESTDIR}/pin-mismatch-body.md"
+  make_body "${body}"
+  WIKI_PROMOTION_TEST_MODE=1 WIKI_PROMOTION_TEST_FAIL_AFTER_PIN=1 \
+    run_promote "${capture}" publish --title "Mismatch" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "pin mismatch fixture unexpectedly published"
+  pin="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' -exec grep -l 'cap-pin-mismatch' {} +)"
+  python3 - "${pin}" <<'PY'
+import json, sys
+path = sys.argv[1]
+value = json.load(open(path, encoding="utf-8"))
+value["target_name"] = "forged.md"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(value, handle)
+PY
+  chmod 600 "${pin}"
+  run_promote "${capture}" publish --title "Mismatch retry" --body-file "${body}" >/dev/null 2>&1 \
+    && fail "mismatched trusted pin did not fail closed"
+  grep -q '^promotion_decision: null' "${capture}" \
+    || fail "mismatched pin changed the source decision"
+}
+
+test_no_cross_workspace_pin_reuse() {
+  local other capture body first_pin_count
+  other="${TESTDIR}/other-project"
+  bash "${INIT}" project "${other}" "${SECOND_MAIN}" >/dev/null
+  capture="${other}/.wiki-pending/cross-workspace.md.processing"
+  sed 's/cap-forged-pin-redirect/cap-cross-workspace/' \
+    "$(make_source forged-pin-redirect)" > "${capture}"
+  body="${TESTDIR}/cross-workspace-body.md"
+  make_body "${body}"
+  first_pin_count="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' | wc -l | tr -d ' ')"
+  echo "${SECOND_MAIN}" > "${WIKI_POINTER_FILE}"
+  WIKI_ROOT="${other}" WIKI_CAPTURE="${capture}" WIKI_RUN_ID="test-run" \
+    WIKI_PLUGIN_ROOT="${REPO_ROOT}" python3 "${PROMOTE}" publish \
+      --title "Separate workspace identity" --body-file "${body}"
+  [[ "$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' | wc -l | tr -d ' ')" -eq $((first_pin_count + 1)) ]] \
+    || fail "another workspace reused an existing promotion pin"
+  find "${SECOND_MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' \
+    -exec grep -l '^propagated_from: "cap-cross-workspace"$' {} + | grep -q . \
+    || fail "another workspace did not publish through its own trusted pin"
+  echo "${MAIN}" > "${WIKI_POINTER_FILE}"
 }
 
 test_body_floor_uses_normalized_emitted_body() {
@@ -314,6 +440,11 @@ test_forged_promoted_decision_is_rejected() {
 
 test_publish_once_with_portable_provenance
 test_repeat_and_concurrent_retry_are_idempotent
+test_receipt_loss_verification_reconstructs_from_external_pin
+test_forged_tracked_pin_cannot_redirect_first_publication
+test_pin_precedes_receipt_and_publication
+test_pin_mismatch_fails_closed
+test_no_cross_workspace_pin_reuse
 test_body_floor_uses_normalized_emitted_body
 test_normalized_body_floor_boundary_succeeds
 test_failure_after_intent_is_recoverable

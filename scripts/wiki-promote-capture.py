@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,6 +77,18 @@ def _set_scalars(path: Path, updates: dict[str, str | None]) -> None:
     _atomic_write(path, "".join(lines))
 
 
+def _remove_scalars(path: Path, keys: set[str]) -> None:
+    text = path.read_text(encoding="utf-8")
+    lines, closing = _frontmatter(text)
+    filtered = [lines[0]]
+    filtered.extend(
+        line for line in lines[1:closing] if line.split(":", 1)[0].strip() not in keys
+    )
+    filtered.extend(lines[closing:])
+    if filtered != lines:
+        _atomic_write(path, "".join(filtered))
+
+
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -91,6 +104,120 @@ def _atomic_write(path: Path, text: str) -> None:
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def _config_home() -> Path:
+    override = os.environ.get("WIKI_CONFIG_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return (Path(xdg).expanduser() / "karpathy-wiki").resolve()
+    return (Path.home() / ".config" / "karpathy-wiki").resolve()
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _workspace_identity(root: Path) -> Path:
+    parent_pointer = root.parent / ".wiki-config"
+    try:
+        text = parent_pointer.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    target = re.search(r'^wiki\s*=\s*"(.*)"\s*$', text, flags=re.MULTILINE)
+    if re.search(r'^role\s*=\s*"project-pointer"\s*$', text, flags=re.MULTILINE) and target:
+        candidate = Path(target.group(1)).expanduser()
+        if not candidate.is_absolute():
+            candidate = root.parent / candidate
+        if candidate.resolve() == root:
+            return root.parent.resolve()
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    return Path(result.stdout.strip()).resolve() if result.returncode == 0 else root
+
+
+def _pin_path(root: Path, promotion_id: str) -> tuple[Path, Path]:
+    workspace = _workspace_identity(root)
+    identity = hashlib.sha256(f"{workspace}\0{root}".encode("utf-8")).hexdigest()[:32]
+    return _config_home() / "promotions" / identity / f"{promotion_id}.json", workspace
+
+
+def _ensure_private_pin_parent(path: Path, root: Path, main: Path | None = None) -> None:
+    base = _config_home()
+    if _is_within(path, root) or (main is not None and _is_within(path, main)):
+        raise PromotionError("promotion pin store must be outside all wiki checkouts")
+    for directory in (base, base / "promotions", path.parent):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = directory.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise PromotionError(f"promotion pin directory is not a regular directory: {directory}")
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise PromotionError(f"promotion pin directory has the wrong owner: {directory}")
+        os.chmod(directory, 0o700)
+
+
+def _atomic_write_private(path: Path, value: dict[str, Any], root: Path, main: Path) -> None:
+    _ensure_private_pin_parent(path, root, main)
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise PromotionError(f"promotion pin is not a regular file: {path}")
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+    )
+    temp = Path(handle.name)
+    try:
+        with handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _read_pin(root: Path, capture_id: str, promotion_id: str) -> dict[str, Any] | None:
+    path, workspace = _pin_path(root, promotion_id)
+    if not path.exists() and not path.is_symlink():
+        return None
+    _ensure_private_pin_parent(path, root)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise PromotionError(f"promotion pin is not a regular file: {path}")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise PromotionError(f"promotion pin has the wrong owner: {path}")
+    if info.st_mode & 0o077:
+        raise PromotionError(f"promotion pin must have mode 0600: {path}")
+    pin = _read_json(path)
+    expected = {
+        "schema_version": 1,
+        "source_capture_id": capture_id,
+        "promotion_id": promotion_id,
+        "canonical_project_wiki": str(root),
+        "canonical_workspace": str(workspace),
+    }
+    if pin is None or any(pin.get(key) != value for key, value in expected.items()):
+        raise PromotionError("promotion pin canonical identity mismatch")
+    main_value, target_name = pin.get("canonical_main_wiki"), pin.get("target_name")
+    if not isinstance(main_value, str) or not isinstance(target_name, str):
+        raise PromotionError("promotion pin lacks its canonical target")
+    if not re.fullmatch(rf"\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}-\d{{2}}-\d{{2}}Z-{re.escape(promotion_id)}\.md", target_name):
+        raise PromotionError("promotion pin target name mismatch")
+    return pin
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -205,6 +332,29 @@ def _validate_existing(path: Path, capture_id: str, promotion_id: str) -> None:
         raise PromotionError(f"promotion target collision at {path}")
 
 
+def _pin_target(pin: dict[str, Any], capture_id: str, promotion_id: str) -> tuple[Path, str, str]:
+    main = _validate_main_wiki(Path(str(pin["canonical_main_wiki"])))
+    target_name = str(pin["target_name"])
+    captured_at = str(pin.get("created_at", ""))
+    if not captured_at or target_name != f"{captured_at}-{promotion_id}.md":
+        raise PromotionError("promotion pin creation identity mismatch")
+    target = _existing_target(main, target_name)
+    if target is not None:
+        _validate_existing(target, capture_id, promotion_id)
+    return main, target_name, captured_at
+
+
+def _receipt_for_pin(pin: dict[str, Any], status: str) -> dict[str, Any]:
+    return {
+        "promotion_id": pin["promotion_id"],
+        "source_capture_id": pin["source_capture_id"],
+        "main_wiki": pin["canonical_main_wiki"],
+        "target_name": pin["target_name"],
+        "captured_at": pin["created_at"],
+        "status": status,
+    }
+
+
 def _derived_capture(
     *, title: str, body: str, capture_id: str, promotion_id: str, captured_at: str
 ) -> str:
@@ -238,17 +388,17 @@ def keep_local() -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     with (state_dir / f"{promotion_id}.lock").open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _remove_scalars(capture, {"promotion_main_wiki"})
         if _read_json(state_dir / f"{promotion_id}.json") is not None:
             raise PromotionError("promotion intent already exists and cannot become keep-local")
+        if _read_pin(root, capture_id, promotion_id) is not None:
+            raise PromotionError("trusted promotion intent already exists and cannot become keep-local")
         source_text = capture.read_text(encoding="utf-8")
         decision = _scalar(source_text, "promotion_decision")
         if decision == "promoted":
             raise PromotionError("capture is already promoted and cannot become keep-local")
         if decision == "keep-local":
             return 0
-        pinned_main = _scalar(source_text, "promotion_main_wiki")
-        if pinned_main is not None:
-            raise PromotionError("promotion intent already exists and cannot become keep-local")
         main = _configured_main_wiki()
         if main is not None:
             existing = _existing_target_by_promotion_id(main, promotion_id)
@@ -261,35 +411,44 @@ def keep_local() -> int:
 
 def verify_decision() -> int:
     root, capture, _plugin, capture_id, promotion_id = _source_context()
-    text = capture.read_text(encoding="utf-8")
-    decision = _scalar(text, "promotion_decision")
-    recorded_promotion_id = _scalar(text, "promotion_id")
-    receipt_path = root / ".locks" / "promotions" / f"{promotion_id}.json"
+    state_dir = root / ".locks" / "promotions"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = state_dir / f"{promotion_id}.json"
+    with (state_dir / f"{promotion_id}.lock").open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _remove_scalars(capture, {"promotion_main_wiki"})
+        text = capture.read_text(encoding="utf-8")
+        decision = _scalar(text, "promotion_decision")
+        recorded_promotion_id = _scalar(text, "promotion_id")
 
-    if decision == "keep-local":
-        if recorded_promotion_id is not None:
-            raise PromotionError("keep-local decision must not carry a promotion_id")
-        if receipt_path.exists():
-            raise PromotionError("keep-local decision conflicts with a promotion receipt")
-        return 0
-    if decision != "promoted":
-        raise PromotionError("selective capture has no terminal promotion decision")
-    if recorded_promotion_id != promotion_id:
-        raise PromotionError("promoted decision has an invalid deterministic promotion_id")
+        if decision == "keep-local":
+            if recorded_promotion_id is not None:
+                raise PromotionError("keep-local decision must not carry a promotion_id")
+            if receipt_path.exists() or _read_pin(root, capture_id, promotion_id) is not None:
+                raise PromotionError("keep-local decision conflicts with promotion intent")
+            return 0
+        if decision != "promoted":
+            raise PromotionError("selective capture has no terminal promotion decision")
+        if recorded_promotion_id != promotion_id:
+            raise PromotionError("promoted decision has an invalid deterministic promotion_id")
 
-    receipt = _read_json(receipt_path)
-    if receipt is None or receipt.get("status") != "published":
-        raise PromotionError("promoted decision has no published receipt")
-    if receipt.get("source_capture_id") != capture_id:
-        raise PromotionError("published receipt source identity mismatch")
-    main_value = receipt.get("main_wiki")
-    target_name = receipt.get("target_name")
-    if not isinstance(main_value, str) or not isinstance(target_name, str):
-        raise PromotionError("published receipt lacks its durable target")
-    target = _existing_target(Path(main_value).resolve(), target_name)
-    if target is None:
-        raise PromotionError("published promotion target is no longer durable")
-    _validate_existing(target, capture_id, promotion_id)
+        pin = _read_pin(root, capture_id, promotion_id)
+        if pin is None:
+            raise PromotionError("promoted decision has no trusted promotion pin")
+        main, target_name, _captured_at = _pin_target(pin, capture_id, promotion_id)
+        existing_receipt = _read_json(receipt_path)
+        if existing_receipt is not None and any(
+            existing_receipt.get(key) != expected
+            for key, expected in _receipt_for_pin(pin, existing_receipt.get("status", "")).items()
+            if key != "status"
+        ):
+            raise PromotionError("promotion receipt conflicts with trusted promotion pin")
+        target = _existing_target(main, target_name)
+        if target is None:
+            raise PromotionError("published promotion target is no longer durable")
+        receipt = _receipt_for_pin(pin, "published")
+        receipt["published_path"] = str(target.relative_to(main))
+        _atomic_write(receipt_path, json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return 0
 
 
@@ -312,6 +471,9 @@ def publish(title: str, body_file: str) -> int:
     receipt_path = state_dir / f"{promotion_id}.json"
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        # Compatibility only: this tracked field existed on review branches but
+        # is contributor-controlled and is never publication authority.
+        _remove_scalars(capture, {"promotion_main_wiki"})
         source_decision = _scalar(
             capture.read_text(encoding="utf-8"), "promotion_decision"
         )
@@ -323,47 +485,52 @@ def publish(title: str, body_file: str) -> int:
         if source_decision == "promoted" and source_promotion_id != promotion_id:
             raise PromotionError("source capture has a conflicting promotion identity")
         receipt = _read_json(receipt_path)
-        pinned_main_value = _scalar(
-            capture.read_text(encoding="utf-8"), "promotion_main_wiki"
-        )
-        if pinned_main_value is not None:
-            main = _validate_main_wiki(Path(pinned_main_value))
-        elif receipt is not None:
-            receipt_main = receipt.get("main_wiki")
-            if not isinstance(receipt_main, str) or not receipt_main:
-                raise PromotionError("promotion receipt lacks its pinned main wiki")
-            main = _validate_main_wiki(Path(receipt_main))
-            _set_scalars(capture, {"promotion_main_wiki": str(main)})
-        else:
+        pin_path, workspace = _pin_path(root, promotion_id)
+        pin = _read_pin(root, capture_id, promotion_id)
+        if pin is None:
             main = _main_wiki()
-            _set_scalars(capture, {"promotion_main_wiki": str(main)})
+            recovered = _existing_target_by_promotion_id(main, promotion_id)
+            captured_at = (
+                _scalar(recovered.read_text(encoding="utf-8"), "captured_at")
+                if recovered is not None
+                else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+            )
+            if not captured_at:
+                raise PromotionError("existing promotion target lacks captured_at")
+            target_name = (
+                recovered.name.removesuffix(".processing")
+                if recovered is not None
+                else f"{captured_at}-{promotion_id}.md"
+            )
+            pin = {
+                "schema_version": 1,
+                "source_capture_id": capture_id,
+                "promotion_id": promotion_id,
+                "canonical_project_wiki": str(root),
+                "canonical_workspace": str(workspace),
+                "canonical_main_wiki": str(main),
+                "target_name": target_name,
+                "created_at": captured_at,
+            }
+            _atomic_write_private(pin_path, pin, root, main)
+        main, target_name, captured_at = _pin_target(pin, capture_id, promotion_id)
+
+        if (
+            os.environ.get("WIKI_PROMOTION_TEST_MODE") == "1"
+            and os.environ.get("WIKI_PROMOTION_TEST_FAIL_AFTER_PIN") == "1"
+        ):
+            raise PromotionError("injected failure after trusted promotion pin")
+
         if receipt is not None:
             if receipt.get("source_capture_id") != capture_id:
                 raise PromotionError("promotion receipt source identity mismatch")
             pinned_main = Path(str(receipt.get("main_wiki", ""))).resolve()
             if pinned_main != main:
                 raise PromotionError("promotion receipt conflicts with pinned main wiki")
-            target_name = str(receipt.get("target_name", ""))
-            captured_at = str(receipt.get("captured_at", ""))
+            if receipt.get("target_name") != target_name or receipt.get("captured_at") != captured_at:
+                raise PromotionError("promotion receipt conflicts with trusted promotion pin")
         else:
-            recovered = _existing_target_by_promotion_id(main, promotion_id)
-            if recovered is not None:
-                _validate_existing(recovered, capture_id, promotion_id)
-                target_name = recovered.name.removesuffix(".processing")
-                captured_at = _scalar(recovered.read_text(encoding="utf-8"), "captured_at")
-                if not captured_at:
-                    raise PromotionError(f"promotion target lacks captured_at at {recovered}")
-            else:
-                captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-                target_name = f"{captured_at}-{promotion_id}.md"
-            receipt = {
-                "promotion_id": promotion_id,
-                "source_capture_id": capture_id,
-                "main_wiki": str(main),
-                "target_name": target_name,
-                "captured_at": captured_at,
-                "status": "intent",
-            }
+            receipt = _receipt_for_pin(pin, "intent")
             _atomic_write(receipt_path, json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 
         if (
