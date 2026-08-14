@@ -9,6 +9,15 @@ INIT="${REPO_ROOT}/scripts/wiki-init.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+file_mode() {
+  local path="$1"
+  if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
+    stat -f '%Lp' "${path}"
+  else
+    stat -c '%a' "${path}"
+  fi
+}
+
 TESTDIR="$(mktemp -d)"
 trap 'rm -rf "${TESTDIR}"' EXIT
 export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
@@ -84,7 +93,7 @@ test_publish_once_with_portable_provenance() {
     -exec grep -l '"canonical_main_wiki"' {} + | grep -q . \
     || fail "trusted external promotion pin missing"
   pin="$(find "${XDG_CONFIG_HOME}/karpathy-wiki/promotions" -type f -name 'prom-*.json' -exec grep -l 'cap-reusable' {} +)"
-  [[ "$(stat -c '%a' "${pin}")" == "600" && "$(stat -c '%a' "$(dirname "${pin}")")" == "700" ]] \
+  [[ "$(file_mode "${pin}")" == "600" && "$(file_mode "$(dirname "${pin}")")" == "700" ]] \
     || fail "trusted promotion pin is not owner-only"
   python3 - "${pin}" "${PROJECT}" "${MAIN}" <<'PY' || fail "trusted promotion pin bindings are incomplete"
 import json, sys
