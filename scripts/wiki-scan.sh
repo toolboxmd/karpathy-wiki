@@ -30,6 +30,29 @@ _frontmatter_json_scalar() {
   python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
 }
 
+_publish_capture_if_unowned() {
+  local capture_temp="$1"
+  local capture_path="$2"
+  python3 - "${wiki}/.locks/ingest-dispatch.lock" "${capture_temp}" "${capture_path}" <<'PY'
+import fcntl
+import os
+import sys
+from pathlib import Path
+
+lock_path, source, pending = map(Path, sys.argv[1:])
+lock_path.parent.mkdir(parents=True, exist_ok=True)
+with lock_path.open("a+", encoding="utf-8") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    processing = pending.with_name(pending.name + ".processing")
+    if pending.exists() or processing.exists():
+        raise SystemExit(3)
+    try:
+        os.link(source, pending)
+    except FileExistsError:
+        raise SystemExit(3)
+PY
+}
+
 _emit_raw_direct_capture() {
   local file_path="$1"
   local basename basename_slug title_scalar evidence_scalar
@@ -77,8 +100,13 @@ EOF
     return 1
   fi
   chmod 0644 "${capture_temp}" || { rm -f "${capture_temp}"; return 1; }
-  if ln "${capture_temp}" "${capture_path}" 2>/dev/null; then
+  if _publish_capture_if_unowned "${capture_temp}" "${capture_path}"; then
     log_info "scan: raw-direct capture created: ${capture_name}"
+  elif [[ "$?" -eq 3 ]]; then
+    log_info "scan: raw-direct capture already owned: ${capture_name}"
+  else
+    rm -f "${capture_temp}"
+    return 1
   fi
   rm -f "${capture_temp}"
 }
@@ -127,8 +155,13 @@ EOF
     return 1
   fi
   chmod 0644 "${capture_temp}" || { rm -f "${capture_temp}"; return 1; }
-  if ln "${capture_temp}" "${capture_path}" 2>/dev/null; then
+  if _publish_capture_if_unowned "${capture_temp}" "${capture_path}"; then
     log_info "scan: legacy drift capture created: ${capture_name}"
+  elif [[ "$?" -eq 3 ]]; then
+    log_info "scan: legacy drift capture already owned: ${capture_name}"
+  else
+    rm -f "${capture_temp}"
+    return 1
   fi
   rm -f "${capture_temp}"
 }

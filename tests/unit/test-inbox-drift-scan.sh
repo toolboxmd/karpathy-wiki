@@ -42,6 +42,32 @@ grep -Eq '^capture_id: "cap-[a-f0-9]+"' "${capture}" \
 grep -q '^promotion_policy: "none"' "${capture}" \
   || fail "main-wiki scanner capture should not be promotable"
 
+# A processing drift capture owns its deterministic queue identity. Once that
+# lifecycle completes and the manifest advances, a later source change may
+# publish a new capture with the same deterministic basename.
+LIFECYCLE_WIKI="${TESTDIR}/lifecycle-wiki"
+bash "${INIT}" main "${LIFECYCLE_WIKI}" >/dev/null
+printf 'manifest baseline\n' > "${LIFECYCLE_WIKI}/raw/lifecycle.md"
+python3 "${REPO_ROOT}/scripts/wiki-manifest.py" build "${LIFECYCLE_WIKI}" >/dev/null
+printf 'first changed revision\n' > "${LIFECYCLE_WIKI}/raw/lifecycle.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${LIFECYCLE_WIKI}/raw/lifecycle.md"
+bash "${SCAN}" "${LIFECYCLE_WIKI}" >/dev/null
+lifecycle_capture="$(find "${LIFECYCLE_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*lifecycle*' -print -quit)"
+[[ -n "${lifecycle_capture}" ]] || fail "changed source did not create its first drift capture"
+mv "${lifecycle_capture}" "${lifecycle_capture}.processing"
+bash "${SCAN}" "${LIFECYCLE_WIKI}" >/dev/null
+[[ "$(find "${LIFECYCLE_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*lifecycle*' | wc -l | tr -d ' ')" -eq 1 ]] \
+  || fail "scanner republished while the first changed source was processing"
+python3 "${REPO_ROOT}/scripts/wiki-manifest.py" build "${LIFECYCLE_WIKI}" >/dev/null
+rm "${lifecycle_capture}.processing"
+printf 'second changed revision\n' > "${LIFECYCLE_WIKI}/raw/lifecycle.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${LIFECYCLE_WIKI}/raw/lifecycle.md"
+bash "${SCAN}" "${LIFECYCLE_WIKI}" >/dev/null
+[[ -f "${lifecycle_capture}" ]] \
+  || fail "later source change did not publish after manifest advancement"
+
 # A nested project wiki configured for both marks scanner captures selective,
 # while still queueing them only in the project wiki.
 PROJECT_ROOT="${TESTDIR}/project-both"

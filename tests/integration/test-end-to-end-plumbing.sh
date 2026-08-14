@@ -215,14 +215,28 @@ test_drift_idempotent_under_concurrent_session_starts() {
   # v2.4: backdate so the 5-second mtime defer doesn't apply.
   touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" "${WIKI}/raw/concurrent-test.md"
 
-  # Fire 5 hooks concurrently and wait for them all.
+  # Start one detached scan/dispatch lifecycle and wait until its worker owns
+  # the capture. Further SessionStarts then scan concurrently with that live
+  # processing owner, exercising idempotency across both queue states.
+  (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null
+  for _ in $(seq 1 100); do
+    compgen -G "${WIKI}/.wiki-pending/*drift*concurrent-test*.processing" >/dev/null && break
+    sleep 0.1
+  done
+  compgen -G "${WIKI}/.wiki-pending/*drift*concurrent-test*.processing" >/dev/null \
+    || { echo "FAIL: first SessionStart did not establish a processing owner"; teardown; exit 1; }
+
+  # Fire four more hooks while the held worker still owns the first capture.
   local i
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4; do
     (cd "${WIKI}" && bash "${REPO_ROOT}/hooks/session-start") >/dev/null &
   done
   wait
-  for _ in $(seq 1 100); do
-    compgen -G "${WIKI}/.wiki-pending/*drift*concurrent-test*" >/dev/null && break
+  for _ in $(seq 1 200); do
+    if compgen -G "${WIKI}/.wiki-pending/*drift*concurrent-test*.md" >/dev/null \
+      || grep -q 'scan: raw-direct capture already owned: .*concurrent-test' "${WIKI}/.ingest.log" 2>/dev/null; then
+      break
+    fi
     sleep 0.1
   done
 
@@ -238,6 +252,10 @@ test_drift_idempotent_under_concurrent_session_starts() {
   if [[ "${count}" -gt 1 ]]; then
     echo "FAIL: ${count} duplicate drift captures created under concurrent SessionStart"
     ls "${WIKI}/.wiki-pending/" | grep concurrent
+    if [[ "${WIKI_TEST_PRESERVE_FAILURES:-0}" == "1" ]]; then
+      echo "PRESERVED: ${TESTDIR}"
+      return 1
+    fi
     teardown; exit 1
   fi
 
