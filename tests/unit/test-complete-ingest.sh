@@ -108,6 +108,54 @@ test_body_promotion_prose_is_not_metadata() {
   echo "PASS: test_body_promotion_prose_is_not_metadata"
 }
 
+test_explicit_unsupported_policy_fails_closed() {
+  local wiki="${TESTDIR}/unsupported-policy"
+  local capture="${wiki}/.wiki-pending/unsupported.md.processing"
+  make_wiki "${wiki}"
+  printf '%s\n' '---' 'title: "Unsupported policy"' \
+    'promotion_policy: "always"' '---' > "${capture}"
+
+  run_complete "${wiki}" "${capture}" >/dev/null 2>&1 \
+    && fail "explicit unsupported promotion policy unexpectedly completed"
+  [[ -f "${capture}" ]] || fail "unsupported policy lost recoverable processing capture"
+  [[ ! -d "${wiki}/.wiki-pending/archive" ]] \
+    || fail "unsupported policy was archived as legacy"
+  echo "PASS: test_explicit_unsupported_policy_fails_closed"
+}
+
+test_explicit_malformed_policy_fails_closed() {
+  local wiki="${TESTDIR}/malformed-policy"
+  local capture="${wiki}/.wiki-pending/malformed.md.processing"
+  make_wiki "${wiki}"
+  printf '%s\n' '---' 'title: "Malformed policy"' \
+    'promotion_policy: "selective" trailing-text' '---' > "${capture}"
+
+  run_complete "${wiki}" "${capture}" >/dev/null 2>&1 \
+    && fail "explicit malformed promotion policy unexpectedly completed"
+  [[ -f "${capture}" ]] || fail "malformed policy lost recoverable processing capture"
+  [[ ! -d "${wiki}/.wiki-pending/archive" ]] \
+    || fail "malformed policy was archived as legacy"
+  echo "PASS: test_explicit_malformed_policy_fails_closed"
+}
+
+test_inline_comment_selective_policy_requires_decision() {
+  local wiki="${TESTDIR}/inline-comment-policy"
+  local capture="${wiki}/.wiki-pending/inline-comment.md.processing"
+  make_wiki "${wiki}"
+  printf 'role = "project"\n' > "${wiki}/.wiki-config"
+  printf '%s\n' '---' 'title: "Inline comment policy"' \
+    'capture_id: "cap-inline-comment"' \
+    'promotion_policy: selective # routing note' \
+    'promotion_decision: null' 'promotion_id: null' '---' > "${capture}"
+
+  run_complete "${wiki}" "${capture}" >/dev/null 2>&1 \
+    && fail "inline-comment selective policy bypassed decision enforcement"
+  [[ -f "${capture}" ]] || fail "inline-comment policy lost recoverable processing capture"
+  [[ ! -d "${wiki}/.wiki-pending/archive" ]] \
+    || fail "inline-comment selective policy was archived as legacy"
+  echo "PASS: test_inline_comment_selective_policy_requires_decision"
+}
+
 test_crlf_legacy_capture_completes_without_changing_content() {
   local wiki="${TESTDIR}/crlf-legacy"
   local capture="${wiki}/.wiki-pending/crlf-legacy.md.processing"
@@ -150,6 +198,9 @@ test_validation_failure_keeps_processing
 test_post_archive_failure_rolls_back
 test_selective_capture_requires_decision
 test_body_promotion_prose_is_not_metadata
+test_inline_comment_selective_policy_requires_decision
+test_explicit_unsupported_policy_fails_closed
+test_explicit_malformed_policy_fails_closed
 test_crlf_legacy_capture_completes_without_changing_content
 test_crlf_selective_capture_completes
 echo "ALL PASS"

@@ -64,13 +64,49 @@ frontmatter_scalar() {
     | head -n 1
 }
 
+frontmatter_raw_value() {
+  local key="$1"
+  local file="$2"
+  awk -v wanted="${key}" '
+    { line = $0; sub(/\r$/, "", line) }
+    NR == 1 { if (line != "---") exit; next }
+    line == "---" { exit }
+    line ~ ("^" wanted "[[:space:]]*:") {
+      sub("^" wanted "[[:space:]]*:", "", line)
+      print "present:" line
+      exit
+    }
+  ' "${file}"
+}
+
+parse_promotion_policy() {
+  local field="$1"
+  local value parsed
+  [[ "${field}" == present:* ]] || return 3
+  value="${field#present:}"
+  value="$(printf '%s\n' "${value}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  case "${value}" in
+    \"*) parsed="$(printf '%s\n' "${value}" \
+      | sed -n 's/^"\([^"]*\)"[[:space:]]*\(#.*\)\{0,1\}$/\1/p')" ;;
+    \'*) parsed="$(printf '%s\n' "${value}" \
+      | sed -n "s/^'\([^']*\)'[[:space:]]*\(#.*\)\{0,1\}$/\1/p")" ;;
+    *) parsed="$(printf '%s\n' "${value}" \
+      | sed 's/[[:space:]]\+#.*$//; s/[[:space:]]*$//')" ;;
+  esac
+  case "${parsed}" in
+    none|selective) printf '%s\n' "${parsed}" ;;
+    *) return 2 ;;
+  esac
+}
+
 if ! awk '
   { line = $0; sub(/\r$/, "", line) }
   NR == 1 { if (line != "---") exit 1; next }
   line == "---" { closed = 1; exit }
-  line ~ /^[A-Za-z_][A-Za-z0-9_]*:/ {
+  line ~ /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:/ {
     key = line
     sub(/:.*/, "", key)
+    sub(/[[:space:]]*$/, "", key)
     if (key == "capture_id" || key == "promotion_policy" ||
         key == "promotion_decision" || key == "promotion_id" ||
         key == "promotion_main_wiki" || key == "propagated_from") {
@@ -83,7 +119,14 @@ if ! awk '
   exit 1
 fi
 
-promotion_policy="$(frontmatter_scalar promotion_policy "${processing}")"
+policy_field="$(frontmatter_raw_value promotion_policy "${processing}")"
+promotion_policy="none"
+if [[ -n "${policy_field}" ]]; then
+  if ! promotion_policy="$(parse_promotion_policy "${policy_field}")"; then
+    echo >&2 "wiki complete: unsupported or malformed promotion_policy"
+    exit 1
+  fi
+fi
 if [[ "${promotion_policy}" == "selective" ]]; then
   promotion_decision="$(frontmatter_scalar promotion_decision "${processing}")"
   case "${promotion_decision}" in
