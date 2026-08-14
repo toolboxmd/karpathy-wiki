@@ -387,6 +387,36 @@ test_keep_local_and_project_policy_guard() {
   [[ "${after}" -eq "${before}" ]] || fail "project-only refusal changed main queue"
 }
 
+test_inline_comment_policy_is_eligible_for_both_decisions() {
+  local local_capture publish_capture body promoted
+  local_capture="$(make_source inline-comment-local)"
+  sed -i 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${local_capture}"
+
+  run_promote "${local_capture}" keep-local \
+    || fail "inline-comment selective policy was not eligible for keep-local"
+  grep -q '^promotion_decision: "keep-local"' "${local_capture}" \
+    || fail "inline-comment selective policy was not eligible for keep-local"
+
+  publish_capture="$(make_source inline-comment-publish)"
+  sed -i 's/^promotion_policy: "selective"$/promotion_policy: selective # routing note/' "${publish_capture}"
+  body="${TESTDIR}/inline-comment-publish-body.md"
+  make_body "${body}"
+  run_promote "${publish_capture}" publish --title "Inline comment policy" --body-file "${body}" \
+    || fail "inline-comment selective policy was not eligible for publish"
+  promoted="$(find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -name '*prom-*.md' \
+    -exec grep -l '^propagated_from: "cap-inline-comment-publish"$' {} +)"
+  [[ -n "${promoted}" ]] \
+    || fail "inline-comment selective policy was not eligible for publish"
+
+  local quoted_capture
+  quoted_capture="$(make_source quoted-comment-marker)"
+  sed -i 's/^promotion_policy: "selective"$/promotion_policy: "selective # literal"/' "${quoted_capture}"
+  run_promote "${quoted_capture}" keep-local >/dev/null 2>&1 \
+    && fail "quoted comment marker was stripped from the policy scalar"
+  grep -q '^promotion_decision: null' "${quoted_capture}" \
+    || fail "quoted comment-marker rejection changed the source decision"
+}
+
 test_keep_local_without_intent_ignores_unavailable_current_main() {
   local scenario capture queue_before queue_after
   for scenario in missing moved incomplete; do
@@ -453,6 +483,7 @@ test_missing_receipt_after_publish_recovers_existing_target
 test_missing_receipt_and_changed_main_recovers_original_target
 test_keep_local_rejects_published_target_after_receipt_loss
 test_keep_local_and_project_policy_guard
+test_inline_comment_policy_is_eligible_for_both_decisions
 test_keep_local_without_intent_ignores_unavailable_current_main
 test_forged_promoted_decision_is_rejected
 echo "PASS: selective promotion"

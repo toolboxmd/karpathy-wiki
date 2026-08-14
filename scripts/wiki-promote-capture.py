@@ -32,6 +32,30 @@ def _frontmatter(text: str) -> tuple[list[str], int]:
     raise PromotionError("promotion source has unclosed YAML frontmatter")
 
 
+def _without_yaml_inline_comment(value: str) -> str:
+    """Remove an unquoted YAML comment while preserving quoted hash characters."""
+    single_quoted = False
+    double_quoted = False
+    escaped = False
+    for index, character in enumerate(value):
+        if double_quoted and character == "\\" and not escaped:
+            escaped = True
+            continue
+        if character == '"' and not single_quoted and not escaped:
+            double_quoted = not double_quoted
+        elif character == "'" and not double_quoted:
+            single_quoted = not single_quoted
+        elif (
+            character == "#"
+            and not single_quoted
+            and not double_quoted
+            and (index == 0 or value[index - 1].isspace())
+        ):
+            return value[:index].rstrip()
+        escaped = False
+    return value
+
+
 def _scalar(text: str, key: str) -> str | None:
     lines, closing = _frontmatter(text)
     pattern = re.compile(rf"^{re.escape(key)}:\s*(.*?)\s*$")
@@ -43,9 +67,11 @@ def _scalar(text: str, key: str) -> str | None:
         matches.append(match.group(1))
     if len(matches) > 1:
         raise PromotionError(f"duplicate authoritative frontmatter key: {key}")
-    if not matches or matches[0] in {"null", "~", ""}:
+    if not matches:
         return None
-    value = matches[0]
+    value = _without_yaml_inline_comment(matches[0])
+    if value in {"null", "~", ""}:
+        return None
     if len(value) >= 2 and value[0] == value[-1] == '"':
         try:
             decoded = json.loads(value)
