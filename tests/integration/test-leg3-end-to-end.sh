@@ -5,21 +5,27 @@
 # Provider execution uses the dispatcher's deterministic test adapter; no
 # external model, credentials, or subscription quota is used.
 set -e
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 HOOK="${REPO_ROOT}/hooks/session-start"
 WIKI_BIN="${REPO_ROOT}/bin/wiki"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'sleep 0.3; rm -rf "${TESTDIR}" 2>/dev/null || true' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
 WIKI="$(cd "${WIKI}" && pwd -P)"
+python3 "${CONFIG}" route-set --workspace "${WIKI}" --mode main \
+  --main-wiki "${WIKI}" >/dev/null
 cat > "${WIKI}/.wiki-config.local" <<'EOF'
 [ingest]
 dispatch_mode = "session_start"

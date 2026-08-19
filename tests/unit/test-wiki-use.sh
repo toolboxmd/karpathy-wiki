@@ -1,123 +1,131 @@
 #!/bin/bash
-# Verify wiki-use.sh subcommands and refusal cases.
+# Verify wiki-use.sh writes one private route and performs direct mode switches.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 USE="${REPO_ROOT}/scripts/wiki-use.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
-# shellcheck source=/dev/null
-source "${REPO_ROOT}/scripts/wiki-lib.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
+export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
+unset WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME
 
 MAIN="${TESTDIR}/main"
 bash "${INIT}" main "${MAIN}" >/dev/null
-export WIKI_POINTER_FILE="${TESTDIR}/.wiki-pointer"
-echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+printf '%s\n' "${MAIN}" > "${WIKI_POINTER_FILE}"
 
-write_runtime_config() {
-  local root="$1"
-  cat > "${root}/.wiki-config.local" <<'EOF'
-[ingest]
-dispatch_mode = "session_start"
-max_processes = 2
-default_profile = "grok_medium"
-
-[ingest.profiles.grok_medium]
-provider = "grok"
-model = "grok-test"
-reasoning_effort = "medium"
-
-[routing]
-fork_to_main = false
-
-[settings]
-auto_commit = false
-EOF
+route_for() {
+  python3 "${CONFIG}" route-get --workspace "$1" --json
 }
 
-# Case 1: wiki use project (fresh cwd)
-PROJ="${TESTDIR}/proj1"
-mkdir -p "${PROJ}"
-( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
+assert_mode() {
+  local workspace="$1" mode="$2" primary="$3" policy="$4"
+  route_for "${workspace}" | python3 -c '
+import json, sys
+route = json.load(sys.stdin)
+mode, primary, policy = sys.argv[1:]
+assert route["mode"] == mode, route
+assert route["primary_wiki"] == primary, route
+assert route["promotion_policy"] == policy, route
+' "${mode}" "${primary}" "${policy}" || fail "route mismatch for ${mode}"
+}
+
+# 1. Project selection initializes the local wiki and only the private runtime.
+PROJECT_WORKSPACE="${TESTDIR}/project-workspace"
+mkdir -p "${PROJECT_WORKSPACE}"
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" project) >/dev/null \
   || fail "wiki use project failed"
-[[ -d "${PROJ}/wiki" ]] || fail "wiki use project did not create ./wiki/"
-[[ -f "${PROJ}/.wiki-config" ]] || fail "wiki use project did not write .wiki-config"
-grep -q '^role = "project-pointer"' "${PROJ}/.wiki-config" || fail "config role != project-pointer"
-grep -q '^fork_to_main = false' "${PROJ}/.wiki-config" || fail "fork_to_main should be false"
+PROJECT="${PROJECT_WORKSPACE}/wiki"
+[[ -d "${PROJECT}" ]] || fail "project mode did not initialize ./wiki"
+[[ ! -e "${PROJECT_WORKSPACE}/.wiki-mode" ]] || fail "project mode wrote .wiki-mode"
+[[ ! -e "${PROJECT_WORKSPACE}/.wiki-config" ]] || fail "project mode wrote tracked routing config"
+assert_mode "${PROJECT_WORKSPACE}" project "${PROJECT}" none
 
-# Case 2: wiki use project (idempotent re-run)
-( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
-  || fail "wiki use project re-run failed"
+# 2. Repeating a selection is byte-for-byte idempotent.
+RUNTIME="$(python3 "${CONFIG}" route-path --workspace "${PROJECT_WORKSPACE}")"
+cp "${RUNTIME}" "${TESTDIR}/runtime.before"
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" project) >/dev/null \
+  || fail "repeated project selection failed"
+cmp -s "${TESTDIR}/runtime.before" "${RUNTIME}" \
+  || fail "idempotent project selection rewrote runtime"
 
-# Case 3: wiki use main (fresh cwd, no pre-existing config)
-PROJ_MAIN="${TESTDIR}/proj2"
-mkdir -p "${PROJ_MAIN}"
-( cd "${PROJ_MAIN}" && bash "${USE}" main ) >/dev/null \
-  || fail "wiki use main failed"
-[[ "$(cat "${PROJ_MAIN}/.wiki-mode")" == "main-only" ]] \
-  || fail "wiki use main did not write 'main-only'"
-
-# Case 4: wiki use main inside an existing wiki (refused)
-( cd "${PROJ}" && bash "${USE}" main ) 2>/dev/null \
-  && fail "wiki use main inside existing wiki should refuse"
-
-# Case 5: wiki use both (fresh cwd)
-PROJ_BOTH="${TESTDIR}/proj3"
-mkdir -p "${PROJ_BOTH}"
-( cd "${PROJ_BOTH}" && bash "${USE}" both ) >/dev/null \
+# 3. Both is one direct selection and pins the exact main target.
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" both) >/dev/null \
   || fail "wiki use both failed"
-grep -q '^fork_to_main = true' "${PROJ_BOTH}/.wiki-config" || fail "wiki use both: fork_to_main should be true"
+assert_mode "${PROJECT_WORKSPACE}" both "${PROJECT}" selective
+route_for "${PROJECT_WORKSPACE}" | grep -Fq "\"main_wiki\": \"${MAIN}\"" \
+  || fail "both mode did not pin exact main target"
 
-# Case 6: wiki use both (when pointer = none) — refused
-echo "none" > "${WIKI_POINTER_FILE}"
-PROJ_BOTH_NOMAIN="${TESTDIR}/proj4"
-mkdir -p "${PROJ_BOTH_NOMAIN}"
-( cd "${PROJ_BOTH_NOMAIN}" && bash "${USE}" both ) 2>/dev/null \
-  && fail "wiki use both should refuse when pointer = none"
-echo "${MAIN}" > "${WIKI_POINTER_FILE}"
+# 4. Main switches directly and preserves the existing project wiki.
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" main) >/dev/null \
+  || fail "wiki use main on an existing project failed"
+assert_mode "${PROJECT_WORKSPACE}" main "${MAIN}" none
+[[ -d "${PROJECT}" ]] || fail "main switch deleted project wiki"
 
-# Case 7: wiki use both (existing project, flips fork_to_main)
-( cd "${PROJ}" && bash "${USE}" both ) >/dev/null \
-  || fail "wiki use both on existing project failed"
-grep -q '^fork_to_main = true' "${PROJ}/.wiki-config" || fail "wiki use both: did not flip fork_to_main"
+# 5. A fresh main selection does not create an unused project wiki.
+MAIN_WORKSPACE="${TESTDIR}/main-workspace"
+mkdir -p "${MAIN_WORKSPACE}"
+(cd "${MAIN_WORKSPACE}" && bash "${USE}" main) >/dev/null \
+  || fail "fresh wiki use main failed"
+assert_mode "${MAIN_WORKSPACE}" main "${MAIN}" none
+[[ ! -d "${MAIN_WORKSPACE}/wiki" ]] || fail "main selection created an unused project wiki"
+[[ ! -e "${MAIN_WORKSPACE}/.wiki-mode" ]] || fail "main selection wrote legacy .wiki-mode"
 
-# Case 8: wiki use project flips back
-( cd "${PROJ}" && bash "${USE}" project ) >/dev/null \
-  || fail "wiki use project (flip back) failed"
-grep -q '^fork_to_main = false' "${PROJ}/.wiki-config" || fail "fork_to_main should be false again"
+# 6. A fresh both selection creates project wiki and one complete route.
+BOTH_WORKSPACE="${TESTDIR}/both-workspace"
+mkdir -p "${BOTH_WORKSPACE}"
+(cd "${BOTH_WORKSPACE}" && bash "${USE}" both) >/dev/null \
+  || fail "fresh wiki use both failed"
+assert_mode "${BOTH_WORKSPACE}" both "${BOTH_WORKSPACE}/wiki" selective
 
-# Case 9: an actual wiki root keeps routing local and preserves its provider.
-ACTUAL="${TESTDIR}/actual-wiki"
-bash "${INIT}" project "${ACTUAL}" >/dev/null
-write_runtime_config "${ACTUAL}"
-structural_before="$(cat "${ACTUAL}/.wiki-config")"
-( cd "${ACTUAL}" && bash "${USE}" both ) >/dev/null \
-  || fail "wiki use both on actual wiki failed"
-[[ "$(wiki_runtime_config_get "${ACTUAL}" routing.fork_to_main)" == "true" ]] \
-  || fail "actual wiki did not store fork=true locally"
-[[ "$(wiki_runtime_config_get "${ACTUAL}" ingest.profiles.grok_medium.model)" == "grok-test" ]] \
-  || fail "actual wiki routing update changed the provider model"
-[[ "$(cat "${ACTUAL}/.wiki-config")" == "${structural_before}" ]] \
-  || fail "actual wiki routing update mutated tracked structural config"
-( cd "${ACTUAL}" && bash "${USE}" project ) >/dev/null \
-  || fail "wiki use project on actual wiki failed"
-[[ "$(wiki_runtime_config_get "${ACTUAL}" routing.fork_to_main)" == "false" ]] \
-  || fail "actual wiki did not store fork=false locally"
+# 7. A broken pointer refuses main/both and preserves the prior route bytes.
+cp "${RUNTIME}" "${TESTDIR}/runtime.before-failure"
+printf '%s\n' "${TESTDIR}/missing-main" > "${WIKI_POINTER_FILE}"
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" both) >/dev/null 2>&1 \
+  && fail "both accepted a broken main pointer"
+cmp -s "${TESTDIR}/runtime.before-failure" "${RUNTIME}" \
+  || fail "failed selection changed the previous route"
+printf '%s\n' "${MAIN}" > "${WIKI_POINTER_FILE}"
 
-# Case 10: actual wiki without local runtime config gets an actionable error.
-NO_LOCAL="${TESTDIR}/actual-without-local"
-bash "${INIT}" project "${NO_LOCAL}" >/dev/null
-set +e
-error=$( cd "${NO_LOCAL}" && bash "${USE}" both 2>&1 )
-rc=$?
-set -e
-[[ "${rc}" -ne 0 ]] || fail "wiki use both should refuse to invent local provider config"
-grep -Fq "wiki config init-local ${NO_LOCAL}" <<< "${error}" \
-  || fail "missing local runtime config error is not actionable"
+# 8. Tracked legacy markers are left structurally intact but never updated.
+cat > "${PROJECT_WORKSPACE}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+fork_to_main = true
+EOF
+printf 'main-only\n' > "${PROJECT_WORKSPACE}/.wiki-mode"
+cp "${PROJECT_WORKSPACE}/.wiki-config" "${TESTDIR}/tracked.before"
+cp "${PROJECT_WORKSPACE}/.wiki-mode" "${TESTDIR}/mode.before"
+(cd "${PROJECT_WORKSPACE}" && bash "${USE}" project) >/dev/null \
+  || fail "project selection failed with legacy marker present"
+cmp -s "${TESTDIR}/tracked.before" "${PROJECT_WORKSPACE}/.wiki-config" \
+  || fail "wiki use mutated tracked structural config"
+cmp -s "${TESTDIR}/mode.before" "${PROJECT_WORKSPACE}/.wiki-mode" \
+  || fail "wiki use deleted or rewrote the legacy marker"
+assert_mode "${PROJECT_WORKSPACE}" project "${PROJECT}" none
 
-echo "PASS: wiki-use.sh"
+# 9. An actual project wiki can be selected without inventing ingest config.
+ACTUAL="${TESTDIR}/actual-project"
+bash "${INIT}" project "${ACTUAL}" "${MAIN}" >/dev/null
+(cd "${ACTUAL}" && bash "${USE}" both) >/dev/null \
+  || fail "actual project wiki could not select both"
+assert_mode "${ACTUAL}" both "${ACTUAL}" selective
+[[ ! -e "${ACTUAL}/.wiki-config.local" ]] \
+  || fail "mode selection invented ingest provider configuration"
+
+# 10. Unknown modes fail without creating a routing runtime.
+INVALID="${TESTDIR}/invalid-workspace"
+mkdir -p "${INVALID}"
+(cd "${INVALID}" && bash "${USE}" sideways) >/dev/null 2>&1 \
+  && fail "unknown mode unexpectedly succeeded"
+INVALID_RUNTIME="$(python3 "${CONFIG}" route-path --workspace "${INVALID}")"
+[[ ! -e "${INVALID_RUNTIME}" ]] || fail "unknown mode created a runtime"
+
+echo "PASS: wiki-use.sh single-authority modes (10 cases)"

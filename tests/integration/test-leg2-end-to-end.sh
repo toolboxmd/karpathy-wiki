@@ -24,6 +24,7 @@ export CLAUDE_HEADLESS=1
 # Isolate $HOME so .wiki-forks.jsonl writes land inside TESTDIR.
 export HOME="${TESTDIR}/home"
 mkdir -p "${HOME}"
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 # Capture dispatch is part of this integration path, but provider execution is
 # not. Keep the detached worker local and deterministic instead of invoking a
 # real Codex process that can outlive this fixture's temporary HOME.
@@ -60,7 +61,7 @@ if ls "${MAIN}/.wiki-pending/" 2>/dev/null | grep -qi projtest; then
   fail "project mode leaked capture to main wiki"
 fi
 
-# Both mode: pre-configure cwd with fork_to_main = true
+# Both mode: one project capture is eligible for later semantic promotion.
 BOTH="${TESTDIR}/both"
 mkdir -p "${BOTH}"
 ( cd "${BOTH}" && bash "${REPO_ROOT}/scripts/wiki-use.sh" both ) >/dev/null
@@ -69,8 +70,13 @@ write_test_runtime "${BOTH}/wiki"
   || fail "both mode capture failed"
 sleep 0.3
 ls "${BOTH}/wiki/.wiki-pending/" | grep -qi bothtest || fail "both mode: project capture missing"
-ls "${MAIN}/.wiki-pending/" | grep -qi bothtest || fail "both mode: main capture missing"
-[[ -f "${HOME}/.wiki-forks.jsonl" ]] || fail "both mode: fork-coordination record missing"
+both_capture="$(find "${BOTH}/wiki/.wiki-pending" -maxdepth 1 -type f -iname '*bothtest*.md*' -print -quit)"
+grep -q '^promotion_policy: "selective"$' "${both_capture}" \
+  || fail "both mode: project capture is not selectively promotable"
+if find "${MAIN}/.wiki-pending" -maxdepth 1 -type f -iname '*bothtest*.md*' -print -quit | grep -q .; then
+  fail "both mode: original capture leaked into main before semantic decision"
+fi
+[[ ! -f "${HOME}/.wiki-forks.jsonl" ]] || fail "both mode wrote obsolete fork-coordination state"
 
 # Main-only mode: pre-configure cwd with .wiki-mode
 MAIN_ONLY="${TESTDIR}/main-only"

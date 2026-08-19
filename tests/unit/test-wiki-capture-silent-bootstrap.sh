@@ -1,16 +1,6 @@
 #!/bin/bash
-# Verify that bin/wiki capture silently bootstraps ~/.wiki-pointer when:
-#   - resolver returns exit 10 (pointer missing), AND
-#   - $HOME/wiki/.wiki-config exists with role = "main", AND
-#   - $HOME/wiki/ has the structural files (schema.md, index.md, .wiki-pending/)
-#
-# Falls through to the existing interactive prompt / headless-orphan flow if
-# ANY guard fails (no $HOME/wiki, wrong role, missing structural files).
-#
-# Pre-existing wiki users (people who built ~/wiki/ before v0.2.6's pointer
-# mechanism) should NOT see a prompt the first time they run `bin/wiki
-# capture` after upgrading. Their ~/wiki/ already encodes the answer; the
-# bootstrap reads it and writes the pointer silently.
+# Verify that capture never invents pointer or routing state. Selection belongs
+# to the explicit one-step `wiki use project|main|both` command.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,23 +30,15 @@ export CLAUDE_HEADLESS=1
 BODY=$(printf 'A real chat-only body that comfortably exceeds 1500 bytes.\n%.0s' {1..40})
 
 # ---------------------------------------------------------------------------
-# Case 1 (the headline scenario): pointer missing, but $HOME/wiki is a
-# structurally-correct main wiki. Silent bootstrap fires → ~/.wiki-pointer
-# gets written. Per 0.2.9 the capture ITSELF aborts with an orphan because
-# the cwd is unconfigured (the user must still pick project|main|both via
-# `wiki use`); pre-0.2.9 this auto-selected main-only silently. The
-# bootstrap value is preserved (the pointer survives across runs); only
-# the silent mode-selection is removed.
+# Case 1: even a complete $HOME/wiki does not silently select or write state.
 # ---------------------------------------------------------------------------
 SCRATCH1="${TESTDIR}/scratch1"
 mkdir -p "${SCRATCH1}"
 ( cd "${SCRATCH1}" && echo "${BODY}" | bash "${WIKI_BIN}" capture \
     --title "PointerBootstrap" --kind chat-only --suggested-action create ) >/dev/null 2>&1 \
   && fail "case 1 (post-0.2.9): bootstrap + unconfigured cwd should abort with orphan"
-[[ -f "${WIKI_POINTER_FILE}" ]] \
-  || fail "case 1: ~/.wiki-pointer should have been silently created by the bootstrap"
-[[ "$(cat "${WIKI_POINTER_FILE}")" == "${FAKE_HOME}/wiki" ]] \
-  || fail "case 1: pointer content should be ${FAKE_HOME}/wiki, got '$(cat "${WIKI_POINTER_FILE}")'"
+[[ ! -f "${WIKI_POINTER_FILE}" ]] \
+  || fail "case 1: capture silently created a main pointer"
 [[ ! -f "${SCRATCH1}/.wiki-mode" ]] \
   || fail "case 1: abort path must not write .wiki-mode (was: $(cat "${SCRATCH1}/.wiki-mode" 2>/dev/null))"
 ls "${WIKI_ORPHANS_DIR}/" 2>/dev/null | grep -q '\.md$' \
@@ -129,4 +111,4 @@ mkdir -p "${SCRATCH4}"
 [[ ! -f "${WIKI_POINTER_FILE}" ]] \
   || fail "case 4: pointer should NOT have been written when role != main"
 
-echo "PASS: bin/wiki capture silently bootstraps ~/.wiki-pointer when \$HOME/wiki is a complete main wiki, falls through otherwise"
+echo "PASS: bin/wiki capture never bootstraps pointer or routing state"

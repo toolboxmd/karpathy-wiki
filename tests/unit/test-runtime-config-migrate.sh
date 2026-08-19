@@ -160,6 +160,23 @@ test_pointer_and_unknown_legacy_command_are_rejected() {
   echo "PASS: test_pointer_and_unknown_legacy_command_are_rejected"
 }
 
+test_string_boolean_never_enables_legacy_routing() {
+  local wiki="${TESTDIR}/string-boolean"
+  make_legacy_wiki "${wiki}"
+  sed -i.bak 's/fork_to_main = true/fork_to_main = "false"/' "${wiki}/.wiki-config"
+  rm -f "${wiki}/.wiki-config.bak"
+  local output rc
+  set +e
+  output="$(run_migrate "${wiki}" --dry-run 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "string boolean was coerced into routing authorization"
+  grep -Fq 'fork_to_main must be true or false' <<< "${output}" \
+    || fail "string boolean error is not actionable: ${output}"
+  [[ ! -e "${wiki}/.wiki-config.local" ]] || fail "invalid migration wrote runtime state"
+  echo "PASS: test_string_boolean_never_enables_legacy_routing"
+}
+
 test_atomic_failure_restores_every_file() {
   local wiki="${TESTDIR}/rollback"
   make_legacy_wiki "${wiki}"
@@ -337,6 +354,7 @@ test_real_migration_splits_config_and_preserves_user_gitignore
 test_completed_migration_is_idempotent
 test_init_local_requires_explicit_profile_in_headless_mode
 test_pointer_and_unknown_legacy_command_are_rejected
+test_string_boolean_never_enables_legacy_routing
 test_atomic_failure_restores_every_file
 test_same_provider_and_effort_can_use_distinct_models
 test_relative_executable_path_is_rejected

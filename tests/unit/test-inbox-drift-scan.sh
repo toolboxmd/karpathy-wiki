@@ -6,11 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SCAN="${REPO_ROOT}/scripts/wiki-scan.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
@@ -37,6 +40,42 @@ grep -q 'capture_kind: "raw-direct"' "${capture}" \
   || fail "drift capture missing capture_kind: raw-direct"
 grep -q "evidence: \"${WIKI_CANONICAL}/inbox/note.md\"" "${capture}" \
   || fail "drift capture evidence path wrong: $(grep '^evidence:' "${capture}")"
+grep -q '^promotion_policy: "none"$' "${capture}" \
+  || fail "main-wiki scanner capture should not be promotable"
+
+# Scanner policy comes from the same authoritative workspace route as the CLI.
+PROJECT_WORKSPACE="${TESTDIR}/project-workspace"
+PROJECT_WIKI="${PROJECT_WORKSPACE}/wiki"
+mkdir -p "${PROJECT_WORKSPACE}"
+bash "${INIT}" project "${PROJECT_WIKI}" "${WIKI}" >/dev/null
+python3 "${CONFIG}" route-set --workspace "${PROJECT_WORKSPACE}" --mode both \
+  --project-wiki "${PROJECT_WIKI}" --main-wiki "${WIKI}" >/dev/null
+printf 'selectively reusable source\n' > "${PROJECT_WIKI}/inbox/selective.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${PROJECT_WIKI}/inbox/selective.md"
+bash "${SCAN}" "${PROJECT_WIKI}" >/dev/null
+selective_capture="$(find "${PROJECT_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "selective"$' "${selective_capture}" \
+  || fail "both-mode scanner capture is not selective"
+
+# A tracked legacy fork flag cannot authorize promotion without a local route.
+TRACKED_WORKSPACE="${TESTDIR}/tracked-marker-workspace"
+TRACKED_WIKI="${TRACKED_WORKSPACE}/wiki"
+mkdir -p "${TRACKED_WORKSPACE}"
+bash "${INIT}" project "${TRACKED_WIKI}" "${WIKI}" >/dev/null
+cat > "${TRACKED_WORKSPACE}/.wiki-config" <<'EOF'
+role = "project-pointer"
+wiki = "./wiki"
+fork_to_main = true
+main = "/tmp/forged-main"
+EOF
+printf 'must stay local\n' > "${TRACKED_WIKI}/inbox/local.md"
+touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S')" \
+  "${TRACKED_WIKI}/inbox/local.md"
+bash "${SCAN}" "${TRACKED_WIKI}" >/dev/null
+local_capture="$(find "${TRACKED_WIKI}/.wiki-pending" -maxdepth 1 -type f -name 'drift-*.md' -print -quit)"
+grep -q '^promotion_policy: "none"$' "${local_capture}" \
+  || fail "tracked routing marker authorized scanner promotion"
 
 # Publication failures must reach the caller instead of being swallowed by a
 # later clean manifest check.

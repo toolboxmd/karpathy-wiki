@@ -151,6 +151,28 @@ category count vs soft-ceiling 8: ${cat_count} (ceiling 8)
 EOF
 
 echo
+echo "## Workspace routing"
+if routing_plan="$(python3 "${SCRIPT_DIR}/wiki_config.py" route-find --cwd "${wiki}" --json 2>/dev/null)"; then
+  python3 - "${routing_plan}" <<'PYEOF'
+import json
+import sys
+
+plan = json.loads(sys.argv[1])
+print(f"routing mode: {plan['mode']}")
+print(f"routing runtime: {plan['runtime_config_path']}")
+print(f"primary wiki: {plan['primary_wiki']}")
+if plan.get("project_wiki"):
+    print(f"project wiki: {plan['project_wiki']}")
+if plan.get("main_wiki"):
+    print(f"main wiki: {plan['main_wiki']}")
+print(f"promotion policy: {plan['promotion_policy']}")
+PYEOF
+else
+  echo "routing mode: unconfigured"
+  echo "Run: wiki use project|main|both"
+fi
+
+echo
 echo "## Ingest runtime"
 if ! python3 "${SCRIPT_DIR}/wiki_runtime_status.py" "${wiki}"; then
   echo "runtime config: invalid"
@@ -213,66 +235,98 @@ if malformed:
 PYEOF
 fi
 
-# Fork asymmetry (v2.4)
-forks_log="${HOME}/.wiki-forks.jsonl"
-if [[ -f "${forks_log}" && -s "${forks_log}" ]]; then
-  python3 - "${forks_log}" "${wiki}" <<'PYEOF'
-import json, os, sys
-from datetime import datetime, timedelta, timezone
+# Selective project-to-main decisions. Legacy simultaneous-fork records are no
+# longer written or interpreted because they cannot represent project-first
+# routing.
+python3 - "${wiki}" <<'PYEOF'
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sys
 
-forks_path, target_wiki = sys.argv[1], os.path.realpath(sys.argv[2])
-cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-asymmetric = []
+def without_yaml_inline_comment(value):
+    single_quoted = False
+    double_quoted = False
+    escaped = False
+    for index, character in enumerate(value):
+        if double_quoted and character == "\\" and not escaped:
+            escaped = True
+            continue
+        if character == '"' and not single_quoted and not escaped:
+            double_quoted = not double_quoted
+        elif character == "'" and not double_quoted:
+            single_quoted = not single_quoted
+        elif (character == "#" and not single_quoted and not double_quoted
+              and (index == 0 or value[index - 1].isspace())):
+            return value[:index].rstrip()
+        escaped = False
+    return value
 
-with open(forks_path) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            fork = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        try:
-            ts = datetime.fromisoformat(fork.get("captured_at", "").replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if ts < cutoff:
-            continue
-        wikis = fork.get("wikis", [])
-        if target_wiki not in [os.path.realpath(w) for w in wikis]:
-            continue
-        statuses = {}
-        for w in wikis:
-            runs_log = os.path.join(w, ".ingest-runs.jsonl")
-            if not os.path.exists(runs_log):
-                statuses[w] = "missing"
-                continue
-            found_status = "spawned-no-close"
-            with open(runs_log) as rf:
-                for rline in rf:
-                    rline = rline.strip()
-                    if not rline:
-                        continue
-                    try:
-                        run = json.loads(rline)
-                    except json.JSONDecodeError:
-                        continue
-                    cap = run.get("capture", "")
-                    if cap in fork.get("captures", []) and "status" in run and run["status"] != "spawned":
-                        found_status = run["status"]
-                        break
-            statuses[w] = found_status
-        if any(s != "completed" for s in statuses.values()):
-            asymmetric.append((fork, statuses))
+def frontmatter_scalar(lines, key):
+    pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.*?)\s*$")
+    matches = [match.group(1) for line in lines if (match := pattern.match(line))]
+    if len(matches) > 1:
+        raise ValueError(f"duplicate authoritative frontmatter key: {key}")
+    if not matches:
+        return None
+    value = without_yaml_inline_comment(matches[0])
+    if value in {"", "null", "~"}:
+        return None
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        decoded = json.loads(value)
+        if not isinstance(decoded, str):
+            raise ValueError(f"frontmatter scalar {key} must be a string")
+        return decoded
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
 
-if asymmetric:
+root = Path(sys.argv[1])
+counts = Counter()
+unreadable = 0
+for path in (root / ".wiki-pending").rglob("*.md*"):
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        unreadable += 1
+        continue
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        continue
+    try:
+        frontmatter_end = next(
+            index for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
+    except StopIteration:
+        continue
+    frontmatter = lines[1:frontmatter_end]
+    try:
+        policy = frontmatter_scalar(frontmatter, "promotion_policy")
+        decision = frontmatter_scalar(frontmatter, "promotion_decision")
+    except (ValueError, json.JSONDecodeError):
+        unreadable += 1
+        continue
+    if policy != "selective":
+        continue
+    if decision is None:
+        counts["awaiting decision"] += 1
+    elif decision == "keep-local":
+        counts["kept local"] += 1
+    elif decision == "promoted":
+        counts["promoted"] += 1
+    else:
+        counts["invalid decision"] += 1
+
+if counts or unreadable:
     print()
-    print("## Fork asymmetry (last 7 days)")
-    for fork, statuses in asymmetric:
-        print(f"  fork {fork.get('fork_id', '(no id)')}: {fork.get('title', '(no title)')}")
-        for w, s in statuses.items():
-            print(f"    {w}: {s}")
-    print("  Run `wiki ingest-now <wiki>` on incomplete sides to retry.")
+    print("## Selective promotion")
+    for label in ("awaiting decision", "kept local", "promoted", "invalid decision"):
+        if counts[label]:
+            print(f"  {counts[label]} {label}")
+    if unreadable:
+        print(f"  {unreadable} invalid/unreadable")
 PYEOF
-fi

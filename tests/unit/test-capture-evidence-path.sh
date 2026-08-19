@@ -23,6 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WIKI="${REPO_ROOT}/bin/wiki"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+USE="${REPO_ROOT}/scripts/wiki-use.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -36,6 +37,7 @@ mkdir -p "${FAKE_HOME}"
 MAIN="${FAKE_HOME}/wiki"
 bash "${INIT}" main "${MAIN}" >/dev/null
 echo "${MAIN}" > "${FAKE_HOME}/.wiki-pointer"
+export XDG_CONFIG_HOME="${TMP}/config-home"
 
 # Runtime config is intentionally absent. `wiki capture` must still save the
 # durable file and return success, while printing an actionable setup warning.
@@ -45,7 +47,8 @@ mkdir -p "${WORKDIR}"
 # 0.2.9: bin/wiki capture aborts on unconfigured headless cwd. Configure
 # the workdir explicitly so the cases below exercise the evidence-path
 # branch, not the unconfigured-cwd abort branch.
-echo "main-only" > "${WORKDIR}/.wiki-mode"
+( cd "${WORKDIR}" && HOME="${FAKE_HOME}" \
+  WIKI_POINTER_FILE="${FAKE_HOME}/.wiki-pointer" bash "${USE}" main ) >/dev/null
 
 run_capture() {
   # Args: extra capture flags via positional. Body via stdin.

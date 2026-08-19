@@ -34,6 +34,7 @@ SUPPORTED_PROVIDERS = {"claude", "codex", "grok"}
 SUPPORTED_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "max"}
 SUPPORTED_DISPATCH_MODES = {"session_start", "scheduled"}
 SUPPORTED_USAGE_MONITORS = {"auto", "off"}
+SUPPORTED_ROUTING_MODES = {"project", "main", "both"}
 LEGACY_OPERATIONAL_KEYS = {"platform", "settings", "main", "fork_to_main"}
 
 INGEST_DEFAULTS: dict[str, Any] = {
@@ -49,6 +50,10 @@ INGEST_DEFAULTS: dict[str, Any] = {
 
 class ConfigError(ValueError):
     """An actionable configuration error safe to print to the user."""
+
+
+class RoutingNotFound(ConfigError):
+    """No authoritative local workspace routing record exists."""
 
 
 def _load_toml(path: Path, label: str) -> dict[str, Any]:
@@ -184,6 +189,229 @@ def runtime_config_path(wiki: str | Path) -> Path:
         return root / ".wiki-config.local"
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:24]
     return _config_home() / "wikis" / digest / "runtime.toml"
+
+
+def workspace_runtime_config_path(workspace: str | Path) -> Path:
+    """Return the private runtime path that owns one workspace's wiki mode."""
+
+    root = Path(workspace).expanduser().resolve()
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:24]
+    return _config_home() / "workspaces" / digest / "runtime.toml"
+
+
+def _ensure_private_workspace_runtime_parent(path: Path) -> None:
+    base = _config_home()
+    for directory in (base, base / "workspaces", path.parent):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = directory.lstat()
+        if directory.is_symlink() or not directory.is_dir():
+            raise ConfigError(
+                f"wiki: workspace runtime directory must be a regular directory: {directory}"
+            )
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise ConfigError(
+                f"wiki: workspace runtime directory has the wrong owner: {directory}"
+            )
+        os.chmod(directory, 0o700)
+
+
+def _validate_private_workspace_runtime_file(path: Path) -> dict[str, Any]:
+    base = _config_home()
+    if path.is_symlink():
+        raise ConfigError(
+            f"wiki: workspace runtime configuration must not be a symlink: {path}"
+        )
+    for directory in (base, base / "workspaces", path.parent):
+        if directory.is_symlink():
+            raise ConfigError(
+                f"wiki: workspace runtime directory must not be a symlink: {directory}"
+            )
+        info = directory.stat()
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise ConfigError(
+                f"wiki: workspace runtime directory has the wrong owner: {directory}"
+            )
+        if info.st_mode & 0o077:
+            raise ConfigError(
+                f"wiki: workspace runtime directory must have mode 0700: {directory}"
+            )
+    info = path.stat()
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ConfigError(
+            f"wiki: workspace runtime configuration has the wrong owner: {path}"
+        )
+    if info.st_mode & 0o077:
+        raise ConfigError(
+            f"wiki: workspace runtime configuration must have mode 0600: {path}"
+        )
+    return _load_toml(path, "workspace runtime configuration")
+
+
+def _routing_target(value: Any, role: str, dotted: str) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise _invalid(dotted, "must be a canonical absolute wiki path")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise _invalid(dotted, "must be a canonical absolute wiki path")
+    root, structural = classify_wiki_root(path)
+    if structural.get("role") != role:
+        raise _invalid(dotted, f"must target role={role}")
+    if str(root) != value:
+        raise _invalid(dotted, "must be canonical")
+    return root
+
+
+def validate_workspace_routing(workspace: str | Path) -> dict[str, Any]:
+    """Load one workspace's authoritative local project|main|both selection."""
+
+    root = Path(workspace).expanduser().resolve()
+    path = workspace_runtime_config_path(root)
+    if not path.is_file():
+        raise RoutingNotFound(
+            f"wiki: workspace is unconfigured: {root}\n"
+            "Run: wiki use project|main|both"
+        )
+    data = _validate_private_workspace_runtime_file(path)
+    trust = data.get("trust")
+    if not isinstance(trust, dict):
+        raise _invalid("trust", "must be a TOML table")
+    claimed_workspace = trust.get("workspace_root")
+    if claimed_workspace != str(root):
+        raise _invalid("trust.workspace_root", "does not match this workspace")
+    routing = data.get("routing")
+    if not isinstance(routing, dict):
+        raise _invalid("routing", "must be a TOML table")
+    mode = routing.get("mode")
+    if not isinstance(mode, str) or mode not in SUPPORTED_ROUTING_MODES:
+        raise _invalid(
+            "routing.mode",
+            f"must be one of {', '.join(sorted(SUPPORTED_ROUTING_MODES))}",
+        )
+
+    project: Path | None = None
+    main: Path | None = None
+    if routing.get("project_wiki") is not None:
+        project = _routing_target(
+            routing.get("project_wiki"), "project", "routing.project_wiki"
+        )
+    if routing.get("main_wiki") is not None:
+        main = _routing_target(
+            routing.get("main_wiki"), "main", "routing.main_wiki"
+        )
+    if mode in {"project", "both"} and project is None:
+        raise _invalid("routing.project_wiki", f"is required for mode={mode}")
+    if mode in {"main", "both"} and main is None:
+        raise _invalid("routing.main_wiki", f"is required for mode={mode}")
+    if project is not None and main is not None and project == main:
+        raise _invalid("routing", "project and main targets must differ")
+
+    primary = main if mode == "main" else project
+    assert primary is not None
+    return {
+        "workspace_root": str(root),
+        "runtime_config_path": str(path),
+        "mode": mode,
+        "primary_wiki": str(primary),
+        "project_wiki": str(project) if project is not None else None,
+        "main_wiki": str(main) if main is not None else None,
+        "promotion_policy": "selective" if mode == "both" else "none",
+    }
+
+
+def find_workspace_routing(cwd: str | Path) -> dict[str, Any]:
+    """Walk upward and return the nearest authoritative workspace runtime."""
+
+    current = Path(cwd).expanduser().resolve()
+    home = Path.home().resolve()
+    while current != current.parent and current != home:
+        if workspace_runtime_config_path(current).is_file():
+            return validate_workspace_routing(current)
+        current = current.parent
+    raise RoutingNotFound(
+        f"wiki: cwd is unconfigured: {Path(cwd).expanduser().resolve()}\n"
+        "Run: wiki use project|main|both"
+    )
+
+
+def _render_workspace_routing(
+    *,
+    workspace: Path,
+    mode: str,
+    project: Path | None,
+    main: Path | None,
+    configured_at: str | None = None,
+) -> str:
+    timestamp = configured_at or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+    lines = [
+        "[trust]",
+        f"workspace_root = {_toml_string(str(workspace))}",
+        f"configured_at = {_toml_string(timestamp)}",
+        "",
+        "[routing]",
+        f"mode = {_toml_string(mode)}",
+    ]
+    if project is not None:
+        lines.append(f"project_wiki = {_toml_string(str(project))}")
+    if main is not None:
+        lines.append(f"main_wiki = {_toml_string(str(main))}")
+    return "\n".join(lines) + "\n"
+
+
+def set_workspace_routing(args: argparse.Namespace) -> int:
+    """Atomically persist one complete local routing choice for a workspace."""
+
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ConfigError(f"wiki: workspace does not exist: {workspace}")
+    mode = args.mode
+    project = (
+        _routing_target(args.project_wiki, "project", "routing.project_wiki")
+        if args.project_wiki
+        else None
+    )
+    main = (
+        _routing_target(args.main_wiki, "main", "routing.main_wiki")
+        if args.main_wiki
+        else None
+    )
+    if mode in {"project", "both"} and project is None:
+        raise _invalid("routing.project_wiki", f"is required for mode={mode}")
+    if mode in {"main", "both"} and main is None:
+        raise _invalid("routing.main_wiki", f"is required for mode={mode}")
+    if project is not None and main is not None and project == main:
+        raise _invalid("routing", "project and main targets must differ")
+
+    path = workspace_runtime_config_path(workspace)
+    configured_at: str | None = None
+    existing_text: str | None = None
+    if path.is_file():
+        existing = _validate_private_workspace_runtime_file(path)
+        trust = existing.get("trust")
+        if not isinstance(trust, dict) or trust.get("workspace_root") != str(workspace):
+            raise _invalid("trust.workspace_root", "does not match this workspace")
+        configured_at = trust.get("configured_at")
+        existing_text = path.read_text(encoding="utf-8")
+    rendered = _render_workspace_routing(
+        workspace=workspace,
+        mode=mode,
+        project=project,
+        main=main,
+        configured_at=configured_at,
+    )
+    if rendered == existing_text:
+        print(f"workspace routing unchanged: {path}")
+        return 0
+    _ensure_private_workspace_runtime_parent(path)
+    temp = _write_temp(path, rendered.encode("utf-8"), 0o600)
+    try:
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+    validate_workspace_routing(workspace)
+    print(f"workspace routing updated: {path}")
+    return 0
 
 
 def _ensure_private_runtime_parent(path: Path) -> None:
@@ -902,7 +1130,8 @@ def _build_runtime_for_write(
     )
     auto_commit = legacy_auto_commit if args.auto_commit is None else args.auto_commit
     legacy_fork = structural.get("fork_to_main", False)
-    fork_to_main = legacy_fork if args.fork_to_main is None else args.fork_to_main
+    if not isinstance(legacy_fork, bool):
+        raise _invalid("fork_to_main", "must be true or false")
 
     config = {
         "ingest": {
@@ -919,7 +1148,9 @@ def _build_runtime_for_write(
             "rate_limit_retry_seconds": args.rate_limit_retry_seconds,
             "profiles": profiles,
         },
-        "routing": {"fork_to_main": bool(fork_to_main)},
+        # Retained only as inert compatibility data in the ingest runtime.
+        # Workspace routing is selected exclusively through route-set.
+        "routing": {"fork_to_main": legacy_fork},
         "settings": {"auto_commit": bool(auto_commit)},
     }
     for name, profile in profiles.items():
@@ -1084,9 +1315,6 @@ def update_runtime_config(args: argparse.Namespace) -> int:
     if args.dispatch_mode is not None:
         config["ingest"]["dispatch_mode"] = args.dispatch_mode
         changed = True
-    if args.fork_to_main is not None:
-        config["routing"]["fork_to_main"] = args.fork_to_main
-        changed = True
     if not changed:
         raise ConfigError("wiki config update-runtime: no update option supplied")
     structural_text = _render_structural_config(structural)
@@ -1131,9 +1359,6 @@ def _add_write_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--auto-commit", action=argparse.BooleanOptionalAction, default=None
     )
-    parser.add_argument(
-        "--fork-to-main", action=argparse.BooleanOptionalAction, default=None
-    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1153,6 +1378,33 @@ def _build_parser() -> argparse.ArgumentParser:
     get = subparsers.add_parser("get", help="print one normalized runtime value")
     get.add_argument("--wiki", required=True)
     get.add_argument("--key", required=True)
+
+    route_path = subparsers.add_parser(
+        "route-path", help="print the authoritative workspace runtime path"
+    )
+    route_path.add_argument("--workspace", required=True)
+
+    route_get = subparsers.add_parser(
+        "route-get", help="validate and print one workspace routing plan"
+    )
+    route_get.add_argument("--workspace", required=True)
+    route_get.add_argument("--json", action="store_true")
+
+    route_find = subparsers.add_parser(
+        "route-find", help="find the nearest authoritative workspace routing plan"
+    )
+    route_find.add_argument("--cwd", required=True)
+    route_find.add_argument("--json", action="store_true")
+
+    route_set = subparsers.add_parser(
+        "route-set", help="atomically select project, main, or both for a workspace"
+    )
+    route_set.add_argument("--workspace", required=True)
+    route_set.add_argument(
+        "--mode", choices=sorted(SUPPORTED_ROUTING_MODES), required=True
+    )
+    route_set.add_argument("--project-wiki")
+    route_set.add_argument("--main-wiki")
 
     validate_pointer = subparsers.add_parser(
         "validate-pointer", help="validate a pointer target against workspace trust"
@@ -1185,9 +1437,6 @@ def _build_parser() -> argparse.ArgumentParser:
     update.add_argument(
         "--dispatch-mode", choices=sorted(SUPPORTED_DISPATCH_MODES)
     )
-    update.add_argument(
-        "--fork-to-main", action=argparse.BooleanOptionalAction, default=None
-    )
     return parser
 
 
@@ -1197,6 +1446,27 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "path":
             root, _structural = classify_wiki_root(args.wiki)
             print(runtime_config_path(root))
+            return 0
+        if args.command == "route-path":
+            print(workspace_runtime_config_path(args.workspace))
+            return 0
+        if args.command == "route-set":
+            return set_workspace_routing(args)
+        if args.command == "route-get":
+            routing = validate_workspace_routing(args.workspace)
+            print(
+                json.dumps(routing, indent=2, sort_keys=True)
+                if args.json
+                else routing["mode"]
+            )
+            return 0
+        if args.command == "route-find":
+            routing = find_workspace_routing(args.cwd)
+            print(
+                json.dumps(routing, indent=2, sort_keys=True)
+                if args.json
+                else routing["primary_wiki"]
+            )
             return 0
         if args.command == "init-local":
             return init_local_config(args)
@@ -1211,6 +1481,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"project pointer target valid: {config['wiki_root']}")
             return 0
         config = validate_runtime_config(args.wiki)
+    except RoutingNotFound as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 2

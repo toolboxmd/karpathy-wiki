@@ -24,7 +24,11 @@ suggested_pages:
   - concepts/<slug>.md
 captured_at: "<ISO-8601 UTC timestamp>"
 captured_by: "<source identifier>"
-propagated_from: null  # absolute path to project wiki root, or null
+capture_id: "cap-<portable opaque id>" | "prom-<stable promotion id>"
+promotion_policy: "none" | "selective"
+promotion_decision: null | "keep-local" | "promoted"
+promotion_id: null | "prom-<stable promotion id>"
+propagated_from: null | "cap-<source capture id>"
 ---
 ```
 
@@ -56,6 +60,10 @@ priority order:
 The validator enforces `capture_kind` presence on new captures written
 by v2.4-and-later code; legacy captures pass through these rules.
 
+Legacy captures without the promotion fields are treated as
+`promotion_policy: "none"`. They are ingested normally and are never
+retrospectively promoted.
+
 ## `evidence` field
 
 - For `capture_kind: raw-direct` and `chat-attached` → absolute path to
@@ -66,9 +74,22 @@ by v2.4-and-later code; legacy captures pass through these rules.
 ## `propagated_from`
 
 - `null` for original captures.
-- Absolute path to the originating wiki root if the capture was
-  propagated from another wiki (post-v2.4 cross-wiki workflow; not used
-  in v2.4 itself but reserved).
+- The portable `capture_id` of the originating project capture for new
+  derived main-wiki captures.
+- Legacy absolute project-wiki paths remain readable for backward
+  compatibility, but new captures must not write machine-specific paths.
+
+## Selective promotion fields
+
+- `capture_id` is assigned once when a capture is published and remains stable
+  through pending, processing, failed, and archived states.
+- `promotion_policy: "selective"` means this project capture originated under
+  `both` mode and requires one durable semantic decision before completion.
+- `promotion_decision` records that decision. `keep-local` publishes nothing;
+  `promoted` means exactly one derived main capture is durable.
+- `promotion_id` is deterministic from the source `capture_id`. It is null for
+  keep-local and non-promotable captures.
+- Main and project-only captures use `promotion_policy: "none"`.
 
 ## Filename slug
 

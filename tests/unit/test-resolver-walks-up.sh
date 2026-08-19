@@ -17,13 +17,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RESOLVE="${REPO_ROOT}/scripts/wiki-resolve.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ -x "${RESOLVE}" ]] || fail "wiki-resolve.sh missing"
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 # Stand up a fake $HOME inside TESTDIR so the test never touches the real
 # user's pointer or wiki.
@@ -39,6 +42,8 @@ echo "${MAIN}" > "${FAKE_HOME}/.wiki-pointer"
 PROJ="${FAKE_HOME}/proj"
 bash "${INIT}" project "${PROJ}" "${MAIN}" >/dev/null
 mkdir -p "${PROJ}/sub/dir"
+python3 "${CONFIG}" route-set --workspace "${PROJ}" --mode project \
+  --project-wiki "${PROJ}" >/dev/null
 
 export WIKI_POINTER_FILE="${FAKE_HOME}/.wiki-pointer"
 

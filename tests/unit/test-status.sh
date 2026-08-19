@@ -4,6 +4,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATUS="${REPO_ROOT}/scripts/wiki-status.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 setup() {
   TESTDIR="$(mktemp -d)"
@@ -25,7 +26,9 @@ max_processes = 3
 default_profile = "grok_medium"
 fallback_profile = "sonnet_low"
 heartbeat_seconds = 5
-stale_after_seconds = 15
+# Use an explicit fixture threshold comfortably above the injected suite-load
+# delay; production's 15-second threshold is exercised elsewhere.
+stale_after_seconds = 30
 usage_monitor = "${usage}"
 
 [ingest.profiles.grok_medium]
@@ -105,8 +108,10 @@ test_status_reports_queue_runtime_health() {
     "${WIKI}/.wiki-pending/stalled.md.processing"
   cp "${REPO_ROOT}/tests/fixtures/sample-captures/example.md" \
     "${WIKI}/.wiki-pending/fresh.md.processing"
-  touch -t "$(date -v-60S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '60 seconds ago' '+%Y%m%d%H%M.%S')" \
+  touch -t "$(date -v-300S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '300 seconds ago' '+%Y%m%d%H%M.%S')" \
     "${WIKI}/.wiki-pending/stalled.md.processing"
+  touch -t "$(date '+%Y%m%d%H%M.%S')" \
+    "${WIKI}/.wiki-pending/fresh.md.processing"
   cat > "${WIKI}/.locks/ingest-slots/1.lock" <<'EOF'
 {"run_id":"run-stalled","slot":1,"capture":"stalled.md.processing","profile":"grok_medium"}
 EOF
@@ -127,6 +132,9 @@ not-json
 {"run_id":"rate-1","capture":"x.md","status":"provider_rate_limited","profile":"grok_medium","provider":"grok","model":"grok-test","retry_after":"${retry_after}","at":"2026-08-11T00:00:00Z"}
 {"run_id":"concurrent-older","capture":"older.md","status":"completed","profile":"grok_medium","provider":"grok","model":"grok-test","at":"2026-08-11T00:00:01Z"}
 EOF
+  # Simulate aggregate-suite scheduling pressure. The fresh fixture remains
+  # well inside 30 seconds while the stalled fixture remains well outside it.
+  sleep 2
   local output
   output="$(bash "${STATUS}" "${WIKI}")"
   grep -q "active ingests: 2 / 3" <<< "${output}" \
@@ -318,6 +326,133 @@ test_status_soft_ceiling_line() {
   echo "PASS: test_status_soft_ceiling_line"
 }
 
+test_status_reports_selective_promotion_decisions() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  for item in pending:null local:keep-local promoted:promoted; do
+    name="${item%%:*}"
+    decision="${item#*:}"
+    cat > "${WIKI}/.wiki-pending/archive/2026-08/${name}.md" <<EOF
+---
+promotion_policy: "selective"
+promotion_decision: ${decision}
+---
+EOF
+  done
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  grep -q "1 awaiting decision" <<< "${output}" \
+    || { echo "FAIL: pending promotion decision missing"; teardown; exit 1; }
+  grep -q "1 kept local" <<< "${output}" \
+    || { echo "FAIL: keep-local promotion count missing"; teardown; exit 1; }
+  grep -q "1 promoted" <<< "${output}" \
+    || { echo "FAIL: promoted count missing"; teardown; exit 1; }
+  echo "PASS: test_status_reports_selective_promotion_decisions"
+  teardown
+}
+
+test_status_ignores_promotion_fields_in_capture_body() {
+  setup
+  cat > "${WIKI}/.wiki-pending/legacy.md" <<'EOF'
+---
+source_type: manual
+---
+
+This body documents an example, not routing metadata:
+promotion_policy: selective
+promotion_decision: promoted
+EOF
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  ! grep -q '^## Selective promotion$' <<< "${output}" \
+    || { echo "FAIL: body promotion prose affected status"; teardown; exit 1; }
+  echo "PASS: test_status_ignores_promotion_fields_in_capture_body"
+  teardown
+}
+
+test_status_parses_inline_comments_in_promotion_metadata() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  printf '%s\r\n' \
+    '---' \
+    'promotion_policy: selective # routing note' \
+    'promotion_decision: keep-local # terminal choice' \
+    '---' > "${WIKI}/.wiki-pending/archive/2026-08/local.md"
+  cat > "${WIKI}/.wiki-pending/archive/2026-08/promoted.md" <<'EOF'
+---
+promotion_policy: selective # routing note
+promotion_decision: promoted # terminal choice
+---
+EOF
+  cat > "${WIKI}/.wiki-pending/quoted-hash.md" <<'EOF'
+---
+promotion_policy: "selective # literal"
+promotion_decision: null
+---
+EOF
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")"
+  grep -q "1 kept local" <<< "${output}" \
+    || { echo "FAIL: inline-comment keep-local decision was not counted"; teardown; exit 1; }
+  grep -q "1 promoted" <<< "${output}" \
+    || { echo "FAIL: inline-comment promoted decision was not counted"; teardown; exit 1; }
+  ! grep -q "awaiting decision" <<< "${output}" \
+    || { echo "FAIL: quoted hash policy was reinterpreted as selective"; teardown; exit 1; }
+  echo "PASS: test_status_parses_inline_comments_in_promotion_metadata"
+  teardown
+}
+
+test_status_survives_invalid_utf8_in_all_scanned_queues() {
+  setup
+  mkdir -p "${WIKI}/.wiki-pending/archive/2026-08"
+  cat > "${WIKI}/.wiki-pending/valid.md" <<'EOF'
+---
+promotion_policy: "selective"
+promotion_decision: null
+---
+EOF
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md"
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md.processing"
+  printf '\377\376' > "${WIKI}/.wiki-pending/invalid.md.failed"
+  printf '\377\376' > "${WIKI}/.wiki-pending/archive/2026-08/invalid.md"
+  local output
+  output="$(bash "${STATUS}" "${WIKI}")" \
+    || { echo "FAIL: invalid UTF-8 aborted wiki status"; teardown; exit 1; }
+  grep -q "1 awaiting decision" <<< "${output}" \
+    || { echo "FAIL: valid selective capture was not counted"; teardown; exit 1; }
+  grep -q "4 invalid/unreadable" <<< "${output}" \
+    || { echo "FAIL: invalid UTF-8 outcomes were not reported"; teardown; exit 1; }
+  echo "PASS: test_status_survives_invalid_utf8_in_all_scanned_queues"
+  teardown
+}
+
+test_status_reports_authoritative_workspace_route() {
+  local root main workspace project output runtime
+  root="$(mktemp -d)"
+  root="$(cd "${root}" && pwd -P)"
+  main="${root}/main"
+  workspace="${root}/workspace"
+  project="${workspace}/wiki"
+  mkdir -p "${workspace}"
+  bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${main}" >/dev/null
+  bash "${REPO_ROOT}/scripts/wiki-init.sh" project "${project}" "${main}" >/dev/null
+  XDG_CONFIG_HOME="${root}/config-home" python3 "${CONFIG}" route-set \
+    --workspace "${workspace}" --mode both --project-wiki "${project}" \
+    --main-wiki "${main}" >/dev/null
+  runtime="$(XDG_CONFIG_HOME="${root}/config-home" python3 "${CONFIG}" route-path --workspace "${workspace}")"
+  output="$(XDG_CONFIG_HOME="${root}/config-home" bash "${STATUS}" "${project}")"
+  grep -Fq "routing mode: both" <<< "${output}" \
+    || { echo "FAIL: authoritative routing mode missing"; rm -rf "${root}"; exit 1; }
+  grep -Fq "routing runtime: ${runtime}" <<< "${output}" \
+    || { echo "FAIL: authoritative routing runtime missing"; rm -rf "${root}"; exit 1; }
+  grep -Fq "primary wiki: ${project}" <<< "${output}" \
+    || { echo "FAIL: primary project target missing"; rm -rf "${root}"; exit 1; }
+  grep -Fq "main wiki: ${main}" <<< "${output}" \
+    || { echo "FAIL: exact main target missing"; rm -rf "${root}"; exit 1; }
+  rm -rf "${root}"
+  echo "PASS: test_status_reports_authoritative_workspace_route"
+}
+
 test_status_on_empty_wiki
 test_status_reports_runtime_and_scheduler_state
 test_status_reports_legacy_migration_action
@@ -329,4 +464,9 @@ test_status_walks_discovered_categories
 test_status_includes_ideas_directory
 test_status_depth_violation_count
 test_status_soft_ceiling_line
+test_status_reports_selective_promotion_decisions
+test_status_ignores_promotion_fields_in_capture_body
+test_status_parses_inline_comments_in_promotion_metadata
+test_status_survives_invalid_utf8_in_all_scanned_queues
+test_status_reports_authoritative_workspace_route
 echo "ALL PASS"

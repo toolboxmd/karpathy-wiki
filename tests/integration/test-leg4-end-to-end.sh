@@ -12,15 +12,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WIKI_BIN="${REPO_ROOT}/bin/wiki"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 LOG="${REPO_ROOT}/scripts/wiki-issue-log.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 WIKI="${TESTDIR}/wiki"
 bash "${INIT}" main "${WIKI}" >/dev/null
+python3 "${CONFIG}" route-set --workspace "${WIKI}" --mode main \
+  --main-wiki "${WIKI}" >/dev/null
 
 # Simulate 5 issue emissions across 3 types
 for i in {1..3}; do

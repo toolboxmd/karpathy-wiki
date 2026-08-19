@@ -8,7 +8,7 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 
 - Ingest is bounded by `max_processes`; no SessionStart fan-out can exceed the per-wiki or per-profile ceiling.
 - Claude Code, Codex, and Grok are supported as detached ingest providers. Every profile names an exact model and reasoning effort.
-- `.wiki-config` is tracked structural identity. The local trust record plus providers, models, limits, activation, routing, and auto-commit live outside the checkout under `${XDG_CONFIG_HOME:-~/.config}/karpathy-wiki/`.
+- `.wiki-config` is tracked structural identity only. Provider settings and local trust live under `.../wikis/<hash>/runtime.toml`; the one authoritative per-workspace `project|main|both` choice lives separately under `.../workspaces/<hash>/runtime.toml`.
 - Automatic activation is mutually exclusive: `session_start` or `scheduled` (the macOS LaunchAgent adapter).
 - Live work has a heartbeat. Technical failures retry deterministically, rate limits wait without consuming attempts, and exhausted captures move to `.wiki-pending/failed/`.
 - CodexBar is optional advisory preflight. Without it, ingestion remains fully functional in reactive mode.
@@ -35,7 +35,7 @@ Tests: 58 + 8 RED tests pass.
 - **New `karpathy-wiki-read` skill** with a deterministic 6-step ladder. No agent judgement at branch points.
 - **Threshold 5/6** for inline-read vs Explore-subagent dispatch (≤5 candidates → inline; 6+ → subagent).
 - **Three-platform JSON output** in `hooks/session-start`: `additional_context` for Cursor, `hookSpecificOutput.additionalContext` for Claude Code (unchanged), `additionalContext` for Copilot CLI / SDK-standard. Mirrors `obra/superpowers` v5.1.0.
-- **Silent bootstrap of `~/.wiki-pointer`** from `$HOME/wiki/` when the resolver returns exit 10 AND `$HOME/wiki/.wiki-config` has `role = "main"` AND structural files exist. Pre-existing wiki users no longer hit a prompt or orphan on first capture after upgrade.
+- **Historical note:** 0.2.7 could silently bootstrap `~/.wiki-pointer` from `$HOME/wiki/`. The current single-authority flow no longer changes pointer or routing state during capture; `wiki init-main` and `wiki use` own those choices explicitly.
 - **Legacy `skills/karpathy-wiki/SKILL.md`** (DEPRECATED in v2.4, 549 lines) deleted.
 - **Capture skill body-sufficiency dedup** — the section was duplicated across two scrolls pre-0.2.7.
 
@@ -47,8 +47,7 @@ Wiki identity/routing and ingest execution are configured separately.
 
 1. **`~/.wiki-pointer`** — single line of text. Either an absolute path (e.g. `/Users/you/wiki`) or the literal word `none` (means "no main wiki configured; project wikis only"). Created by:
    - `wiki init-main` (interactive prompt: "point at existing", "create at ~/wiki/", or "none").
-   - The 0.2.7 silent bootstrap (auto-fires on first capture if `~/wiki/` is structurally a valid main wiki).
-   - Manual `echo "<path>" > ~/.wiki-pointer` (functionally identical to the bootstrap).
+   - Manual `echo "<path>" > ~/.wiki-pointer`.
 
 2. **A main wiki at the path the pointer references.** Structurally requires `.wiki-config` (with `role = "main"`), `schema.md`, `index.md`, and `.wiki-pending/` directory. Created by `wiki-init.sh main <path>`. Default path is `~/wiki/`.
 
@@ -79,17 +78,17 @@ wiki config migrate <wiki> --trust-workspace <canonical-project-or-wiki-root> \
 
 Configuration migration does not migrate, move, or rewrite wiki content.
 
-If neither exists when you run `wiki capture`, the resolver returns exit 10. `bin/wiki` either prompts (interactive) or saves your body to `~/.wiki-orphans/` (headless).
+If this workspace has no routing runtime when you run `wiki capture`, the resolver returns exit 11. `bin/wiki` either prompts once for `project|main|both` (interactive) or saves the body to `~/.wiki-orphans/` with the exact `wiki use` recovery command (headless).
 
-## Per-directory config (optional)
+## Per-workspace routing
 
 Run `wiki use <mode>` once per directory you want a non-default capture flow in:
 
-- `wiki use project` — writes a `role = "project-pointer"` marker to cwd and initializes `./wiki/` with `role = "project"` if missing. Captures from this dir flow to `./wiki/.wiki-pending/`.
-- `wiki use main` — writes `.wiki-mode` with literal string `main-only` to cwd. Captures flow only to `~/wiki/`.
-- `wiki use both` — writes `.wiki-config` with fork mode. Captures fork: same content goes to BOTH `./wiki/` AND `~/wiki/`.
+- `wiki use project` — initializes `./wiki/` with `role = "project"` if missing and selects it as the only target.
+- `wiki use main` — pins the main wiki currently selected by `~/.wiki-pointer`; it does not create or delete a project wiki.
+- `wiki use both` — pins both exact targets. The original capture goes only to `./wiki/`; after local ingest, reusable cross-project knowledge may produce one generalized capture in the main wiki. Project-specific knowledge stays local.
 
-Without `wiki use`, interactive capture prompts for a mode. Headless capture preserves the body as an orphan and asks the user to choose; it never silently writes `.wiki-mode`.
+Each command writes one complete private runtime record outside the checkout. There is no consent file or second confirmation step. Tracked `fork_to_main`, tracked main paths, and legacy `.wiki-mode` files are ignored as routing authority and are not rewritten.
 
 ## What "automatic" means
 
@@ -150,20 +149,18 @@ Result: agent has the wiki rules loaded; cwd has no wiki to capture into yet.
 
 ### Scenario 2 — Asking a question
 
-Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the resolved wiki (`~/wiki/` if `~/.wiki-pointer` is set; else falls through to Step F as a "cold-no-wiki" case).
+Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the primary wiki in the workspace routing runtime. An unconfigured workspace falls through to the cold-no-wiki case.
 
 The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. Tracked in [TODO.md](TODO.md) as a 0.2.8 candidate ("0.2.8: cold-no-wiki question path").
 
 ### Scenario 3 — `wiki capture` headless from a fresh directory
 
-The resolver checks `~/.wiki-pointer`, then cwd state. Five exit codes:
+The resolver reads one private workspace runtime snapshot. Relevant exit codes:
 
 - `0` — success
-- `10` — pointer missing/broken (silent-bootstrap fires if `$HOME/wiki/` valid; else interactive prompt OR headless orphan)
-- `11` — cwd unconfigured (interactive prompts; headless preserves an orphan and asks for `wiki use project|main|both`)
-- `12` — cwd config requires main but pointer is none/missing (orphan)
-- `13` — cwd has BOTH `.wiki-config` AND `.wiki-mode` (conflict, orphan)
-- `14` — half-built wiki (orphan)
+- `11` — workspace unconfigured (interactive prompt or headless orphan with `wiki use project|main|both` recovery)
+- `13` — malformed or trust-mismatched routing runtime (orphan)
+- `14` — a configured exact wiki target is incomplete (orphan)
 
 Orphans land in `${WIKI_ORPHANS_DIR:-$HOME/.wiki-orphans}/<timestamp>-<slug>.md`. Body preserved; manual cleanup later.
 
@@ -178,7 +175,7 @@ The selected provider/model ingester reads the file directly (no wrapper capture
 
 ### Scenario 5 — `wiki use project` in a new directory
 
-Writes `<cwd>/.wiki-config` as a project pointer and initializes `./wiki/` with `role = "project"` if missing. From this point, captures from `<cwd>` (or any subdir) write to `./wiki/.wiki-pending/` instead of the main wiki. Run `wiki config init-local ./wiki --trust-workspace "$(pwd)" ...` once on each machine that should ingest this project wiki.
+Initializes `./wiki/` with `role = "project"` if missing, then atomically writes the private workspace routing runtime. It does not edit tracked workspace markers. Captures from `<cwd>` or any subdirectory write to `./wiki/.wiki-pending/`. Run `wiki config init-local ./wiki --trust-workspace "$(pwd)" ...` once on each machine that should ingest this project wiki.
 
 ## CLI surface
 

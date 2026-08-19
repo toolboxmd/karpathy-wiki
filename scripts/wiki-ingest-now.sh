@@ -2,7 +2,7 @@
 # wiki-ingest-now.sh — on-demand drift-scan + drain.
 #
 # Usage:
-#   wiki-ingest-now.sh                — uses cwd-resolved wiki(s)
+#   wiki-ingest-now.sh                — uses the cwd-resolved initial wiki
 #   wiki-ingest-now.sh <wiki-path>    — operates on the explicit path,
 #                                       no resolver, no prompting
 
@@ -37,13 +37,11 @@ if [[ $# -eq 0 ]]; then
   resolver_out="$(bash "${SCRIPT_DIR}/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || resolver_exit=$?
 
   if [[ "${resolver_exit}" != 0 ]]; then
-    echo >&2 "wiki ingest-now: resolver exit ${resolver_exit}; cannot determine target wiki(s)."
+    echo >&2 "wiki ingest-now: resolver exit ${resolver_exit}; cannot determine target wiki."
     case "${resolver_exit}" in
-      10) echo >&2 "  pointer missing — run 'wiki init-main' first" ;;
       11) echo >&2 "  cwd unconfigured — run 'wiki use project|main|both' first" ;;
-      12) echo >&2 "  cwd requires a main wiki but pointer is none/missing" ;;
-      13) echo >&2 "  cwd has both .wiki-config and .wiki-mode (conflict); rm one" ;;
-      14) echo >&2 "  half-built wiki at cwd or pointer target" ;;
+      13) echo >&2 "  malformed workspace routing runtime" ;;
+      14) echo >&2 "  configured wiki target is incomplete" ;;
     esac
     exit 1
   fi
