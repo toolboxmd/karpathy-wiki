@@ -1,7 +1,7 @@
 #!/bin/bash
 # Read-only wiki health report.
 #
-# Usage: wiki-status.sh <wiki_root>
+# Usage: wiki-status.sh <wiki_root> [routing_cwd]
 
 set -e
 
@@ -11,8 +11,9 @@ source "${SCRIPT_DIR}/wiki-lib.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/wiki-capture.sh"
 
-wiki="$1"
-[[ -n "${wiki}" ]] || { echo >&2 "usage: wiki-status.sh <wiki_root>"; exit 1; }
+wiki="${1:-}"
+[[ -n "${wiki}" ]] || { echo >&2 "usage: wiki-status.sh <wiki_root> [routing_cwd]"; exit 1; }
+routing_cwd="${2:-${wiki}}"
 [[ -d "${wiki}" ]] || { echo >&2 "not a directory: ${wiki}"; exit 1; }
 [[ -f "${wiki}/.wiki-config" ]] || { echo >&2 "not a wiki: ${wiki}"; exit 1; }
 
@@ -152,7 +153,7 @@ EOF
 
 echo
 echo "## Workspace routing"
-if routing_plan="$(python3 "${SCRIPT_DIR}/wiki_config.py" route-find --cwd "${wiki}" --json 2>/dev/null)"; then
+if routing_plan="$(python3 "${SCRIPT_DIR}/wiki_config.py" route-find --cwd "${routing_cwd}" --json 2>/dev/null)"; then
   python3 - "${routing_plan}" <<'PYEOF'
 import json
 import sys

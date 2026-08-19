@@ -4,6 +4,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATUS="${REPO_ROOT}/scripts/wiki-status.sh"
+BIN="${REPO_ROOT}/bin/wiki"
 CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
 
 setup() {
@@ -453,6 +454,30 @@ test_status_reports_authoritative_workspace_route() {
   echo "PASS: test_status_reports_authoritative_workspace_route"
 }
 
+test_cli_status_preserves_external_main_workspace_route() {
+  local root main workspace output runtime
+  root="$(mktemp -d)"
+  root="$(cd "${root}" && pwd -P)"
+  main="${root}/main"
+  workspace="${root}/workspace"
+  mkdir -p "${workspace}"
+  bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${main}" >/dev/null
+  XDG_CONFIG_HOME="${root}/config-home" python3 "${CONFIG}" route-set \
+    --workspace "${workspace}" --mode main --main-wiki "${main}" >/dev/null
+  runtime="$(XDG_CONFIG_HOME="${root}/config-home" python3 "${CONFIG}" route-path --workspace "${workspace}")"
+  output="$(cd "${workspace}" && XDG_CONFIG_HOME="${root}/config-home" bash "${BIN}" status)"
+  grep -Fq "routing mode: main" <<< "${output}" \
+    || { echo "FAIL: CLI status lost the originating workspace mode"; rm -rf "${root}"; exit 1; }
+  grep -Fq "routing runtime: ${runtime}" <<< "${output}" \
+    || { echo "FAIL: CLI status lost the originating workspace runtime"; rm -rf "${root}"; exit 1; }
+  grep -Fq "primary wiki: ${main}" <<< "${output}" \
+    || { echo "FAIL: CLI status lost the external main primary"; rm -rf "${root}"; exit 1; }
+  grep -Fq "main wiki: ${main}" <<< "${output}" \
+    || { echo "FAIL: CLI status lost the pinned main target"; rm -rf "${root}"; exit 1; }
+  rm -rf "${root}"
+  echo "PASS: test_cli_status_preserves_external_main_workspace_route"
+}
+
 test_status_on_empty_wiki
 test_status_reports_runtime_and_scheduler_state
 test_status_reports_legacy_migration_action
@@ -469,4 +494,5 @@ test_status_ignores_promotion_fields_in_capture_body
 test_status_parses_inline_comments_in_promotion_metadata
 test_status_survives_invalid_utf8_in_all_scanned_queues
 test_status_reports_authoritative_workspace_route
+test_cli_status_preserves_external_main_workspace_route
 echo "ALL PASS"

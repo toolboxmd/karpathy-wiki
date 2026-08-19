@@ -120,7 +120,23 @@ assert_mode "${ACTUAL}" both "${ACTUAL}" selective
 [[ ! -e "${ACTUAL}/.wiki-config.local" ]] \
   || fail "mode selection invented ingest provider configuration"
 
-# 10. Unknown modes fail without creating a routing runtime.
+# 10. A symlinked ./wiki cannot bind this workspace to another workspace's
+# already-trusted project wiki.
+FOREIGN="${TESTDIR}/foreign-project"
+bash "${INIT}" project "${FOREIGN}" "${MAIN}" >/dev/null
+python3 "${CONFIG}" init-local --wiki "${FOREIGN}" \
+  --trust-workspace "${FOREIGN}" --default-provider codex \
+  --default-model test-model --default-effort low >/dev/null
+SYMLINK_WORKSPACE="${TESTDIR}/symlink-workspace"
+mkdir -p "${SYMLINK_WORKSPACE}"
+ln -s "${FOREIGN}" "${SYMLINK_WORKSPACE}/wiki"
+SYMLINK_RUNTIME="$(python3 "${CONFIG}" route-path --workspace "${SYMLINK_WORKSPACE}")"
+(cd "${SYMLINK_WORKSPACE}" && bash "${USE}" project) >/dev/null 2>&1 \
+  && fail "wiki use project accepted a foreign symlinked ./wiki"
+[[ ! -e "${SYMLINK_RUNTIME}" ]] \
+  || fail "rejected foreign project target persisted a workspace route"
+
+# 11. Unknown modes fail without creating a routing runtime.
 INVALID="${TESTDIR}/invalid-workspace"
 mkdir -p "${INVALID}"
 (cd "${INVALID}" && bash "${USE}" sideways) >/dev/null 2>&1 \
@@ -128,4 +144,4 @@ mkdir -p "${INVALID}"
 INVALID_RUNTIME="$(python3 "${CONFIG}" route-path --workspace "${INVALID}")"
 [[ ! -e "${INVALID_RUNTIME}" ]] || fail "unknown mode created a runtime"
 
-echo "PASS: wiki-use.sh single-authority modes (10 cases)"
+echo "PASS: wiki-use.sh single-authority modes (11 cases)"

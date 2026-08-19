@@ -261,6 +261,19 @@ def _routing_target(value: Any, role: str, dotted: str) -> Path:
     return root
 
 
+def _validate_project_workspace_binding(workspace: Path, project: Path | None) -> None:
+    """Require a project target to be this workspace or its real ./wiki."""
+
+    if project is None:
+        return
+    expected_child = workspace / "wiki"
+    if project not in {workspace, expected_child}:
+        raise _invalid(
+            "routing.project_wiki",
+            f"must belong to workspace {workspace}",
+        )
+
+
 def validate_workspace_routing(workspace: str | Path) -> dict[str, Any]:
     """Load one workspace's authoritative local project|main|both selection."""
 
@@ -298,6 +311,7 @@ def validate_workspace_routing(workspace: str | Path) -> dict[str, Any]:
         main = _routing_target(
             routing.get("main_wiki"), "main", "routing.main_wiki"
         )
+    _validate_project_workspace_binding(root, project)
     if mode in {"project", "both"} and project is None:
         raise _invalid("routing.project_wiki", f"is required for mode={mode}")
     if mode in {"main", "both"} and main is None:
@@ -323,9 +337,11 @@ def find_workspace_routing(cwd: str | Path) -> dict[str, Any]:
 
     current = Path(cwd).expanduser().resolve()
     home = Path.home().resolve()
-    while current != current.parent and current != home:
+    while current != current.parent:
         if workspace_runtime_config_path(current).is_file():
             return validate_workspace_routing(current)
+        if current == home:
+            break
         current = current.parent
     raise RoutingNotFound(
         f"wiki: cwd is unconfigured: {Path(cwd).expanduser().resolve()}\n"
@@ -376,6 +392,7 @@ def set_workspace_routing(args: argparse.Namespace) -> int:
         if args.main_wiki
         else None
     )
+    _validate_project_workspace_binding(workspace, project)
     if mode in {"project", "both"} and project is None:
         raise _invalid("routing.project_wiki", f"is required for mode={mode}")
     if mode in {"main", "both"} and main is None:

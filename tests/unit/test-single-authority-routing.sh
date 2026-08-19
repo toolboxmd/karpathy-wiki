@@ -133,6 +133,44 @@ after_hash="$(shasum -a 256 "${RUNTIME}" | awk '{print $1}')"
 [[ "${after_hash}" == "${before_hash}" ]] \
   || fail "failed mode switch changed the previous runtime"
 
+# Existing routes are revalidated against their workspace trust boundary.
+FOREIGN_PROJECT="${TESTDIR}/foreign-project"
+bash "${REPO_ROOT}/scripts/wiki-init.sh" project "${FOREIGN_PROJECT}" >/dev/null
+cp "${RUNTIME}" "${TESTDIR}/runtime.before-foreign"
+python3 - "${RUNTIME}" "${PROJECT}" "${FOREIGN_PROJECT}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+project, foreign = sys.argv[2:]
+text = path.read_text(encoding="utf-8")
+text = text.replace(
+    f'project_wiki = "{project}"',
+    f'project_wiki = "{foreign}"',
+)
+path.write_text(text, encoding="utf-8")
+PY
+set +e
+route_json >/dev/null 2>&1
+rc=$?
+set -e
+[[ "${rc}" -ne 0 ]] \
+  || fail "an existing route accepted a project wiki outside its workspace"
+cp "${TESTDIR}/runtime.before-foreign" "${RUNTIME}"
+chmod 0600 "${RUNTIME}"
+
+# A route explicitly owned by HOME is visible both at HOME and below it, but
+# the search still stops at that boundary instead of walking above it.
+HOME_WORKSPACE="${TESTDIR}/home-workspace"
+mkdir -p "${HOME_WORKSPACE}/nested"
+HOME="${HOME_WORKSPACE}" python3 "${CONFIG}" route-set \
+  --workspace "${HOME_WORKSPACE}" --mode main --main-wiki "${MAIN}" >/dev/null
+for start in "${HOME_WORKSPACE}" "${HOME_WORKSPACE}/nested"; do
+  HOME="${HOME_WORKSPACE}" python3 "${CONFIG}" route-find \
+    --cwd "${start}" --json | grep -Fq '"mode": "main"' \
+    || fail "HOME-owned routing was not found from ${start}"
+done
+
 # Invalid mode types and values fail closed.
 python3 - "${RUNTIME}" <<'PY'
 from pathlib import Path

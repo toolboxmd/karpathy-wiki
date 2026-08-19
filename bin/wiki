@@ -42,7 +42,8 @@ wiki_root() {
 
 case "${sub}" in
   status)
-    bash "${REPO_ROOT}/scripts/wiki-status.sh" "$(wiki_root)"
+    routing_cwd="$(pwd -P)"
+    bash "${REPO_ROOT}/scripts/wiki-status.sh" "$(wiki_root)" "${routing_cwd}"
     ;;
   doctor)
     echo "wiki doctor: not implemented in MVP. For now, ask the agent to run a deep lint of the wiki."
