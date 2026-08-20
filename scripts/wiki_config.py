@@ -47,6 +47,12 @@ INGEST_DEFAULTS: dict[str, Any] = {
     "rate_limit_retry_seconds": 900,
 }
 
+SCHEDULER_DEFAULTS: dict[str, Any] = {
+    "interval_seconds": 60,
+    "max_total_processes": 10,
+    "max_processes_per_wiki": 1,
+}
+
 
 class ConfigError(ValueError):
     """An actionable configuration error safe to print to the user."""
@@ -197,6 +203,180 @@ def workspace_runtime_config_path(workspace: str | Path) -> Path:
     root = Path(workspace).expanduser().resolve()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:24]
     return _config_home() / "workspaces" / digest / "runtime.toml"
+
+
+def scheduler_config_path() -> Path:
+    """Return the private machine scheduler runtime configuration path."""
+
+    return _config_home() / "scheduler" / "runtime.toml"
+
+
+def scheduler_slot_root() -> Path:
+    """Return the private machine-wide dispatch slot directory."""
+
+    return _config_home() / "scheduler" / "slots"
+
+
+def scheduler_state_path() -> Path:
+    """Return the private machine-wide coordinator state path."""
+
+    return _config_home() / "scheduler" / "state.json"
+
+
+def _ensure_private_scheduler_parent(path: Path | None = None) -> None:
+    base = _config_home()
+    scheduler = base / "scheduler"
+    target_parent = (path or scheduler).parent if path else scheduler
+    for directory in (base, scheduler, target_parent):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = directory.lstat()
+        if directory.is_symlink() or not directory.is_dir():
+            raise ConfigError(
+                f"wiki: scheduler runtime directory must be a regular directory: {directory}"
+            )
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise ConfigError(
+                f"wiki: scheduler runtime directory has the wrong owner: {directory}"
+            )
+        os.chmod(directory, 0o700)
+
+
+def _validate_private_scheduler_file(path: Path) -> dict[str, Any]:
+    if path.is_symlink():
+        raise ConfigError(
+            f"wiki: scheduler runtime configuration must not be a symlink: {path}"
+        )
+    base = _config_home()
+    for directory in (base, base / "scheduler"):
+        if directory.is_symlink():
+            raise ConfigError(
+                f"wiki: scheduler runtime directory must not be a symlink: {directory}"
+            )
+        info = directory.stat()
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise ConfigError(
+                f"wiki: scheduler runtime directory has the wrong owner: {directory}"
+            )
+        if info.st_mode & 0o077:
+            raise ConfigError(
+                f"wiki: scheduler runtime directory must have mode 0700: {directory}"
+            )
+    info = path.stat()
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ConfigError(
+            f"wiki: scheduler runtime configuration has the wrong owner: {path}"
+        )
+    if info.st_mode & 0o077:
+        raise ConfigError(
+            f"wiki: scheduler runtime configuration must have mode 0600: {path}"
+        )
+    return _load_toml(path, "scheduler runtime configuration")
+
+
+def _scheduler_int(
+    table: dict[str, Any],
+    key: str,
+    *,
+    minimum: int = 1,
+    maximum: int | None = None,
+) -> int:
+    value = table.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise _invalid(f"scheduler.{key}", f"must be an integer >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise _invalid(
+            f"scheduler.{key}", f"must be an integer from {minimum} through {maximum}"
+        )
+    return value
+
+
+def _normalize_scheduler_runtime(data: dict[str, Any]) -> dict[str, Any]:
+    scheduler = data.get("scheduler")
+    if not isinstance(scheduler, dict):
+        raise _invalid("scheduler", "must be a TOML table")
+    interval = _scheduler_int(scheduler, "interval_seconds")
+    total = _scheduler_int(scheduler, "max_total_processes", maximum=100)
+    per_wiki = _scheduler_int(scheduler, "max_processes_per_wiki")
+    if per_wiki != 1:
+        raise _invalid("scheduler.max_processes_per_wiki", "is fixed to 1 in v0.3.1")
+    return {
+        "scheduler": {
+            "interval_seconds": interval,
+            "max_total_processes": total,
+            "max_processes_per_wiki": per_wiki,
+        },
+        "runtime_config_path": str(scheduler_config_path()),
+    }
+
+
+def _render_scheduler_runtime(config: dict[str, Any]) -> str:
+    scheduler = config["scheduler"]
+    return "\n".join(
+        [
+            "[scheduler]",
+            f"interval_seconds = {scheduler['interval_seconds']}",
+            f"max_total_processes = {scheduler['max_total_processes']}",
+            f"max_processes_per_wiki = {scheduler['max_processes_per_wiki']}",
+            "",
+        ]
+    )
+
+
+def validate_scheduler_runtime_config() -> dict[str, Any]:
+    """Load and validate the private machine scheduler runtime configuration."""
+
+    path = scheduler_config_path()
+    data = _validate_private_scheduler_file(path)
+    return _normalize_scheduler_runtime(data)
+
+
+def ensure_scheduler_runtime_config() -> dict[str, Any]:
+    """Create the default private scheduler config when missing, then validate it."""
+
+    path = scheduler_config_path()
+    if not path.exists():
+        _ensure_private_scheduler_parent(path)
+        config = {"scheduler": dict(SCHEDULER_DEFAULTS)}
+        temp = _write_temp(path, _render_scheduler_runtime(config).encode("utf-8"), 0o600)
+        try:
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+    return validate_scheduler_runtime_config()
+
+
+def enumerate_trusted_wiki_runtimes() -> list[dict[str, Any]]:
+    """Enumerate trusted wiki runtime records under wikis/*/runtime.toml only."""
+
+    base = _config_home() / "wikis"
+    if not base.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    seen_roots: set[str] = set()
+    for path in sorted(base.glob("*/runtime.toml")):
+        record: dict[str, Any] = {"path": str(path), "valid": False}
+        try:
+            if path.is_symlink():
+                raise ConfigError(
+                    f"wiki: trusted runtime configuration must not be a symlink: {path}"
+                )
+            data = _load_toml(path, "trusted runtime configuration")
+            trust = data.get("trust")
+            wiki_root = trust.get("wiki_root") if isinstance(trust, dict) else None
+            if not isinstance(wiki_root, str) or not wiki_root:
+                raise ConfigError(
+                    f"wiki: trusted runtime configuration has no trust.wiki_root: {path}"
+                )
+            config = validate_runtime_config(wiki_root)
+            root = config["wiki_root"]
+            if root in seen_roots:
+                continue
+            seen_roots.add(root)
+            record.update({"valid": True, "wiki_root": root, "config": config})
+        except (ConfigError, OSError) as exc:
+            record["error"] = str(exc)
+        records.append(record)
+    return records
 
 
 def _ensure_private_workspace_runtime_parent(path: Path) -> None:

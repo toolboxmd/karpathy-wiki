@@ -224,6 +224,132 @@ test_shell_readers_do_not_cross_config_scopes() {
   echo "PASS: test_shell_readers_do_not_cross_config_scopes"
 }
 
+test_scheduler_config_is_private_strict_and_idempotent() {
+  local home="${TESTDIR}/scheduler-config-home"
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    WIKI_CONFIG_HOME="${home}" python3 - "${REPO_ROOT}" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts"))
+from wiki_config import (
+    ConfigError,
+    ensure_scheduler_runtime_config,
+    scheduler_config_path,
+    validate_scheduler_runtime_config,
+)
+
+path = scheduler_config_path()
+assert path == Path(os.environ["WIKI_CONFIG_HOME"]) / "scheduler" / "runtime.toml"
+first = ensure_scheduler_runtime_config()
+second = ensure_scheduler_runtime_config()
+assert first == second
+assert first["scheduler"]["interval_seconds"] == 60
+assert first["scheduler"]["max_total_processes"] == 10
+assert first["scheduler"]["max_processes_per_wiki"] == 1
+assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o700
+assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+path.write_text("[scheduler]\ninterval_seconds = 60\nmax_total_processes = 101\nmax_processes_per_wiki = 1\n", encoding="utf-8")
+os.chmod(path, 0o600)
+try:
+    validate_scheduler_runtime_config()
+except ConfigError as exc:
+    assert "scheduler.max_total_processes" in str(exc)
+else:
+    raise AssertionError("invalid machine limit should fail")
+
+path.write_text("[scheduler]\ninterval_seconds = 60\nmax_total_processes = 10\nmax_processes_per_wiki = 2\n", encoding="utf-8")
+os.chmod(path, 0o600)
+try:
+    validate_scheduler_runtime_config()
+except ConfigError as exc:
+    assert "scheduler.max_processes_per_wiki" in str(exc)
+else:
+    raise AssertionError("per-wiki limit must be fixed to 1")
+PY
+  echo "PASS: test_scheduler_config_is_private_strict_and_idempotent"
+}
+
+test_enumerates_only_trusted_wiki_runtime_records() {
+  local home="${TESTDIR}/registry-home"
+  local workspace="${TESTDIR}/registry-workspace"
+  local wiki_a="${workspace}/wiki-a"
+  local wiki_a_runtime
+  local workspace_record="${home}/workspaces/ignored/runtime.toml"
+  mkdir -p "${workspace}" "${home}/wikis/two" "${home}/wikis/bad" "${home}/workspaces/ignored"
+  make_wiki "${wiki_a}" project
+  wiki_a_runtime="$(env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    WIKI_CONFIG_HOME="${home}" python3 "${CONFIG}" path --wiki "${wiki_a}")"
+  mkdir -p "$(dirname "${wiki_a_runtime}")"
+  chmod 700 "${home}" "${home}/wikis" "$(dirname "${wiki_a_runtime}")" "${home}/wikis/two" "${home}/wikis/bad" "${home}/workspaces" "${home}/workspaces/ignored"
+  write_registry_runtime() {
+    local wiki="$1"
+    local path="$2"
+    local mode="$3"
+    cat > "${path}" <<EOF
+[trust]
+wiki_root = "$(cd "${wiki}" && pwd -P)"
+workspace_root = "$(cd "${wiki}" && pwd -P)"
+trusted_at = "2026-08-20T00:00:00Z"
+
+[ingest]
+dispatch_mode = "${mode}"
+schedule_interval_seconds = 60
+max_processes = 1
+default_profile = "test"
+heartbeat_seconds = 5
+stale_after_seconds = 30
+usage_monitor = "off"
+
+[ingest.profiles.test]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+
+[settings]
+auto_commit = false
+EOF
+    chmod 600 "${path}"
+  }
+  write_registry_runtime "${wiki_a}" "${wiki_a_runtime}" scheduled
+  write_registry_runtime "${wiki_a}" "${home}/wikis/two/runtime.toml" scheduled
+  cat > "${home}/wikis/bad/runtime.toml" <<'EOF'
+[trust]
+wiki_root = "/missing/wiki"
+EOF
+  chmod 600 "${home}/wikis/bad/runtime.toml"
+  cat > "${workspace_record}" <<'EOF'
+[routing]
+mode = "both"
+EOF
+  chmod 600 "${workspace_record}"
+
+  env -u WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME \
+    WIKI_CONFIG_HOME="${home}" python3 - "${REPO_ROOT}" <<'PY'
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts"))
+from wiki_config import enumerate_trusted_wiki_runtimes
+
+records = enumerate_trusted_wiki_runtimes()
+valid = [record for record in records if record["valid"]]
+invalid = [record for record in records if not record["valid"]]
+assert len(valid) == 1, records
+assert valid[0]["config"]["ingest"]["dispatch_mode"] == "scheduled"
+assert len(invalid) == 1, records
+assert "workspaces" not in "\n".join(record["path"] for record in records)
+assert "bad/runtime.toml" in invalid[0]["path"]
+PY
+  echo "PASS: test_enumerates_only_trusted_wiki_runtime_records"
+}
+
 test_update_runtime_changes_only_adapter_owned_fields() {
   local wiki="${TESTDIR}/update-runtime"
   make_wiki "${wiki}"
@@ -449,6 +575,8 @@ test_fallback_is_optional_but_must_resolve_and_differ
 test_codexbar_is_not_required_for_validation
 test_project_pointer_is_not_a_wiki_runtime_root
 test_shell_readers_do_not_cross_config_scopes
+test_scheduler_config_is_private_strict_and_idempotent
+test_enumerates_only_trusted_wiki_runtime_records
 test_update_runtime_changes_only_adapter_owned_fields
 test_existing_local_config_repairs_ignore_entry
 test_checkout_runtime_config_is_not_trusted_implicitly
