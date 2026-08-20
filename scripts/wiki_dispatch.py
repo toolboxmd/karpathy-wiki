@@ -24,7 +24,12 @@ import tempfile
 import time
 from typing import Any, TextIO
 
-from wiki_config import ConfigError, validate_runtime_config
+from wiki_config import (
+    ConfigError,
+    ensure_scheduler_runtime_config,
+    scheduler_slot_root,
+    validate_runtime_config,
+)
 from wiki_providers import (
     ProviderError,
     ProviderInvocation,
@@ -339,6 +344,11 @@ def _dispatch_paths(root: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _global_dispatch_paths() -> tuple[Path, Path]:
+    slots = scheduler_slot_root()
+    return slots.parent / "dispatch.lock", slots
+
+
 def _try_dispatch_lock(path: Path) -> TextIO | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+", encoding="utf-8")
@@ -438,6 +448,7 @@ def _reconcile_dead_leases(root: Path, slot_root: Path, stale_after: int) -> Non
                 },
                 idempotent_terminal=True,
             )
+            _release_global_lease(lease.get("global_lease"), str(lease.get("run_id")))
             lease_path.unlink(missing_ok=True)
             continue
 
@@ -447,6 +458,7 @@ def _reconcile_dead_leases(root: Path, slot_root: Path, stale_after: int) -> Non
             continue
         if processing is not None:
             _requeue_processing(processing)
+        _release_global_lease(lease.get("global_lease"), str(lease.get("run_id")))
         lease_path.unlink(missing_ok=True)
 
 
@@ -461,6 +473,66 @@ def _valid_leases(slot_root: Path) -> list[tuple[Path, dict[str, Any]]]:
             # extra ingest. It is surfaced later by status/doctor.
             leases.append((path, {"profile": None, "slot": None}))
     return leases
+
+
+def _valid_global_leases(slot_root: Path) -> list[tuple[Path, dict[str, Any]]]:
+    leases: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(slot_root.glob("*.lock")):
+        data = _read_lease(path)
+        if data is not None:
+            leases.append((path, data))
+        else:
+            leases.append((path, {"global_slot": None, "wiki_root": None}))
+    return leases
+
+
+def _free_global_slot(
+    leases: list[tuple[Path, dict[str, Any]]], maximum: int
+) -> int | None:
+    used = {
+        lease.get("global_slot")
+        for _path, lease in leases
+        if isinstance(lease.get("global_slot"), int)
+    }
+    for slot in range(1, maximum + 1):
+        if slot not in used:
+            return slot
+    return None
+
+
+def _wiki_has_global_lease(
+    leases: list[tuple[Path, dict[str, Any]]], root: Path
+) -> bool:
+    root_text = str(root)
+    return any(lease.get("wiki_root") == root_text for _path, lease in leases)
+
+
+def _reconcile_dead_global_leases(slot_root: Path) -> None:
+    """Recover global leases only when both wrapper and provider are dead."""
+
+    for lease_path in sorted(slot_root.glob("*.lock")):
+        lease = _read_lease(lease_path)
+        if lease is None:
+            continue
+        if _pid_alive(lease.get("wrapper_pid")) or _pid_alive(lease.get("provider_pid")):
+            continue
+        lease_path.unlink(missing_ok=True)
+
+
+def _write_global_lease(path: Path, lease: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+    _write_json_atomic(path, lease, mode=0o600)
+
+
+def _release_global_lease(path_value: Any, run_id: str) -> None:
+    if not isinstance(path_value, str):
+        return
+    path = Path(path_value)
+    lease = _read_lease(path)
+    if lease is None or lease.get("run_id") != run_id:
+        return
+    path.unlink(missing_ok=True)
 
 
 def _select_profile(
@@ -565,6 +637,8 @@ def dispatch_tick(
     *,
     scan: bool = False,
 ) -> int:
+    if _test_mode() and "WIKI_CONFIG_HOME" not in os.environ:
+        os.environ["WIKI_CONFIG_HOME"] = str(root / ".locks" / "scheduler-runtime")
     ingest = config["ingest"]
     if not _source_allowed(source, ingest["dispatch_mode"]):
         return 0
@@ -607,13 +681,30 @@ def dispatch_tick(
     if all(name in unavailable_profiles for name in configured):
         return 0
 
+    scheduler = ensure_scheduler_runtime_config()["scheduler"]
+    global_lock_path, global_slot_root = _global_dispatch_paths()
     lock_path, slot_root, pending_root = _dispatch_paths(root)
-    dispatch_lock = _try_dispatch_lock(lock_path)
-    if dispatch_lock is None:
+    global_lock = _try_dispatch_lock(global_lock_path)
+    if global_lock is None:
         return 0
 
+    dispatch_lock: TextIO | None = None
     spawn_error: OSError | None = None
     try:
+        global_slot_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(global_slot_root, 0o700)
+        _reconcile_dead_global_leases(global_slot_root)
+        global_leases = _valid_global_leases(global_slot_root)
+        if (
+            len(global_leases) >= scheduler["max_total_processes"]
+            or _wiki_has_global_lease(global_leases, root)
+        ):
+            return 0
+
+        dispatch_lock = _try_dispatch_lock(lock_path)
+        if dispatch_lock is None:
+            return 0
+
         slot_root.mkdir(parents=True, exist_ok=True)
         _reconcile_dead_leases(root, slot_root, ingest["stale_after_seconds"])
         leases = _valid_leases(slot_root)
@@ -632,10 +723,19 @@ def dispatch_tick(
                 (pending_root / remove_name).unlink(missing_ok=True)
 
         capture_index = 0
-        while len(leases) < ingest["max_processes"] and capture_index < len(captures):
+        local_limit = min(ingest["max_processes"], scheduler["max_processes_per_wiki"])
+        while (
+            len(leases) < local_limit
+            and len(global_leases) < scheduler["max_total_processes"]
+            and not _wiki_has_global_lease(global_leases, root)
+            and capture_index < len(captures)
+        ):
             profile = _select_profile(ingest, leases, unavailable_profiles)
-            slot = _free_slot(leases, ingest["max_processes"])
+            slot = _free_slot(leases, local_limit)
+            global_slot = _free_global_slot(global_leases, scheduler["max_total_processes"])
             if profile is None or slot is None:
+                break
+            if global_slot is None:
                 break
 
             pending = captures[capture_index]
@@ -645,10 +745,27 @@ def dispatch_tick(
             processing = pending.with_name(f"{pending.name}.processing")
             run_id = f"in-{int(time.time() * 1_000_000)}-{os.getpid()}-{slot}"
             lease_path = slot_root / f"{slot}.lock"
+            global_lease_path = global_slot_root / f"{global_slot}.lock"
             archive_relative = Path(".wiki-pending") / "archive" / datetime.now().astimezone().strftime("%Y-%m") / pending.name
+            global_lease = {
+                "run_id": run_id,
+                "global_slot": global_slot,
+                "wiki_root": str(root),
+                "per_wiki_run_id": run_id,
+                "per_wiki_lease": str(lease_path),
+                "capture": processing.name,
+                "profile": profile,
+                "provider": ingest["profiles"][profile]["provider"],
+                "wrapper_pid": 0,
+                "provider_pid": None,
+                "created_at": _utc_now(),
+                "heartbeat_at": _utc_now(),
+            }
             lease = {
                 "run_id": run_id,
                 "slot": slot,
+                "global_slot": global_slot,
+                "global_lease": str(global_lease_path),
                 "capture": processing.name,
                 "profile": profile,
                 "provider": ingest["profiles"][profile]["provider"],
@@ -659,6 +776,19 @@ def dispatch_tick(
                 "started_at": _utc_now(),
             }
             try:
+                fd = os.open(
+                    global_lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(global_lease, handle, sort_keys=True, separators=(",", ":"))
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError:
+                global_leases = _valid_global_leases(global_slot_root)
+                continue
+
+            try:
                 fd = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     json.dump(lease, handle, sort_keys=True, separators=(",", ":"))
@@ -666,13 +796,16 @@ def dispatch_tick(
                     handle.flush()
                     os.fsync(handle.fileno())
             except FileExistsError:
+                global_lease_path.unlink(missing_ok=True)
                 leases = _valid_leases(slot_root)
+                global_leases = _valid_global_leases(global_slot_root)
                 continue
 
             try:
                 os.replace(pending, processing)
             except FileNotFoundError:
                 lease_path.unlink(missing_ok=True)
+                global_lease_path.unlink(missing_ok=True)
                 continue
 
             try:
@@ -682,15 +815,24 @@ def dispatch_tick(
             except OSError as exc:
                 _requeue_processing(processing)
                 lease_path.unlink(missing_ok=True)
+                global_lease_path.unlink(missing_ok=True)
                 spawn_error = exc
                 break
 
             lease["wrapper_pid"] = worker.pid
+            lease["heartbeat_at"] = _utc_now()
             _write_json_atomic(lease_path, lease)
+            global_lease["wrapper_pid"] = worker.pid
+            global_lease["heartbeat_at"] = lease["heartbeat_at"]
+            _write_global_lease(global_lease_path, global_lease)
             leases.append((lease_path, lease))
+            global_leases.append((global_lease_path, global_lease))
     finally:
-        fcntl.flock(dispatch_lock.fileno(), fcntl.LOCK_UN)
-        dispatch_lock.close()
+        if dispatch_lock is not None:
+            fcntl.flock(dispatch_lock.fileno(), fcntl.LOCK_UN)
+            dispatch_lock.close()
+        fcntl.flock(global_lock.fileno(), fcntl.LOCK_UN)
+        global_lock.close()
 
     if spawn_error is not None:
         raise DispatchError(f"wiki dispatch: worker spawn failed: {spawn_error}")
@@ -705,18 +847,25 @@ def _worker_cleanup(
     *,
     requeue: bool,
 ) -> None:
+    global_lock_path, _global_slot_root = _global_dispatch_paths()
     lock_path, _slot_root, _pending_root = _dispatch_paths(root)
-    dispatch_lock = _blocking_dispatch_lock(lock_path)
+    global_lock = _blocking_dispatch_lock(global_lock_path)
+    dispatch_lock: TextIO | None = None
     try:
+        dispatch_lock = _blocking_dispatch_lock(lock_path)
         lease = _read_lease(lease_path)
         if lease is None or lease.get("run_id") != run_id:
             return
         if requeue:
             _requeue_processing(processing)
+        _release_global_lease(lease.get("global_lease"), run_id)
         lease_path.unlink(missing_ok=True)
     finally:
-        fcntl.flock(dispatch_lock.fileno(), fcntl.LOCK_UN)
-        dispatch_lock.close()
+        if dispatch_lock is not None:
+            fcntl.flock(dispatch_lock.fileno(), fcntl.LOCK_UN)
+            dispatch_lock.close()
+        fcntl.flock(global_lock.fileno(), fcntl.LOCK_UN)
+        global_lock.close()
 
 
 def _await_parent_lease(lease_path: Path, run_id: str) -> dict[str, Any]:
@@ -741,6 +890,18 @@ def _update_worker_lease(
         raise DispatchError("wiki dispatch worker: slot lease no longer belongs to this run")
     lease.update(updates)
     _write_json_atomic(lease_path, lease)
+    global_path = lease.get("global_lease")
+    if isinstance(global_path, str):
+        global_lease = _read_lease(Path(global_path))
+        if global_lease is not None and global_lease.get("run_id") == run_id:
+            global_lease.update(
+                {
+                    key: value
+                    for key, value in updates.items()
+                    if key in {"wrapper_pid", "provider_pid", "heartbeat_at"}
+                }
+            )
+            _write_global_lease(Path(global_path), global_lease)
     return lease
 
 
@@ -845,6 +1006,14 @@ def _move_processing_to_failed(root: Path, processing: Path) -> Path | None:
 def _refill_after_worker(root: Path, config: dict[str, Any]) -> None:
     if _test_mode() and os.environ.get("WIKI_DISPATCH_TEST_NO_REFILL") == "1":
         return
+    try:
+        from wiki_scheduler import global_scheduler_installed, tick_all
+
+        if global_scheduler_installed():
+            tick_all()
+            return
+    except Exception:
+        pass
     dispatch_tick(root, config, "worker_completion")
 
 

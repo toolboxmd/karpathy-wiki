@@ -5,10 +5,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DISPATCH="${REPO_ROOT}/scripts/wiki_dispatch.py"
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+export WIKI_CONFIG_HOME="${TESTDIR}/config-home"
 cleanup() {
   local lease pid
   while IFS= read -r lease; do
@@ -79,8 +81,8 @@ test_one_tick_fills_only_available_slots() {
   make_wiki "${wiki}" scheduled 3 3
   add_captures "${wiki}" 20
   tick "${wiki}"
-  [[ "$(count_processing "${wiki}")" -eq 3 ]] || fail "expected exactly three processing captures"
-  [[ "$(count_leases "${wiki}")" -eq 3 ]] || fail "expected exactly three slot leases"
+  [[ "$(count_processing "${wiki}")" -eq 1 ]] || fail "expected exactly one processing capture"
+  [[ "$(count_leases "${wiki}")" -eq 1 ]] || fail "expected exactly one slot lease"
   echo "PASS: test_one_tick_fills_only_available_slots"
 }
 
@@ -116,11 +118,34 @@ test_profile_limit_and_filename_order() {
   printf 'a\n' > "${wiki}/.wiki-pending/a.md"
   printf 'm\n' > "${wiki}/.wiki-pending/m.md"
   tick "${wiki}"
-  [[ "$(count_leases "${wiki}")" -eq 2 ]] || fail "profile limit was not enforced"
+  [[ "$(count_leases "${wiki}")" -eq 1 ]] || fail "global per-wiki limit was not enforced"
   [[ -f "${wiki}/.wiki-pending/a.md.processing" ]] || fail "first filename was not claimed"
-  [[ -f "${wiki}/.wiki-pending/m.md.processing" ]] || fail "second filename was not claimed"
+  [[ -f "${wiki}/.wiki-pending/m.md" ]] || fail "second filename should wait for the next per-wiki slot"
   [[ -f "${wiki}/.wiki-pending/z.md" ]] || fail "claim order is not deterministic"
   echo "PASS: test_profile_limit_and_filename_order"
+}
+
+test_global_slots_cap_machine_at_ten_across_twelve_wikis() {
+  local i wiki
+  for i in $(seq -w 1 12); do
+    wiki="${TESTDIR}/global-${i}"
+    make_wiki "${wiki}" scheduled 3 3
+    add_captures "${wiki}" 2
+  done
+  for i in $(seq -w 1 12); do
+    tick "${TESTDIR}/global-${i}"
+  done
+  local global_count per_wiki_over_limit
+  global_count="$(find "${WIKI_CONFIG_HOME}/scheduler/slots" -maxdepth 1 -type f -name '*.lock' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "${global_count}" -eq 10 ]] || fail "machine global slots should stop at 10, got ${global_count}"
+  per_wiki_over_limit=0
+  for i in $(seq -w 1 12); do
+    wiki="${TESTDIR}/global-${i}"
+    [[ "$(count_leases "${wiki}")" -le 1 ]] || per_wiki_over_limit=1
+  done
+  [[ "${per_wiki_over_limit}" -eq 0 ]] || fail "a wiki exceeded the fixed one-worker limit"
+  rm -rf "${WIKI_CONFIG_HOME}/scheduler/slots"
+  echo "PASS: test_global_slots_cap_machine_at_ten_across_twelve_wikis"
 }
 
 test_disappearing_capture_is_skipped() {
@@ -198,6 +223,7 @@ test_public_tick_wrapper() {
 test_one_tick_fills_only_available_slots
 test_nonblocking_dispatch_lock_changes_nothing
 test_profile_limit_and_filename_order
+test_global_slots_cap_machine_at_ten_across_twelve_wikis
 test_disappearing_capture_is_skipped
 test_invalid_config_has_no_queue_side_effects
 test_spawn_failure_requeues_and_releases

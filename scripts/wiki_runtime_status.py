@@ -124,6 +124,7 @@ def render(wiki: str | Path) -> int:
 
     scheduler = "n/a"
     scheduler_action: str | None = None
+    scheduler_result: dict[str, Any] = {}
     try:
         scheduler_result = scheduler_status(root)
         raw_state = scheduler_result["state"]
@@ -132,8 +133,12 @@ def render(wiki: str | Path) -> int:
         else:
             scheduler = raw_state
         if scheduler == "mismatch":
-            command = "install" if ingest["dispatch_mode"] == "scheduled" else "uninstall"
-            scheduler_action = f"wiki scheduler {command} {root}"
+            command = "install" if ingest["dispatch_mode"] == "scheduled" else "disable"
+            scheduler_action = (
+                "wiki scheduler install"
+                if command == "install"
+                else f"wiki scheduler {command} {root}"
+            )
     except (ConfigError, SchedulerError, OSError):
         scheduler = "mismatch" if ingest["dispatch_mode"] == "scheduled" else "n/a"
 
@@ -143,7 +148,12 @@ def render(wiki: str | Path) -> int:
     print(f"scheduler: {scheduler}")
     if scheduler_action:
         print(f"scheduler action: {scheduler_action}")
-    print(f"active ingests: {active} / {ingest['max_processes']}")
+    print(f"active ingests: {active} / 1")
+    if "active_global_slots" in scheduler_result:
+        print(
+            "global ingests: "
+            f"{scheduler_result['active_global_slots']} / {scheduler_result['max_total_processes']}"
+        )
     print(
         f"profiles: default={ingest['default_profile']}, "
         f"fallback={fallback}"

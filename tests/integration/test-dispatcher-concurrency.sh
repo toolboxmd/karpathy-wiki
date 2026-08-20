@@ -1,5 +1,5 @@
 #!/bin/bash
-# Concurrent ticks must never exceed the configured per-wiki process ceiling.
+# Concurrent ticks must never exceed the fixed v0.3.1 per-wiki process ceiling.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,8 +59,10 @@ for pid in "${pids[@]}"; do wait "${pid}" || fail "a concurrent tick failed"; do
 
 processing="$(find "${WIKI}/.wiki-pending" -maxdepth 1 -type f -name '*.md.processing' | wc -l | tr -d ' ')"
 leases="$(find "${WIKI}/.locks/ingest-slots" -maxdepth 1 -type f -name '*.lock' | wc -l | tr -d ' ')"
-[[ "${processing}" -eq 3 ]] || fail "expected three processing captures after concurrent ticks, got ${processing}"
-[[ "${leases}" -eq 3 ]] || fail "expected three leases after concurrent ticks, got ${leases}"
+global_leases="$(find "${WIKI}/.locks/scheduler-runtime/scheduler/slots" -maxdepth 1 -type f -name '*.lock' 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${processing}" -eq 1 ]] || fail "expected one processing capture after concurrent ticks, got ${processing}"
+[[ "${leases}" -eq 1 ]] || fail "expected one per-wiki lease after concurrent ticks, got ${leases}"
+[[ "${global_leases}" -eq 1 ]] || fail "expected one global lease after concurrent ticks, got ${global_leases}"
 
 python3 - "${WIKI}/.locks/ingest-slots" <<'PY'
 import json, pathlib, sys
@@ -71,7 +73,7 @@ for path in leases:
     slots.append(data["slot"])
     assert data["wrapper_pid"] > 0
     assert data["capture"].endswith(".md.processing")
-assert len(slots) == len(set(slots)) == 3
+assert len(slots) == len(set(slots)) == 1
 PY
 
-echo "PASS: ten concurrent ticks respect max_processes=3"
+echo "PASS: ten concurrent ticks respect fixed max_processes_per_wiki=1"

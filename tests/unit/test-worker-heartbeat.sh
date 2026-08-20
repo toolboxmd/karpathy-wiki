@@ -10,12 +10,15 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
 cleanup() {
-  local lease pid
+  local lease pid provider
   for lease in "${TESTDIR}"/wiki/.locks/ingest-slots/*.lock; do
     [[ -f "${lease}" ]] || continue
     pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("wrapper_pid", ""))' "${lease}" 2>/dev/null || true)"
+    provider="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("provider_pid", ""))' "${lease}" 2>/dev/null || true)"
     [[ "${pid}" =~ ^[0-9]+$ ]] && kill "${pid}" 2>/dev/null || true
+    [[ "${provider}" =~ ^[0-9]+$ ]] && kill "${provider}" 2>/dev/null || true
   done
+  sleep 0.2
   rm -rf "${TESTDIR}"
 }
 trap cleanup EXIT
