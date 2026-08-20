@@ -345,21 +345,14 @@ PY
   scheduler)
     scheduler_action="${1:-}"
     case "${scheduler_action}" in
-      install|uninstall|status) ;;
+      install|uninstall|enable|disable|status|tick-all) ;;
       *)
-        echo >&2 "usage: wiki scheduler install|uninstall|status <wiki-path> [--json]"
+        echo >&2 "usage: wiki scheduler install|uninstall|enable|disable|status|tick-all [<wiki-path>] [--json]"
         exit 1
         ;;
     esac
     shift
-    scheduler_wiki="${1:-}"
-    [[ -n "${scheduler_wiki}" ]] || {
-      echo >&2 "wiki scheduler ${scheduler_action}: <wiki-path> required"
-      exit 1
-    }
-    shift
-    python3 "${REPO_ROOT}/scripts/wiki_scheduler.py" "${scheduler_action}" \
-      --wiki "${scheduler_wiki}" "$@"
+    python3 "${REPO_ROOT}/scripts/wiki_scheduler.py" "${scheduler_action}" "$@"
     ;;
   tick)
     tick_wiki=""
@@ -398,8 +391,10 @@ subcommands:
                    wiki use project|main|both
   config         Manage per-user runtime configuration
                    wiki config init-local|migrate|validate|show|update-runtime <wiki-path> [options]
-  scheduler      Manage the macOS cron-like LaunchAgent adapter
-                   wiki scheduler install|uninstall|status <wiki-path>
+  scheduler      Manage the one machine-wide LaunchAgent adapter
+                   wiki scheduler install|uninstall|status
+                   wiki scheduler enable|disable|status <wiki-path>
+                   wiki scheduler tick-all
   tick           Run one bounded queue-dispatch pass
                    wiki tick [<wiki-path>] --source session_start|scheduled|manual|capture|worker_completion [--scan]
   init-main      Bootstrap ~/.wiki-pointer (interactive)
