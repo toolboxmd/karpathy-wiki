@@ -192,7 +192,7 @@ Result: agent has the wiki rules loaded; cwd has no wiki to capture into yet.
 
 Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the primary wiki in the workspace routing runtime. An unconfigured workspace falls through to the cold-no-wiki case.
 
-The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. Tracked in [TODO.md](TODO.md) as a 0.2.8 candidate ("0.2.8: cold-no-wiki question path").
+The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. It remains deferred in [TODO.md](TODO.md) under "cold-no-wiki question path".
 
 ### Scenario 3 — `wiki capture` headless from a fresh directory
 
@@ -251,7 +251,7 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 
 See [TODO.md](TODO.md). Highlights:
 
-- **0.2.8 candidates**: `wiki orient` CLI shortcut for read-protocol Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
+- **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
 - **`wiki doctor` real implementation**: smartest-model re-rate, orphan repair, tag-synonym consolidation.
 - **Stop-hook gate** for turn-closure enforcement (`hooks/stop` is currently a stub).
 - **`.ingest.log` → `.ingest.jsonl` migration** (dual-artifact pattern, scheduled for v2.5).
