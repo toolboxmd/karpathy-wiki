@@ -1,8 +1,19 @@
-# karpathy-wiki user manual (current development branch)
+# karpathy-wiki user manual (v0.3.0)
 
-A short reference for the v0.2.8 base plus the provider-aware dispatcher now under development. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
+A short reference for karpathy-wiki v0.3.0. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
 For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
+
+## What changed in 0.3.0
+
+- Added native Codex plugin packaging and qualified Codex as the primary interactive development host.
+- Added the bounded provider-aware dispatcher with explicit Claude, Codex, and Grok profiles, retries, heartbeats, cooldowns, and per-wiki process limits.
+- Moved provider settings and trust decisions into private per-machine runtime files instead of tracked repository configuration.
+- Replaced competing routing and consent markers with one authoritative `project | main | both` workspace mode.
+- Made `both` project-first: the original capture stays in the project wiki and only reusable knowledge is selectively promoted to the configured main wiki.
+- Added pinned, retry-safe selective promotion plus a shared strict frontmatter parser for capture, completion, promotion, and status paths.
+- Corrected headless Grok automation to use one non-interactive permission mode, avoiding 30-second `permission_cancelled` failures caused by combining `--always-approve` with `--permission-mode auto` in Grok CLI 1.0.5.
+- Requalified Grok ingestion after the adapter fix. The matched semantic benchmark keeps Grok 4.5 Medium as the recommended Grok profile; see [the benchmark report](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md).
 
 ## Current dispatcher changes
 
@@ -12,6 +23,36 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 - Automatic activation is mutually exclusive: `session_start` or `scheduled` (the macOS LaunchAgent adapter).
 - Live work has a heartbeat. Technical failures retry deterministically, rate limits wait without consuming attempts, and exhausted captures move to `.wiki-pending/failed/`.
 - CodexBar is optional advisory preflight. Without it, ingestion remains fully functional in reactive mode.
+
+### Security boundary in v0.3.0
+
+The detached ingester is trusted local automation. It is not isolated well
+enough to process hostile or collaborator-controlled prompts unattended.
+
+The Grok profile intentionally uses `--always-approve` because Grok CLI 1.0.5
+otherwise cannot complete this headless workflow reliably. The dispatcher also
+inherits the launcher's complete environment, and the ingest protocol currently
+uses general shell commands for orientation, locking, validation, manifest
+updates, Git operations, and completion. Treat every capture and referenced
+source as trusted input.
+
+A canary confirmed that one project `.grok/sandbox.toml` profile can resolve
+the current working directory dynamically, allow the selected wiki plus a
+trusted helper, and deny an unrelated test file. The same mechanism is portable
+between arbitrary project wikis and the main wiki because each worker starts in
+the selected wiki root. It is not sufficient as the only patch:
+
+- denying `~/.grok/auth.json` prevents Grok from signing in;
+- allowing only one helper breaks the current semantic ingest protocol, which
+  still relies on multiple shell operations;
+- Grok documents child-process network restriction as unavailable on macOS;
+- path isolation alone does not remove secrets already present in the inherited
+  environment.
+
+For v0.3.0, keep unattended ingest limited to trusted personal wikis. If a
+capture or evidence file may contain untrusted instructions, inspect it first
+or leave automatic dispatch disabled. The provider-neutral containment work is
+recorded in [TODO.md](TODO.md) and requires its own implementation and tests.
 
 ## What changed in 0.2.8
 
@@ -151,7 +192,7 @@ Result: agent has the wiki rules loaded; cwd has no wiki to capture into yet.
 
 Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the primary wiki in the workspace routing runtime. An unconfigured workspace falls through to the cold-no-wiki case.
 
-The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. Tracked in [TODO.md](TODO.md) as a 0.2.8 candidate ("0.2.8: cold-no-wiki question path").
+The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. It remains deferred in [TODO.md](TODO.md) under "cold-no-wiki question path".
 
 ### Scenario 3 — `wiki capture` headless from a fresh directory
 
@@ -210,7 +251,7 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 
 See [TODO.md](TODO.md). Highlights:
 
-- **0.2.8 candidates**: `wiki orient` CLI shortcut for read-protocol Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
+- **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
 - **`wiki doctor` real implementation**: smartest-model re-rate, orphan repair, tag-synonym consolidation.
 - **Stop-hook gate** for turn-closure enforcement (`hooks/stop` is currently a stub).
 - **`.ingest.log` → `.ingest.jsonl` migration** (dual-artifact pattern, scheduled for v2.5).

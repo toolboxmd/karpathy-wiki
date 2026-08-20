@@ -53,7 +53,6 @@ assert grok.argv == [
     "--model", "grok-4.5",
     "--reasoning-effort", "medium",
     "--always-approve",
-    "--permission-mode", "auto",
     "--max-turns", "150",
     "--no-memory",
     "--no-subagents",

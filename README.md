@@ -194,6 +194,25 @@ Captures land as tiny markdown files in `<wiki>/.wiki-pending/`. Two flows feed 
 
 Either way, one dispatcher atomically claims captures and enforces the configured per-wiki and per-profile ceilings. It can invoke Claude Code, Codex, or Grok with the exact configured model and reasoning effort. A heartbeat keeps live `.processing` work identifiable; technical failures retry up to `max_attempts`, rate limits wait without consuming attempts, and exhausted work moves to `.wiki-pending/failed/`. Semantic ingest is not reviewed by a second model on every run; quality is selected and measured through benchmarks.
 
+### Detached-ingester trust boundary
+
+Detached provider workers are trusted local automation in v0.3.0, not a
+security boundary for hostile input. In particular, the Grok adapter uses
+`--always-approve` so a headless ingest can complete without an interactive
+permission prompt, and the dispatcher currently passes the launcher's full
+environment to the provider process. A prompt-injected capture can therefore
+request commands or reads available to that user account.
+
+Only ingest captures and source files you trust. Do not enable unattended
+ingest for collaborator-controlled repositories, downloaded prompt bundles, or
+other untrusted content. A project-local Grok sandbox profile can follow the
+current working directory and therefore works for either a project wiki or the
+main wiki, but that is not a complete one-file fix: Grok must retain access to
+its authentication state, the current semantic ingest protocol uses general
+shell commands, and Grok's child-process network restriction is not enforced on
+macOS. Provider-neutral least-privilege isolation is tracked in
+[`TODO.md`](TODO.md).
+
 ## Per-machine ingest configuration
 
 Tracked `.wiki-config` contains only wiki identity. Provider/model choices,
@@ -255,7 +274,7 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**Unreleased development branch based on v0.2.8.** Codex is the qualified
+**v0.3.0.** Codex is the qualified
 primary interactive development host. Claude Code remains supported with its
 existing automated hook coverage. Codex qualification includes recorded
 interactive-host acceptance evidence; it does not claim equivalent automated
@@ -263,7 +282,7 @@ coverage for every Codex lifecycle path. Detached ingest supports Claude Code,
 Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain
 best-effort.
 
-**What works today (v2.4 + 0.2.7 read-protocol restoration + 0.2.8 hardening):**
+**What works today (v2.4 + 0.2.7 read protocol + 0.2.8 hardening + 0.3.0 runtime, routing, and provider automation):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
 - Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
 - Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.
@@ -279,6 +298,9 @@ best-effort.
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 
 **What's deferred (see `TODO.md`):**
+- Provider-neutral least-privilege isolation for detached ingesters: a minimal
+  environment, deterministic privileged helpers, per-run path policy, isolated
+  provider authentication, and macOS-specific containment tests.
 - `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred — observe whether prose-only fix produces reliable behavior first).
 - `allowed-tools` scoping on the four skills (deferred — orthogonal to read-protocol restoration).
 - `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
