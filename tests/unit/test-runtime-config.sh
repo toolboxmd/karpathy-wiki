@@ -231,8 +231,7 @@ test_update_runtime_changes_only_adapter_owned_fields() {
 
   python3 "${CONFIG}" update-runtime \
     --wiki "${wiki}" \
-    --dispatch-mode session_start \
-    --fork-to-main >/dev/null || fail "runtime update failed"
+    --dispatch-mode session_start >/dev/null || fail "runtime update failed"
 
   local output
   output="$(python3 "${CONFIG}" show --wiki "${wiki}")" || fail "updated config did not validate"
@@ -240,17 +239,20 @@ test_update_runtime_changes_only_adapter_owned_fields() {
 import json, sys
 d = json.load(sys.stdin)
 assert d["ingest"]["dispatch_mode"] == "session_start"
-assert d["routing"]["fork_to_main"] is True
 assert d["ingest"]["default_profile"] == "grok_medium"
 assert d["ingest"]["profiles"]["grok_medium"]["model"] == "grok-4.5"
 assert d["ingest"]["profiles"]["sonnet_low"]["reasoning_effort"] == "low"
 assert d["settings"]["auto_commit"] is True
 ' <<< "${output}" || fail "runtime update changed unrelated fields"
 
-  python3 "${CONFIG}" update-runtime --wiki "${wiki}" --no-fork-to-main >/dev/null \
-    || fail "runtime routing reset failed"
-  [[ "$(wiki_runtime_config_get "${wiki}" routing.fork_to_main)" == "false" ]] \
-    || fail "runtime routing reset was not persisted"
+  local routing_error routing_rc
+  set +e
+  routing_error="$(python3 "${CONFIG}" update-runtime --wiki "${wiki}" --fork-to-main 2>&1)"
+  routing_rc=$?
+  set -e
+  [[ "${routing_rc}" -ne 0 ]] || fail "ingest runtime still accepted a routing update"
+  grep -q 'unrecognized arguments: --fork-to-main' <<< "${routing_error}" \
+    || fail "removed routing update did not fail explicitly"
 
   local error rc
   set +e

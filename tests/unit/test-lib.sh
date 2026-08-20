@@ -6,6 +6,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LIB="${REPO_ROOT}/scripts/wiki-lib.sh"
+INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+CONFIG="${REPO_ROOT}/scripts/wiki_config.py"
+TEST_CONFIG_HOME="$(mktemp -d)"
+trap 'rm -rf "${TEST_CONFIG_HOME}"' EXIT
+export XDG_CONFIG_HOME="${TEST_CONFIG_HOME}"
 
 # shellcheck source=/dev/null
 source "${LIB}"
@@ -36,8 +41,10 @@ test_slugify() {
 test_wiki_root_from_cwd_with_wiki_dir() {
   local tmp
   tmp="$(mktemp -d)"
-  mkdir -p "${tmp}/wiki"
-  touch "${tmp}/wiki/.wiki-config"
+  tmp="$(cd "${tmp}" && pwd -P)"
+  bash "${INIT}" project "${tmp}/wiki" >/dev/null
+  python3 "${CONFIG}" route-set --workspace "${tmp}" --mode project \
+    --project-wiki "${tmp}/wiki" >/dev/null
 
   local result
   result="$(cd "${tmp}" && wiki_root_from_cwd)"
@@ -51,15 +58,14 @@ test_wiki_root_from_cwd_with_wiki_dir() {
 }
 
 test_wiki_root_from_cwd_derefs_project_pointer() {
-  # A cwd .wiki-config with role "project-pointer" is a POINTER, not a wiki.
-  # wiki_root_from_cwd must follow it to the pointed directory. (Bug: status /
-  # session-start / stop measured the pointer dir itself — wrong manifest,
-  # wrong git state, silent no-op drift scans.)
+  # Legacy structural pointers cannot override the trusted runtime target.
   local tmp
   tmp="$(mktemp -d)"
-  mkdir -p "${tmp}/wiki"
-  printf 'role = "project"\n' > "${tmp}/wiki/.wiki-config"
+  tmp="$(cd "${tmp}" && pwd -P)"
+  bash "${INIT}" project "${tmp}/wiki" >/dev/null
   printf 'role = "project-pointer"\nwiki = "./wiki"\n' > "${tmp}/.wiki-config"
+  python3 "${CONFIG}" route-set --workspace "${tmp}" --mode project \
+    --project-wiki "${tmp}/wiki" >/dev/null
 
   local result
   result="$(cd "${tmp}" && wiki_root_from_cwd)"
@@ -73,13 +79,15 @@ test_wiki_root_from_cwd_derefs_project_pointer() {
 }
 
 test_wiki_root_from_cwd_derefs_pointer_on_walkup() {
-  # Same deref must apply when the pointer config is found via walk-up
-  # (cwd is a subdirectory of the project root).
+  # The same authoritative runtime applies when cwd is below the workspace.
   local tmp
   tmp="$(mktemp -d)"
-  mkdir -p "${tmp}/wiki" "${tmp}/Assets/Scripts"
-  printf 'role = "project"\n' > "${tmp}/wiki/.wiki-config"
+  tmp="$(cd "${tmp}" && pwd -P)"
+  mkdir -p "${tmp}/Assets/Scripts"
+  bash "${INIT}" project "${tmp}/wiki" >/dev/null
   printf 'role = "project-pointer"\nwiki = "./wiki"\n' > "${tmp}/.wiki-config"
+  python3 "${CONFIG}" route-set --workspace "${tmp}" --mode project \
+    --project-wiki "${tmp}/wiki" >/dev/null
 
   local result
   result="$(cd "${tmp}/Assets/Scripts" && wiki_root_from_cwd)"

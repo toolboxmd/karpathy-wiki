@@ -27,6 +27,10 @@ grep -qi 'project\|main' "${SKILL}" || fail "missing project/main lens guidance"
 
 # Pointer to capture-schema (shared contract)
 grep -q 'capture-schema.md' "${SKILL}" || fail "no pointer to capture-schema.md"
+grep -q 'wiki-promote-capture.py' "${SKILL}" || fail "skill does not use deterministic promotion helper"
+if grep -q "Write a new capture in the main wiki's .wiki-pending" "${SKILL}"; then
+  fail "skill still tells the model to write directly into main pending"
+fi
 
 # page-conventions.md content
 grep -q -i 'cross-link' "${PAGE_REF}" || fail "page-conventions missing cross-link convention"

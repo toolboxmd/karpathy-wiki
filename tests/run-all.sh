@@ -42,6 +42,7 @@ group_for_test() {
     unit/test-capture-atomic-publish.sh|\
     unit/test-capture-evidence-path.sh|\
     unit/test-capture-headless-unconfigured-cwd-aborts.sh|\
+    unit/test-selective-promotion.sh|\
     unit/test-capture.sh|\
     unit/test-wiki-capture-cli.sh|\
     unit/test-wiki-capture-silent-bootstrap.sh)
@@ -83,6 +84,7 @@ group_for_test() {
     unit/test-resolver-walks-up.sh|\
     unit/test-runtime-config-migrate.sh|\
     unit/test-runtime-config.sh|\
+    unit/test-single-authority-routing.sh|\
     unit/test-wiki-resolve.sh|\
     unit/test-wiki-use.sh)
       echo "config"

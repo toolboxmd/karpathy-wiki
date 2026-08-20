@@ -1,179 +1,47 @@
 #!/bin/bash
-# wiki-resolve.sh — non-interactive wiki resolver.
+# Resolve the one authoritative local workspace routing plan.
 #
-# Determines which wiki(s) a chat-driven capture should target based on
-# cwd's .wiki-config or .wiki-mode and the user's main-wiki pointer.
-# Returns target wiki paths on stdout (one per line) and exit 0, OR
-# exits with one of these specific codes signaling user input is needed:
+# Success returns one primary capture target. --plan returns the complete JSON
+# snapshot used by the caller, including selective-promotion metadata.
 #
-#   10 — pointer missing or broken (need bootstrap or re-init)
-#   11 — cwd unconfigured (need per-cwd prompt)
-#   12 — config requires main but pointer is none/missing
-#   13 — both .wiki-config AND .wiki-mode present at cwd (conflict)
-#   14 — half-built wiki (cwd or pointer target missing required files)
-#
-# Walks up from cwd looking for the first dir containing .wiki-config or
-# .wiki-mode (project-config marker). Stops at ${HOME} (exclusive) and at
-# /. If no marker is found in the walk-up range, falls back to pwd and
-# returns exit 11 (unconfigured).
-#
-# Walk-up is bounded to the user tree so a project wiki at ~/proj/A is
-# discovered from ~/proj/A/sub/dir/, but a cwd inside an unrelated project
-# does not leak into ${HOME}/wiki/ (paired #11/#9 fix, 0.2.8).
-#
-# Override $WIKI_POINTER_FILE for testing (default: ~/.wiki-pointer).
+# Exit codes:
+#   11 - cwd has no local workspace runtime (unconfigured)
+#   13 - workspace runtime is malformed or conflicts with its trust binding
+#   14 - a configured project/main target is missing or incomplete
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "${SCRIPT_DIR}/wiki-lib.sh"
-
-POINTER_FILE="${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}"
-
-# Read main wiki pointer.
-main_wiki=""
-if [[ ! -e "${POINTER_FILE}" ]]; then
-  exit 10
+output_format="targets"
+if [[ "${1:-}" == "--plan" ]]; then
+  output_format="plan"
+  shift
 fi
-# Follow symlinks for the pointer file itself
-# Trim leading/trailing whitespace (incl. a trailing CR on Windows) only;
-# NEVER strip interior spaces — vault paths like ".../Obsidian Vault/..."
-# legitimately contain them.
-pointer_content="$(cat "${POINTER_FILE}" 2>/dev/null | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-case "${pointer_content}" in
-  "")
-    exit 10  # Empty pointer file
-    ;;
-  none)
-    main_wiki=""
-    ;;
-  *)
-    if [[ ! -f "${pointer_content}/.wiki-config" ]]; then
-      exit 10
-    fi
-    # Validate role = "main" on the pointer target
-    if ! grep -q '^role = "main"' "${pointer_content}/.wiki-config"; then
-      exit 10
-    fi
-    # Validate structure
-    for required in schema.md index.md .wiki-pending; do
-      if [[ ! -e "${pointer_content}/${required}" ]]; then
-        exit 14
-      fi
-    done
-    main_wiki="${pointer_content}"
-    ;;
-esac
+[[ "$#" -eq 0 ]] || { echo >&2 "usage: wiki-resolve.sh [--plan]"; exit 2; }
 
-# Walk up from pwd looking for a dir with .wiki-config or .wiki-mode.
-# Stop at ${HOME} (exclusive) and at /. cwd_base is where we found a
-# marker (or pwd if no marker found in range — falls through to exit 11).
-cwd_base="$(pwd)"
-_scan="$(pwd)"
-while [[ "${_scan}" != "/" && "${_scan}" != "${HOME}" ]]; do
-  if [[ -f "${_scan}/.wiki-config" || -f "${_scan}/.wiki-mode" ]]; then
-    cwd_base="${_scan}"
-    break
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_TOOL="${SCRIPT_DIR}/wiki_config.py"
+
+set +e
+error_file="$(mktemp)"
+plan="$(python3 "${CONFIG_TOOL}" route-find --cwd "$(pwd -P)" --json 2>"${error_file}")"
+rc=$?
+set -e
+if [[ "${rc}" -ne 0 ]]; then
+  error="$(cat "${error_file}")"
+  rm -f "${error_file}"
+  printf '%s\n' "${error}" >&2
+  if [[ "${rc}" -eq 3 ]]; then
+    exit 11
   fi
-  _scan="$(dirname "${_scan}")"
-done
-
-config_present=0
-mode_present=0
-[[ -f "${cwd_base}/.wiki-config" ]] && config_present=1
-[[ -f "${cwd_base}/.wiki-mode" ]] && mode_present=1
-
-# Conflict: both files present.
-if [[ "${config_present}" == 1 && "${mode_present}" == 1 ]]; then
+  if grep -Eq 'not a complete wiki root|structural configuration not found|routing\.(project|main)_wiki' <<< "${error}"; then
+    exit 14
+  fi
   exit 13
 fi
+rm -f "${error_file}"
 
-wiki_root=""
-fork=0
-
-if [[ "${config_present}" == 1 ]]; then
-  config="${cwd_base}/.wiki-config"
-  role=$(grep '^role = ' "${config}" | head -1 | sed 's/^role = "\(.*\)"/\1/')
-
-  case "${role}" in
-    main|project)
-      wiki_root="${cwd_base}"
-      # Validate structure
-      for required in schema.md index.md .wiki-pending; do
-        if [[ ! -e "${wiki_root}/${required}" ]]; then
-          exit 14
-        fi
-      done
-      # Routing for an actual wiki root is per user/machine. A legacy
-      # tracked value is honored only until that wiki is explicitly migrated.
-      if [[ "$(wiki_runtime_config_get "${wiki_root}" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
-        fork=1
-      elif grep -q '^fork_to_main = true' "${config}"; then
-        fork=1
-      fi
-      ;;
-    project-pointer)
-      sub=$(grep '^wiki = ' "${config}" | head -1 | sed 's/^wiki = "\(.*\)"/\1/')
-      [[ -n "${sub}" ]] || exit 14
-      # Resolve relative path against cwd_base (the dir holding .wiki-config)
-      if [[ "${sub}" == /* ]]; then
-        wiki_root="${sub}"
-      else
-        wiki_root="${cwd_base}/${sub#./}"
-      fi
-      # Validate structure
-      [[ -f "${wiki_root}/.wiki-config" ]] || exit 14
-      for required in schema.md index.md .wiki-pending; do
-        if [[ ! -e "${wiki_root}/${required}" ]]; then
-          exit 14
-        fi
-      done
-      # A checkout may select only a wiki whose external runtime trust record
-      # is bound to this exact workspace. Without this gate, an untrusted
-      # checkout could redirect captures into another workspace's trusted wiki.
-      python3 "${SCRIPT_DIR}/wiki_config.py" validate-pointer \
-        --wiki "${wiki_root}" --workspace "${cwd_base}" >/dev/null 2>&1 \
-        || exit 14
-      # A project pointer belongs to the project checkout, so its routing
-      # choice intentionally remains in the tracked pointer file.
-      if grep -q '^fork_to_main = true' "${config}"; then
-        fork=1
-      fi
-      ;;
-    *)
-      # Unknown role — treat as conflict-equivalent
-      exit 13
-      ;;
-  esac
-
-elif [[ "${mode_present}" == 1 ]]; then
-  mode_value=$(head -1 "${cwd_base}/.wiki-mode" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-  case "${mode_value}" in
-    main-only)
-      [[ -n "${main_wiki}" ]] || exit 12
-      wiki_root="${main_wiki}"
-      fork=0
-      ;;
-    *)
-      # Unknown .wiki-mode value
-      exit 13
-      ;;
-  esac
+if [[ "${output_format}" == "plan" ]]; then
+  printf '%s\n' "${plan}"
 else
-  # No config, no mode — unconfigured cwd.
-  exit 11
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["primary_wiki"])' <<< "${plan}"
 fi
-
-# Build target list.
-if [[ "${fork}" == 1 ]]; then
-  [[ -n "${main_wiki}" ]] || exit 12
-  echo "${wiki_root}"
-  if [[ "${main_wiki}" != "${wiki_root}" ]]; then
-    echo "${main_wiki}"
-  fi
-else
-  echo "${wiki_root}"
-fi
-
-exit 0

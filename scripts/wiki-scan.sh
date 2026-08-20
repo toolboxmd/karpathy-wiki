@@ -24,29 +24,67 @@ for required in .wiki-config schema.md index.md .wiki-pending inbox raw; do
   }
 done
 
+promotion_policy="$(wiki_promotion_policy "${wiki}")"
+
+_frontmatter_json_scalar() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
+}
+
+_publish_capture_if_unowned() {
+  local capture_temp="$1"
+  local capture_path="$2"
+  python3 - "${wiki}/.locks/ingest-dispatch.lock" "${capture_temp}" "${capture_path}" <<'PY'
+import fcntl
+import os
+import sys
+from pathlib import Path
+
+lock_path, source, pending = map(Path, sys.argv[1:])
+lock_path.parent.mkdir(parents=True, exist_ok=True)
+with lock_path.open("a+", encoding="utf-8") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    processing = pending.with_name(pending.name + ".processing")
+    if pending.exists() or processing.exists():
+        raise SystemExit(3)
+    try:
+        os.link(source, pending)
+    except FileExistsError:
+        raise SystemExit(3)
+PY
+}
+
 _emit_raw_direct_capture() {
   local file_path="$1"
-  local basename
+  local basename basename_slug title_scalar evidence_scalar
   basename="$(basename "${file_path}")"
+  basename_slug="$(slugify "$(printf '%s' "${basename}" | tr '\r\n' '--')")"
+  title_scalar="$(_frontmatter_json_scalar "Drop: ${basename}")" || return 1
+  evidence_scalar="$(_frontmatter_json_scalar "${file_path}")" || return 1
 
   local src_hash capture_base capture_name capture_path
   src_hash="$(printf '%s' "${file_path}" | shasum | cut -c1-12)"
-  capture_base="drift-${src_hash}-$(slugify "${basename}")"
+  capture_base="drift-${src_hash}-${basename_slug}"
   capture_name="${capture_base:0:200}.md"
   capture_path="${wiki}/.wiki-pending/${capture_name}"
 
   local capture_temp
+  local capture_id
+  capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   capture_temp="$(mktemp "${wiki}/.wiki-pending/.scan-capture.XXXXXX")" || return 1
   if ! cat > "${capture_temp}" <<EOF
 ---
-title: "Drop: ${basename}"
-evidence: "${file_path}"
+title: ${title_scalar}
+evidence: ${evidence_scalar}
 evidence_type: "file"
 capture_kind: "raw-direct"
 suggested_action: "auto"
 suggested_pages: []
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 captured_by: "wiki-scan-drop"
+capture_id: "${capture_id}"
+promotion_policy: "${promotion_policy}"
+promotion_decision: null
+promotion_id: null
 propagated_from: null
 ---
 
@@ -62,31 +100,45 @@ EOF
     return 1
   fi
   chmod 0644 "${capture_temp}" || { rm -f "${capture_temp}"; return 1; }
-  if ln "${capture_temp}" "${capture_path}" 2>/dev/null; then
+  if _publish_capture_if_unowned "${capture_temp}" "${capture_path}"; then
     log_info "scan: raw-direct capture created: ${capture_name}"
+  elif [[ "$?" -eq 3 ]]; then
+    log_info "scan: raw-direct capture already owned: ${capture_name}"
+  else
+    rm -f "${capture_temp}"
+    return 1
   fi
   rm -f "${capture_temp}"
 }
 
 _emit_legacy_drift_capture() {
   local src="$1"
-  local src_hash capture_base capture_name capture_path
+  local src_hash capture_base capture_name capture_path src_slug title_scalar evidence_scalar
+  src_slug="$(slugify "$(printf '%s' "${src}" | tr '\r\n' '--')")"
+  title_scalar="$(_frontmatter_json_scalar "Drift: ${src}")" || return 1
+  evidence_scalar="$(_frontmatter_json_scalar "${wiki}/${src}")" || return 1
   src_hash="$(printf '%s' "${src}" | shasum | cut -c1-12)"
-  capture_base="drift-${src_hash}-$(slugify "${src}")"
+  capture_base="drift-${src_hash}-${src_slug}"
   capture_name="${capture_base:0:200}.md"
   capture_path="${wiki}/.wiki-pending/${capture_name}"
   local capture_temp
+  local capture_id
+  capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   capture_temp="$(mktemp "${wiki}/.wiki-pending/.scan-capture.XXXXXX")" || return 1
   if ! cat > "${capture_temp}" <<EOF
 ---
-title: "Drift: ${src}"
-evidence: "${wiki}/${src}"
+title: ${title_scalar}
+evidence: ${evidence_scalar}
 evidence_type: "file"
 capture_kind: "raw-direct"
 suggested_action: "update"
 suggested_pages: []
 captured_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 captured_by: "wiki-scan-drift"
+capture_id: "${capture_id}"
+promotion_policy: "${promotion_policy}"
+promotion_decision: null
+promotion_id: null
 propagated_from: null
 ---
 
@@ -103,8 +155,13 @@ EOF
     return 1
   fi
   chmod 0644 "${capture_temp}" || { rm -f "${capture_temp}"; return 1; }
-  if ln "${capture_temp}" "${capture_path}" 2>/dev/null; then
+  if _publish_capture_if_unowned "${capture_temp}" "${capture_path}"; then
     log_info "scan: legacy drift capture created: ${capture_name}"
+  elif [[ "$?" -eq 3 ]]; then
+    log_info "scan: legacy drift capture already owned: ${capture_name}"
+  else
+    rm -f "${capture_temp}"
+    return 1
   fi
   rm -f "${capture_temp}"
 }

@@ -1,13 +1,18 @@
 #!/bin/bash
 set -e
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 setup() {
   TESTDIR="$(mktemp -d)"
+  TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
+  export XDG_CONFIG_HOME="${TESTDIR}/config-home"
   WIKI="${TESTDIR}/wiki"
   bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${WIKI}" >/dev/null
+  python3 "${REPO_ROOT}/scripts/wiki_config.py" route-set \
+    --workspace "${WIKI}" --mode main --main-wiki "${WIKI}" >/dev/null
   cat > "${WIKI}/.wiki-config.local" <<'EOF'
 [ingest]
 dispatch_mode = "session_start"

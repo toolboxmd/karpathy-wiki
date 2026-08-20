@@ -17,13 +17,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RESOLVE="${REPO_ROOT}/scripts/wiki-resolve.sh"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+USE="${REPO_ROOT}/scripts/wiki-use.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ -x "${RESOLVE}" ]] || fail "wiki-resolve.sh missing or not executable"
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
+export XDG_CONFIG_HOME="${TESTDIR}/config-home"
 
 # Fake $HOME so we never touch the real user's pointer/wiki.
 FAKE_HOME="${TESTDIR}/home"
@@ -38,10 +41,10 @@ bash "${INIT}" main "${MAIN}" >/dev/null
 printf '%s\n' "${MAIN}" > "${FAKE_HOME}/.wiki-pointer"
 export WIKI_POINTER_FILE="${FAKE_HOME}/.wiki-pointer"
 
-# A cwd configured main-only so resolution depends on the pointer path.
+# Select main once so wiki-use must preserve the interior space when pinning.
 WORK="${FAKE_HOME}/work"
 mkdir -p "${WORK}"
-printf 'main-only\n' > "${WORK}/.wiki-mode"
+(cd "${WORK}" && HOME="${FAKE_HOME}" bash "${USE}" main) >/dev/null
 
 output=$( HOME="${FAKE_HOME}" bash -c "cd \"${WORK}\" && bash \"${RESOLVE}\"" 2>/dev/null ) && rc=0 || rc=$?
 

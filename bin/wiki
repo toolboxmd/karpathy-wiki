@@ -26,6 +26,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/wiki-lib.sh"
 
+yaml_quote() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
+}
+
 sub="${1:-help}"
 shift || true
 
@@ -38,7 +42,8 @@ wiki_root() {
 
 case "${sub}" in
   status)
-    bash "${REPO_ROOT}/scripts/wiki-status.sh" "$(wiki_root)"
+    routing_cwd="$(pwd -P)"
+    bash "${REPO_ROOT}/scripts/wiki-status.sh" "$(wiki_root)" "${routing_cwd}"
     ;;
   doctor)
     echo "wiki doctor: not implemented in MVP. For now, ask the agent to run a deep lint of the wiki."
@@ -67,6 +72,17 @@ case "${sub}" in
     done
     [[ -n "${title}" ]] || { echo >&2 "wiki capture: --title required"; exit 1; }
     [[ -n "${kind}" ]] || { echo >&2 "wiki capture: --kind required (chat-only|chat-attached|raw-direct)"; exit 1; }
+    case "${suggested_action}" in
+      create|update|augment|auto) ;;
+      *) echo >&2 "wiki capture: --suggested-action must be create, update, augment, or auto"; exit 1 ;;
+    esac
+    for scalar_name in title evidence_path; do
+      scalar_value="${!scalar_name}"
+      if [[ "${scalar_value}" == *$'\n'* || "${scalar_value}" == *$'\r'* ]]; then
+        echo >&2 "wiki capture: --${scalar_name//_/-} must be a single line"
+        exit 1
+      fi
+    done
 
     # Evidence-path validation. Iron rule (per skill): capture's `evidence`
     # field is the canonical source path, or the literal "conversation"
@@ -109,6 +125,19 @@ case "${sub}" in
       echo >&2 "wiki capture: body is ${body_size} bytes (max 256 KB). Use raw-direct ingest: mv <file> <wiki>/inbox/ && wiki ingest-now."
       exit 1
     fi
+    if ! python3 - "${body_buf}" <<'PY'
+from pathlib import Path
+import sys
+
+try:
+    Path(sys.argv[1]).read_text(encoding="utf-8")
+except UnicodeDecodeError:
+    raise SystemExit(1)
+PY
+    then
+      echo >&2 "wiki capture: body must be valid UTF-8"
+      exit 1
+    fi
 
     # Validate body against kind floor
     case "${kind}" in
@@ -122,8 +151,12 @@ case "${sub}" in
       exit 1
     fi
 
-    # Run resolver
-    resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0 || resolver_exit=$?
+    # Resolve one immutable routing snapshot. Every field used below comes
+    # from this exact plan, so a concurrent mode change cannot split capture
+    # target selection from promotion policy selection.
+    resolver_plan="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan 2>/dev/null)" \
+      && resolver_exit=0 || resolver_exit=$?
+    resolver_out=""
 
     # Headless detection: any of WIKI_CAPTURE / CLAUDE_HEADLESS=1 / no TTY+no CLAUDE_AGENT_INTERACTIVE / CLAUDE_AGENT_PARENT.
     is_headless=0
@@ -137,96 +170,10 @@ case "${sub}" in
       0)
         # Success — proceed with returned wikis
         ;;
-      10)
-        # Pointer missing.
-        #
-        # Silent auto-bootstrap (0.2.7): pre-existing wiki users (people who
-        # built ~/wiki/ before the pointer mechanism shipped) shouldn't see
-        # a prompt or get an orphan on their first post-upgrade capture.
-        # If $HOME/wiki is a structurally-correct main wiki, infer the
-        # answer from on-disk state and silently write the pointer, then
-        # re-exec capture so the resolver runs cleanly with the new pointer.
-        # If any guard fails, fall through to the existing headless-orphan /
-        # interactive-prompt flow unchanged.
-        bootstrap_candidate="${HOME}/wiki"
-        bootstrap_pointer="${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}"
-        if [[ ! -e "${bootstrap_pointer}" \
-              && -f "${bootstrap_candidate}/.wiki-config" \
-              && -f "${bootstrap_candidate}/schema.md" \
-              && -f "${bootstrap_candidate}/index.md" \
-              && -d "${bootstrap_candidate}/.wiki-pending" ]] \
-           && grep -q '^role = "main"' "${bootstrap_candidate}/.wiki-config"; then
-          printf '%s\n' "${bootstrap_candidate}" > "${bootstrap_pointer}"
-          echo >&2 "wiki capture: bootstrapped ${bootstrap_pointer} → ${bootstrap_candidate}"
-          reexec_args=(--title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}")
-          [[ -n "${evidence_path}" ]] && reexec_args+=(--evidence-path "${evidence_path}")
-          exec bash "${BASH_SOURCE[0]}" capture "${reexec_args[@]}"
-        fi
-        if [[ "${is_headless}" == 1 ]]; then
-          if [[ -f "$(pwd)/.wiki-config" ]]; then
-            # Cwd has its own config — proceed with cwd's wiki only,
-            # if and only if fork_to_main is false. (true → exit 12 path.)
-            cwd_role="$(wiki_structural_config_get "$(pwd)" role 2>/dev/null || echo "")"
-            fork_requested=0
-            case "${cwd_role}" in
-              main|project)
-                if [[ "$(wiki_runtime_config_get "$(pwd)" routing.fork_to_main 2>/dev/null || true)" == "true" ]]; then
-                  fork_requested=1
-                elif grep -q '^fork_to_main = true' "$(pwd)/.wiki-config"; then
-                  fork_requested=1
-                fi
-                ;;
-              project-pointer)
-                grep -q '^fork_to_main = true' "$(pwd)/.wiki-config" && fork_requested=1
-                ;;
-            esac
-            if [[ "${fork_requested}" == 1 ]]; then
-              orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
-                --title "${title}" \
-                --reason "headless: cwd .wiki-config requests fork_to_main=true but pointer is missing" \
-                --body-file "${body_buf}")"
-              echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
-              exit 1
-            fi
-            # Resolve with an ephemeral `none` pointer. This preserves the
-            # user's missing-pointer state while allowing a local-only wiki.
-            temporary_pointer="$(mktemp)"
-            printf 'none\n' > "${temporary_pointer}"
-            resolver_out="$(WIKI_POINTER_FILE="${temporary_pointer}" bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" \
-              && resolver_exit=0 || true
-            rm -f "${temporary_pointer}"
-          else
-            orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
-              --title "${title}" \
-              --reason "headless: pointer missing AND cwd unconfigured" \
-              --body-file "${body_buf}")"
-            echo >&2 "wiki capture: aborted; body preserved at ${orphan}"
-            exit 1
-          fi
-        else
-          # Interactive: bootstrap pointer, then re-run capture
-          bash "${REPO_ROOT}/scripts/wiki-init-main.sh"
-          reexec_args=(--title "${title}" --kind "${kind}" --suggested-action "${suggested_action}" --body-file "${body_buf}")
-          [[ -n "${evidence_path}" ]] && reexec_args+=(--evidence-path "${evidence_path}")
-          exec bash "${BASH_SOURCE[0]}" capture "${reexec_args[@]}"
-        fi
-        ;;
       11)
         # Cwd unconfigured.
         if [[ "${is_headless}" == 1 ]]; then
-          # Read pointer to decide fallback message.
-          ptr=$(cat "${WIKI_POINTER_FILE:-${HOME}/.wiki-pointer}" 2>/dev/null | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-          if [[ -z "${ptr}" || "${ptr}" == "none" ]]; then
-            reason="headless: cwd unconfigured AND pointer = none/missing"
-          else
-            # 0.2.9: previously silently auto-selected main-only and wrote
-            # <cwd>/.wiki-mode. That stole a choice (project|main|both) the
-            # user never got to make. Now we abort the same way the other
-            # three abort paths do — body to orphans, nudge on stderr, exit
-            # non-zero. The agent surfaces the choice to the user, the user
-            # runs `wiki use ...`, the agent re-captures.
-            reason="headless: cwd unconfigured; user must choose mode (wiki use project|main|both)"
-          fi
+          reason="headless: workspace routing is unconfigured; run wiki use project|main|both"
           orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
             --title "${title}" \
             --reason "${reason}" \
@@ -235,7 +182,7 @@ case "${sub}" in
           echo >&2 "wiki capture: cwd unconfigured. Run one of:"
           echo >&2 "  wiki use project   # captures stay in this repo (./wiki/)"
           echo >&2 "  wiki use main      # captures go to the main wiki"
-          echo >&2 "  wiki use both      # fork to both"
+          echo >&2 "  wiki use both      # capture locally, selectively promote reusable knowledge"
           echo >&2 "Then re-capture (pipe the body again or use --body-file ${orphan})."
           exit 1
         else
@@ -246,7 +193,7 @@ case "${sub}" in
           echo "This directory isn't configured for the wiki yet. How should captures here flow?"
           echo "  1) project — create a project wiki at ./wiki/, captures stay local."
           echo "  2) main    — captures go to the main wiki (the default)."
-          echo "  3) both    — fork: write the same capture into both wikis."
+          echo "  3) both    - capture locally, then selectively promote reusable knowledge."
           echo
           read -r -p "Reply with 1, 2, or 3: " choice </dev/tty
           case "${choice}" in
@@ -255,15 +202,15 @@ case "${sub}" in
             3) bash "${REPO_ROOT}/scripts/wiki-use.sh" both ;;
             *) echo >&2 "wiki capture: invalid choice '${choice}'; aborting"; exit 1 ;;
           esac
-          resolver_out="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" 2>/dev/null)" && resolver_exit=0
+          resolver_plan="$(bash "${REPO_ROOT}/scripts/wiki-resolve.sh" --plan 2>/dev/null)" \
+            && resolver_exit=0
         fi
         ;;
-      12|13|14)
-        # Configuration error / conflict / half-built
+      13|14)
+        # Malformed authoritative runtime or broken configured target.
         case "${resolver_exit}" in
-          12) reason="resolver exit 12: cwd requires main wiki but pointer is none/missing" ;;
-          13) reason="resolver exit 13: cwd has BOTH .wiki-config and .wiki-mode (conflict)" ;;
-          14) reason="resolver exit 14: half-built wiki (cwd or pointer target missing required files)" ;;
+          13) reason="resolver exit 13: malformed workspace routing configuration" ;;
+          14) reason="resolver exit 14: configured wiki target is incomplete" ;;
         esac
         orphan="$(bash "${REPO_ROOT}/scripts/wiki-orphan.sh" \
           --title "${title}" \
@@ -278,16 +225,22 @@ case "${sub}" in
         ;;
     esac
 
-    # At this point resolver_out has one or more target wiki paths (one per line).
-    if [[ -z "${resolver_out}" ]]; then
-      echo >&2 "wiki capture: resolver returned no targets despite exit 0"
+    if [[ -z "${resolver_plan}" ]]; then
+      echo >&2 "wiki capture: resolver returned no plan despite exit 0"
+      exit 1
+    fi
+    resolver_out="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["primary_wiki"])' <<< "${resolver_plan}")"
+    promotion_policy="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["promotion_policy"])' <<< "${resolver_plan}")"
+    if [[ -z "${resolver_out}" || ( "${promotion_policy}" != "none" && "${promotion_policy}" != "selective" ) ]]; then
+      echo >&2 "wiki capture: resolver returned an invalid plan"
       exit 1
     fi
 
-    # Build frontmatter + body for every target before any dispatch starts.
+    # Build one initial capture. In both mode the project ingester decides
+    # whether reusable knowledge is later promoted to the pinned main wiki.
     ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
     slug="$(slugify "${title}")"
-    fork_id="fk-$(date +%s)-$$"
+    capture_id="cap-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
     target_count=0
     while IFS= read -r target_wiki; do
       [[ -n "${target_wiki}" ]] || continue
@@ -306,14 +259,18 @@ case "${sub}" in
       capture_temp="$(mktemp "${target_wiki}/.wiki-pending/.capture.XXXXXX")"
       {
         echo "---"
-        echo "title: \"${title}\""
-        echo "evidence: \"${evidence}\""
+        printf 'title: %s\n' "$(yaml_quote "${title}")"
+        printf 'evidence: %s\n' "$(yaml_quote "${evidence}")"
         echo "evidence_type: \"${evidence_type}\""
         echo "capture_kind: \"${kind}\""
-        echo "suggested_action: \"${suggested_action}\""
+        printf 'suggested_action: %s\n' "$(yaml_quote "${suggested_action}")"
         echo "suggested_pages: []"
         echo "captured_at: \"${ts}\""
         echo "captured_by: \"in-session-agent\""
+        echo "capture_id: \"${capture_id}\""
+        echo "promotion_policy: \"${promotion_policy}\""
+        echo "promotion_decision: null"
+        echo "promotion_id: null"
         echo "propagated_from: null"
         echo "---"
         echo
@@ -354,17 +311,7 @@ case "${sub}" in
       fi
     done <<< "${resolver_out}"
 
-    # Write fork-coordination record if multi-target
-    if [[ "${target_count}" -gt 1 ]]; then
-      forks_log="${HOME}/.wiki-forks.jsonl"
-      mkdir -p "$(dirname "${forks_log}")"
-      printf '{"fork_id":"%s","captured_at":"%s","title":"%s","wikis":%s}\n' \
-        "${fork_id}" "${ts}" "${title}" \
-        "$(echo "${resolver_out}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
-        >> "${forks_log}"
-    fi
-
-    echo "wiki capture: ${target_count} target(s) — ${title}"
+    echo "wiki capture: ${target_count} target(s) - ${title}"
     ;;
   init-main)
     bash "${REPO_ROOT}/scripts/wiki-init-main.sh" "$@"

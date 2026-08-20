@@ -10,6 +10,7 @@ HOOK="${REPO_ROOT}/hooks/session-start"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TESTDIR="$(mktemp -d)"
+TESTDIR="$(cd "${TESTDIR}" && pwd -P)"
 trap 'rm -rf "${TESTDIR}"' EXIT
 export HOME="${TESTDIR}/home"
 export XDG_CONFIG_HOME="${TESTDIR}/config"
@@ -19,6 +20,8 @@ PROJECT="${TESTDIR}/attacker-checkout"
 WIKI="${PROJECT}/wiki"
 mkdir -p "${PROJECT}"
 bash "${REPO_ROOT}/scripts/wiki-init.sh" project "${WIKI}" >/dev/null
+python3 "${REPO_ROOT}/scripts/wiki_config.py" route-set \
+  --workspace "${PROJECT}" --mode project --project-wiki "${WIKI}" >/dev/null
 
 MARKER="${TESTDIR}/provider-executed"
 cat > "${PROJECT}/evil-provider" <<EOF

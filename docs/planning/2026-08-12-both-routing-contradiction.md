@@ -1,11 +1,39 @@
 # Both-Mode Routing Contradiction
 
-**Status:** Confirmed behavior mismatch. Documentation only. No routing,
-ingest, skill, or test-policy change is applied by this handoff.
+**Status:** Resolved on `codex/single-authority-selective-routing`. The original
+handoff evidence is retained below for review history.
 **Date:** 2026-08-12
 **Observed at:** `9bffbc08734fa6728c5087bdc5084e05ba65b47f`
-**Next workstream:** Implement on a dedicated fix branch after the Codex-first
-rollout branch is reviewed.
+**Resolution branch:** `codex/single-authority-selective-routing`
+
+## Resolution
+
+The fix replaces routing flags with one trusted per-workspace runtime record:
+
+- `wiki use project|main|both` performs one direct selection and atomically
+  stores `routing.mode` plus exact targets outside the checkout;
+- the resolver reads one snapshot, ignores tracked routing markers and legacy
+  `.wiki-mode`, and returns one initial target;
+- `both` returns the project as that target with `promotion_policy=selective`;
+- new captures carry portable identity, promotion policy, decision, and stable
+  promotion identity fields;
+- the project ingester makes the semantic keep-local or promote decision;
+- `scripts/wiki-promote-capture.py` owns locked, atomic, idempotent derived
+  publication and retry receipts;
+- deterministic completion refuses to archive a selective capture without a
+  durable decision;
+- new simultaneous-fork records are no longer written, and status reports
+  selective decision counts instead;
+- the global pointer is consulted only when selecting `main` or `both`; later
+  pointer changes do not silently retarget the workspace;
+- tracked project-pointer config no longer stores routing authority or an
+  absolute main-wiki path.
+
+The witnessed RED transcript is retained at
+`tests/red/RED-selective-both-promotion.md`. The deterministic suite covers
+local-first routing, exact-once publication, portable provenance, concurrent
+retry, failures before and after publication, project-mode isolation,
+main-mode stability, and invalid main-pointer refusal.
 
 ## Summary
 

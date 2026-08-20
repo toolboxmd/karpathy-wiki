@@ -7,18 +7,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WIKI_BIN="${REPO_ROOT}/bin/wiki"
 INIT="${REPO_ROOT}/scripts/wiki-init.sh"
+USE="${REPO_ROOT}/scripts/wiki-use.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 export HOME="${TMP}/home"
+export XDG_CONFIG_HOME="${TMP}/config-home"
 mkdir -p "${HOME}" "${TMP}/work"
 MAIN="${TMP}/main"
 bash "${INIT}" main "${MAIN}" >/dev/null
 export WIKI_POINTER_FILE="${TMP}/.wiki-pointer"
 printf '%s\n' "${MAIN}" > "${WIKI_POINTER_FILE}"
-printf '%s\n' "main-only" > "${TMP}/work/.wiki-mode"
+(cd "${TMP}/work" && bash "${USE}" main) >/dev/null
 BODY="${TMP}/body.md"
 python3 - "${BODY}" <<'PY'
 from pathlib import Path

@@ -1,12 +1,7 @@
 #!/bin/bash
-# wiki-use.sh — change per-cwd wiki mode.
-#
-# Subcommands:
-#   wiki-use.sh project   — write .wiki-config (project-pointer, fork=false)
-#   wiki-use.sh main      — write .wiki-mode = main-only (refuses if cwd has .wiki-config)
-#   wiki-use.sh both      — write .wiki-config with fork_to_main = true (refuses if pointer = none)
-#
-# Idempotent: re-running with the current state is a no-op.
+# wiki-use.sh: make one complete local project|main|both routing choice.
+# The authoritative record is a private workspace runtime outside the checkout.
+# Tracked pointers and legacy .wiki-mode files never authorize routing.
 
 set -uo pipefail
 
@@ -20,140 +15,85 @@ CONFIG_TOOL="${SCRIPT_DIR}/wiki_config.py"
 mode="${1:-}"
 [[ -n "${mode}" ]] || { echo >&2 "usage: wiki use project|main|both"; exit 1; }
 
+canonical_dir() {
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+
 read_main_wiki() {
-  if [[ ! -f "${POINTER_FILE}" ]]; then
-    echo "none"
-    return
+  local value
+  value="$(head -1 "${POINTER_FILE}" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ -n "${value}" && "${value}" != "none" ]] || return 1
+  canonical_dir "${value}" || return 1
+}
+
+wiki_role() {
+  sed -n 's/^role = "\([^"]*\)"$/\1/p' "$1/.wiki-config" 2>/dev/null | head -1
+}
+
+valid_wiki_role() {
+  local root="$1" expected="$2" required
+  [[ "$(wiki_role "${root}")" == "${expected}" ]] || return 1
+  for required in schema.md index.md .wiki-pending; do
+    [[ -e "${root}/${required}" ]] || return 1
+  done
+}
+
+cwd="$(pwd -P)"
+workspace="${cwd}"
+existing_plan="$(python3 "${CONFIG_TOOL}" route-find --cwd "${cwd}" --json 2>/dev/null || true)"
+if [[ -n "${existing_plan}" ]]; then
+  workspace="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])' <<< "${existing_plan}")"
+elif [[ "$(wiki_role "${cwd}")" == "project" ]]; then
+  workspace="$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "${cwd}")"
+  workspace="$(canonical_dir "${workspace}")"
+fi
+
+project=""
+if [[ "$(wiki_role "${cwd}")" == "project" ]]; then
+  project="${cwd}"
+elif valid_wiki_role "${workspace}/wiki" project; then
+  project="$(canonical_dir "${workspace}/wiki")"
+fi
+
+main=""
+if [[ "${mode}" == "main" || "${mode}" == "both" ]]; then
+  main="$(read_main_wiki)" || {
+    echo >&2 "wiki use ${mode}: main wiki pointer is missing or invalid"
+    exit 1
+  }
+  valid_wiki_role "${main}" main || {
+    echo >&2 "wiki use ${mode}: main wiki pointer does not target a complete role=main wiki"
+    exit 1
+  }
+fi
+
+if [[ "${mode}" == "project" || "${mode}" == "both" ]]; then
+  if [[ -z "${project}" ]]; then
+    project="${workspace}/wiki"
+    bash "${SCRIPT_DIR}/wiki-init.sh" project "${project}" "${main}" >/dev/null || {
+      echo >&2 "wiki use ${mode}: could not initialize ${project}"
+      exit 1
+    }
+    project="$(canonical_dir "${project}")"
   fi
-  # Trim surrounding whitespace only; preserve interior spaces in the path.
-  cat "${POINTER_FILE}" | head -1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
-}
+  valid_wiki_role "${project}" project || {
+    echo >&2 "wiki use ${mode}: project target is not a complete role=project wiki"
+    exit 1
+  }
+fi
 
-write_project_pointer_config() {
-  local fork="$1"
-  local main="$2"
-  local cwd_config="$(pwd)/.wiki-config"
-  local today="$(date +%Y-%m-%d)"
-  {
-    echo "role = \"project-pointer\""
-    echo "wiki = \"./wiki\""
-    echo "created = \"${today}\""
-    if [[ -n "${main}" && "${main}" != "none" ]]; then
-      echo "main = \"${main}\""
-    fi
-    echo "fork_to_main = ${fork}"
-  } > "${cwd_config}"
-}
-
-set_runtime_fork() {
-  local root="$1"
-  local enabled="$2"
-  local flag="--no-fork-to-main"
-  [[ "${enabled}" == "true" ]] && flag="--fork-to-main"
-  python3 "${CONFIG_TOOL}" update-runtime --wiki "${root}" "${flag}" >/dev/null
+route_args=(route-set --workspace "${workspace}" --mode "${mode}")
+[[ -n "${project}" ]] && route_args+=(--project-wiki "${project}")
+[[ -n "${main}" ]] && route_args+=(--main-wiki "${main}")
+python3 "${CONFIG_TOOL}" "${route_args[@]}" >/dev/null || {
+  echo >&2 "wiki use ${mode}: could not persist the local workspace runtime"
+  exit 1
 }
 
 case "${mode}" in
-  project)
-    main="$(read_main_wiki)"
-    if [[ -f "$(pwd)/.wiki-config" ]]; then
-      role=$(grep '^role = ' "$(pwd)/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
-      case "${role}" in
-        main|project)
-          if ! set_runtime_fork "$(pwd)" false; then
-            echo >&2 "wiki use project: could not update per-user routing; configure this wiki with 'wiki config init-local $(pwd)' first"
-            exit 1
-          fi
-          rm -f "$(pwd)/.wiki-mode"
-          echo "wiki use project: fork_to_main = false in trusted runtime config (role=${role})"
-          exit 0
-          ;;
-        project-pointer)
-          ;;
-        *)
-          echo >&2 "wiki use project: unknown role '${role}' in existing .wiki-config"
-          exit 1
-          ;;
-      esac
-    elif [[ ! -d "$(pwd)/wiki" ]]; then
-      if [[ "${main}" == "none" ]]; then
-        bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" >/dev/null
-      else
-        bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" "${main}" >/dev/null
-      fi
-    fi
-    write_project_pointer_config "false" "${main}"
-    rm -f "$(pwd)/.wiki-mode"
-    echo "wiki use project: $(pwd)/wiki/ (fork_to_main = false)"
-    ;;
-
-  main)
-    if [[ -f "$(pwd)/.wiki-config" ]]; then
-      cat >&2 <<EOF
-wiki use main: refused — cwd already has .wiki-config (cwd is itself a wiki).
-'main-only' mode would orphan the local wiki. To stop using this wiki,
-'cd' out of it first. Got role: $(grep '^role = ' "$(pwd)/.wiki-config" | head -1)
-EOF
-      exit 1
-    fi
-    echo "main-only" > "$(pwd)/.wiki-mode"
-    if [[ -d "$(pwd)/wiki" ]]; then
-      cat >&2 <<EOF
-wiki use main: warning — local ./wiki/ exists from a prior project mode.
-Captures will no longer go there. To remove it: rm -rf ./wiki/
-EOF
-    fi
-    echo "wiki use main: captures go to main wiki"
-    ;;
-
-  both)
-    main="$(read_main_wiki)"
-    if [[ "${main}" == "none" || -z "${main}" ]]; then
-      cat >&2 <<EOF
-wiki use both: refused — \$WIKI_POINTER_FILE is 'none' or missing.
-'both' mode requires a main wiki to fork to. Run 'wiki init-main' first
-or 'wiki use project' for a project-only setup.
-EOF
-      exit 1
-    fi
-    if [[ -f "$(pwd)/.wiki-config" ]]; then
-      role=$(grep '^role = ' "$(pwd)/.wiki-config" | head -1 | sed 's/^role = "\(.*\)"/\1/')
-      case "${role}" in
-        project-pointer)
-          # Set fork_to_main = true in place
-          if grep -q '^fork_to_main = ' "$(pwd)/.wiki-config"; then
-            sed -i.bak 's/^fork_to_main = .*/fork_to_main = true/' "$(pwd)/.wiki-config"
-            rm -f "$(pwd)/.wiki-config.bak"
-          else
-            echo "fork_to_main = true" >> "$(pwd)/.wiki-config"
-          fi
-          rm -f "$(pwd)/.wiki-mode"
-          echo "wiki use both: fork_to_main = true on existing config (role=${role})"
-          ;;
-        main|project)
-          if ! set_runtime_fork "$(pwd)" true; then
-            echo >&2 "wiki use both: could not update per-user routing; configure this wiki with 'wiki config init-local $(pwd)' first"
-            exit 1
-          fi
-          rm -f "$(pwd)/.wiki-mode"
-          echo "wiki use both: fork_to_main = true in trusted runtime config (role=${role})"
-          ;;
-        *)
-          echo >&2 "wiki use both: unknown role '${role}' in existing .wiki-config"
-          exit 1
-          ;;
-      esac
-    else
-      # Fresh cwd
-      if [[ ! -d "$(pwd)/wiki" ]]; then
-        bash "${SCRIPT_DIR}/wiki-init.sh" project "$(pwd)/wiki" "${main}" >/dev/null
-      fi
-      write_project_pointer_config "true" "${main}"
-      rm -f "$(pwd)/.wiki-mode"
-      echo "wiki use both: created project wiki + fork_to_main = true"
-    fi
-    ;;
-
+  project) echo "wiki use project: captures go to ${project}" ;;
+  main) echo "wiki use main: captures go to ${main}" ;;
+  both) echo "wiki use both: captures go to ${project}; reusable knowledge may promote to ${main}" ;;
   *)
     echo >&2 "wiki use: unknown mode '${mode}'; valid: project|main|both"
     exit 1

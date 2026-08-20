@@ -86,44 +86,43 @@ _wiki_deref_pointer() {
 }
 
 wiki_root_from_cwd() {
-  # Walks up from cwd looking for a dir containing .wiki-config.
-  # Prints absolute path or exits 1. A found config with role
-  # "project-pointer" is dereferenced to its pointed wiki (see
-  # _wiki_deref_pointer) — the pointer dir itself is never a wiki.
-  #
-  # Walk-up rules (paired #11/#9 fix, 0.2.8):
-  #   - At leaf cwd: probe BOTH ${dir}/.wiki-config AND ${dir}/wiki/.wiki-config.
-  #     The nested-wiki/ probe lets a user `cd ~/proj` and have their
-  #     ~/proj/wiki/ project wiki resolve.
-  #   - During walk-up: probe ONLY ${dir}/.wiki-config. Probing
-  #     ${dir}/wiki/.wiki-config at every level lets cwd inside an unrelated
-  #     project leak into ${HOME}/wiki/ (cross-project leak).
-  #   - Stop walking when ${dir} == ${HOME}. The user's home dir itself is
-  #     not a project root; if the main wiki lives at ${HOME}/wiki/ it must
-  #     be reached via the explicit pointer, not by accidental walk-up.
-  local dir
-  dir="$(pwd)"
+  # The external workspace runtime is the only routing authority. Tracked
+  # project pointers remain structural hints and cannot select main or both.
+  local script plan
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki_config.py"
+  plan="$(python3 "${script}" route-find --cwd "$(pwd -P)" --json 2>/dev/null)" \
+    || return 1
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["primary_wiki"])' \
+    <<< "${plan}"
+}
 
-  # Leaf probe: nested wiki/ allowed.
-  if [[ -f "${dir}/.wiki-config" ]]; then
-    _wiki_deref_pointer "${dir}"
-    return 0
-  fi
-  if [[ -f "${dir}/wiki/.wiki-config" ]]; then
-    _wiki_deref_pointer "${dir}/wiki"
-    return 0
-  fi
+wiki_promotion_policy() {
+  # Scanner-created captures are promotable only when the nearest trusted
+  # workspace runtime currently selects both and binds this exact project
+  # wiki. Missing, malformed, or tracked-only routing always narrows to none.
+  local wiki script plan
+  wiki="$(cd "$1" 2>/dev/null && pwd -P)" || { printf 'none\n'; return 0; }
+  [[ "$(wiki_structural_config_get "${wiki}" role 2>/dev/null || true)" == "project" ]] \
+    || { printf 'none\n'; return 0; }
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wiki_config.py"
+  plan="$(python3 "${script}" route-find --cwd "${wiki}" --json 2>/dev/null)" \
+    || { printf 'none\n'; return 0; }
+  python3 - "${wiki}" "${plan}" <<'PY'
+import json
+import os
+import sys
 
-  # Walk up. Stop at $HOME (exclusive) and at /.
-  dir="$(dirname "${dir}")"
-  while [[ "${dir}" != "/" && "${dir}" != "${HOME}" ]]; do
-    if [[ -f "${dir}/.wiki-config" ]]; then
-      _wiki_deref_pointer "${dir}"
-      return 0
-    fi
-    dir="$(dirname "${dir}")"
-  done
-  return 1
+wiki = os.path.realpath(sys.argv[1])
+try:
+    plan = json.loads(sys.argv[2])
+except (OSError, ValueError):
+    print("none")
+    raise SystemExit
+if plan.get("mode") == "both" and plan.get("project_wiki") == wiki:
+    print("selective")
+else:
+    print("none")
+PY
 }
 
 # ---------------------------------------------------------------------------

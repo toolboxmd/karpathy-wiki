@@ -34,6 +34,10 @@ grep -q 'capture_kind' "${SCHEMA_REF}" || fail "schema ref missing capture_kind 
 grep -q 'raw-direct' "${SCHEMA_REF}" || fail "schema ref missing raw-direct kind"
 grep -q 'chat-attached' "${SCHEMA_REF}" || fail "schema ref missing chat-attached kind"
 grep -q 'chat-only' "${SCHEMA_REF}" || fail "schema ref missing chat-only kind"
+grep -q 'capture_id' "${SCHEMA_REF}" || fail "schema ref missing portable capture identity"
+grep -q 'promotion_policy' "${SCHEMA_REF}" || fail "schema ref missing promotion policy"
+grep -q 'promotion_decision' "${SCHEMA_REF}" || fail "schema ref missing durable promotion decision"
+grep -q 'promotion_id' "${SCHEMA_REF}" || fail "schema ref missing stable promotion identity"
 
 # Iron laws not duplicated here (single source of truth is the loader)
 if grep -q 'NO WIKI WRITE IN THE FOREGROUND' "${SKILL}"; then
