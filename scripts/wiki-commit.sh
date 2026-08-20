@@ -31,10 +31,10 @@ if ! (cd "${wiki}" && git rev-parse --is-inside-work-tree >/dev/null 2>&1); then
 fi
 
 cd "${wiki}"
-git add -A
+git add -A -- .
 
 # If nothing staged, silently exit.
-if git diff --cached --quiet; then
+if git diff --cached --quiet -- .; then
   log_info "commit: nothing to commit"
   exit 0
 fi
@@ -62,7 +62,7 @@ if [[ -x "${validator}" ]]; then
       failed=$((failed + 1))
       failed_pages+=("${staged}")
     fi
-  done < <(git diff --cached --name-only --diff-filter=ACMR)
+  done < <(git diff --cached --name-only --diff-filter=ACMR -- .)
 
   if [[ "${failed}" -gt 0 ]]; then
     log_error "commit: validator failed for ${failed} page(s); refusing commit"
@@ -73,7 +73,7 @@ if [[ -x "${validator}" ]]; then
   fi
 fi
 
-git commit -m "${msg}" >/dev/null 2>&1 || {
+git commit -m "${msg}" -- . >/dev/null 2>&1 || {
   log_error "commit: git commit failed"
   exit 1
 }

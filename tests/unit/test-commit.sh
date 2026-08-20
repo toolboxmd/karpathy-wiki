@@ -71,7 +71,53 @@ EOF
   teardown
 }
 
+test_embedded_wiki_commit_does_not_stage_parent_repo_changes() {
+  TESTDIR="$(mktemp -d)"
+  local app="${TESTDIR}/app"
+  WIKI="${app}/wiki"
+  mkdir -p "${app}"
+  (
+    cd "${app}"
+    git init -q
+    git config user.email test@example.com
+    git config user.name test
+    printf 'app v1\n' > app.txt
+    git add app.txt
+    git commit -q -m "chore: init app"
+  )
+  bash "${REPO_ROOT}/scripts/wiki-init.sh" main "${WIKI}" >/dev/null
+  (
+    cd "${app}"
+    git add wiki
+    git commit -q -m "chore: init embedded wiki"
+  )
+
+  printf 'app v2\n' > "${app}/app.txt"
+  printf '\n# Changed inside wiki\n' >> "${WIKI}/index.md"
+  bash "${COMMIT}" "${WIKI}" "ingest: embedded wiki only"
+
+  local last changed status
+  last="$(cd "${app}" && git log -1 --format=%s)"
+  [[ "${last}" == "ingest: embedded wiki only" ]] || {
+    echo "FAIL: embedded wiki commit message. got '${last}'"; teardown; exit 1
+  }
+  changed="$(cd "${app}" && git show --name-only --format= HEAD | sed '/^$/d')"
+  grep -Fxq "wiki/index.md" <<< "${changed}" || {
+    echo "FAIL: embedded wiki change was not committed"; teardown; exit 1
+  }
+  if grep -Fxq "app.txt" <<< "${changed}"; then
+    echo "FAIL: parent repo file was captured by wiki commit"; teardown; exit 1
+  fi
+  status="$(cd "${app}" && git status --short)"
+  grep -Fxq " M app.txt" <<< "${status}" || {
+    echo "FAIL: parent repo change should remain unstaged in working tree; status=${status}"; teardown; exit 1
+  }
+  echo "PASS: test_embedded_wiki_commit_does_not_stage_parent_repo_changes"
+  teardown
+}
+
 test_commit_nothing_if_no_changes
 test_commit_creates_commit_with_message
 test_commit_respects_auto_commit_false
+test_embedded_wiki_commit_does_not_stage_parent_repo_changes
 echo "ALL PASS"
