@@ -1,8 +1,17 @@
-# karpathy-wiki user manual (current development branch)
+# karpathy-wiki user manual (v0.2.9)
 
-A short reference for the v0.2.8 base plus the provider-aware dispatcher now under development. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
+A short reference for karpathy-wiki v0.2.9. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
 For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
+
+## What changed in 0.2.9
+
+- Added native Codex plugin packaging and qualified Codex as the primary interactive development host.
+- Added the bounded provider-aware dispatcher with explicit Claude, Codex, and Grok profiles, retries, heartbeats, cooldowns, and per-wiki process limits.
+- Moved provider settings and trust decisions into private per-machine runtime files instead of tracked repository configuration.
+- Replaced competing routing and consent markers with one authoritative `project | main | both` workspace mode.
+- Made `both` project-first: the original capture stays in the project wiki and only reusable knowledge is selectively promoted to the configured main wiki.
+- Added pinned, retry-safe selective promotion plus a shared strict frontmatter parser for capture, completion, promotion, and status paths.
 
 ## Current dispatcher changes
 
