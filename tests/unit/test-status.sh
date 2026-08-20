@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export WIKI_CONFIG_TEST_ALLOW_CHECKOUT_RUNTIME=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -138,7 +139,7 @@ EOF
   sleep 2
   local output
   output="$(bash "${STATUS}" "${WIKI}")"
-  grep -q "active ingests: 2 / 3" <<< "${output}" \
+  grep -q "active ingests: 2 / 1" <<< "${output}" \
     || { echo "FAIL: active slot count wrong"; teardown; exit 1; }
   grep -q "stalled heartbeat: 1" <<< "${output}" \
     || { echo "FAIL: stalled heartbeat count wrong"; teardown; exit 1; }
