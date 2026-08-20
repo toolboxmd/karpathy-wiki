@@ -7,15 +7,6 @@ Before changing test policy or removing, merging, or demoting tests, read
 The first phase is a read-only portfolio audit and must stop for human review.
 Remove this pointer when that workstream is resolved.
 
-## Project ledger files
-
-Use the global project-ledger convention when adding or pruning local
-`CHANGELOG.md`, `TODO.md`, `ISSUES.md`, and `IDEAS.md`.
-
-In this repository, `ISSUES.md` means a local known-problems scratchpad. It is
-not the `wiki issues` command, not `.ingest-issues.jsonl`, not a GitHub Issues
-replacement, and not a work-package manifest.
-
 ## If you are an AI agent
 
 Before opening a PR against this repo:
