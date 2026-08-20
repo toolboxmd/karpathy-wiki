@@ -171,9 +171,10 @@ def build_provider_invocation(
             model,
             "--reasoning-effort",
             effort,
+            # Headless automation needs the bypass mode. Do not also pass
+            # --permission-mode auto: Grok CLI 1.0.5 can then start with
+            # yolo_mode=false and cancel a permission request after 30s.
             "--always-approve",
-            "--permission-mode",
-            "auto",
             "--max-turns",
             "150",
             "--no-memory",

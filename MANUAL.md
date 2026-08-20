@@ -1,10 +1,10 @@
-# karpathy-wiki user manual (v0.2.9)
+# karpathy-wiki user manual (v0.3.0)
 
-A short reference for karpathy-wiki v0.2.9. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
+A short reference for karpathy-wiki v0.3.0. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
 For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
 
-## What changed in 0.2.9
+## What changed in 0.3.0
 
 - Added native Codex plugin packaging and qualified Codex as the primary interactive development host.
 - Added the bounded provider-aware dispatcher with explicit Claude, Codex, and Grok profiles, retries, heartbeats, cooldowns, and per-wiki process limits.
@@ -12,6 +12,8 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 - Replaced competing routing and consent markers with one authoritative `project | main | both` workspace mode.
 - Made `both` project-first: the original capture stays in the project wiki and only reusable knowledge is selectively promoted to the configured main wiki.
 - Added pinned, retry-safe selective promotion plus a shared strict frontmatter parser for capture, completion, promotion, and status paths.
+- Corrected headless Grok automation to use one non-interactive permission mode, avoiding 30-second `permission_cancelled` failures caused by combining `--always-approve` with `--permission-mode auto` in Grok CLI 1.0.5.
+- Requalified Grok ingestion after the adapter fix. The matched semantic benchmark keeps Grok 4.5 Medium as the recommended Grok profile; see [the benchmark report](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md).
 
 ## Current dispatcher changes
 
