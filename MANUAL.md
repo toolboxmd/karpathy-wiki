@@ -24,6 +24,36 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 - Live work has a heartbeat. Technical failures retry deterministically, rate limits wait without consuming attempts, and exhausted captures move to `.wiki-pending/failed/`.
 - CodexBar is optional advisory preflight. Without it, ingestion remains fully functional in reactive mode.
 
+### Security boundary in v0.3.0
+
+The detached ingester is trusted local automation. It is not isolated well
+enough to process hostile or collaborator-controlled prompts unattended.
+
+The Grok profile intentionally uses `--always-approve` because Grok CLI 1.0.5
+otherwise cannot complete this headless workflow reliably. The dispatcher also
+inherits the launcher's complete environment, and the ingest protocol currently
+uses general shell commands for orientation, locking, validation, manifest
+updates, Git operations, and completion. Treat every capture and referenced
+source as trusted input.
+
+A canary confirmed that one project `.grok/sandbox.toml` profile can resolve
+the current working directory dynamically, allow the selected wiki plus a
+trusted helper, and deny an unrelated test file. The same mechanism is portable
+between arbitrary project wikis and the main wiki because each worker starts in
+the selected wiki root. It is not sufficient as the only patch:
+
+- denying `~/.grok/auth.json` prevents Grok from signing in;
+- allowing only one helper breaks the current semantic ingest protocol, which
+  still relies on multiple shell operations;
+- Grok documents child-process network restriction as unavailable on macOS;
+- path isolation alone does not remove secrets already present in the inherited
+  environment.
+
+For v0.3.0, keep unattended ingest limited to trusted personal wikis. If a
+capture or evidence file may contain untrusted instructions, inspect it first
+or leave automatic dispatch disabled. The provider-neutral containment work is
+recorded in [TODO.md](TODO.md) and requires its own implementation and tests.
+
 ## What changed in 0.2.8
 
 12 hardening items from a 3-reviewer adversarial pass on v0.2.7. See `docs/specs/0.2.8.md` for the per-item RED/GREEN ladder and `docs/reviews/2026-05-06-v0.2.7-synthesis.md` for the decision record.
