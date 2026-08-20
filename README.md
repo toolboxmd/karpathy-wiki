@@ -21,7 +21,7 @@ No global `wiki` command is required.
 - `wiki issues` — show recent ingester-reported issues, grouped and severity-ordered.
 - `wiki use project|main|both` — change per-cwd wiki mode.
 - `wiki config init-local|migrate|migrate-local|validate|show` — manage trusted, per-machine provider and dispatcher settings outside the checkout.
-- `wiki scheduler install|uninstall|status` — manage the macOS cron-like LaunchAgent adapter.
+- `wiki scheduler install|uninstall|enable|disable|status|tick-all` — manage the one machine-wide macOS LaunchAgent adapter and per-wiki activation.
 - `wiki tick` — run one short, bounded dispatcher pass (also usable from an external scheduler).
 - `wiki init-main` — bootstrap `~/.wiki-pointer` (interactive).
 - `wiki doctor` — deep lint + smartest-model re-rate of quality blocks. **Not yet implemented (stub returns "not implemented" exit 1).** Deferred to a future ship; tracked in `TODO.md`.
@@ -57,11 +57,7 @@ skill copy is required.
 
 To update a GitHub installation:
 
-1. In the current Codex session, ask Codex to run
-   `wiki scheduler uninstall <wiki-path>` with the plugin-owned Runtime CLI
-   path for every wiki using scheduled activation. Do this while the old
-   snapshot still exists. Do not invoke a global `wiki` command.
-2. Run the plugin lifecycle commands in your shell:
+1. Run the plugin lifecycle commands in your shell:
 
 ```bash
 codex plugin marketplace upgrade toolboxmd
@@ -69,13 +65,13 @@ codex plugin remove karpathy-wiki@toolboxmd
 codex plugin add karpathy-wiki@toolboxmd
 ```
 
-3. Start a new Codex session, review the new hook hash through `/hooks`, then
-   ask Codex to run `wiki scheduler install <wiki-path>` with the new
-   plugin-owned Runtime CLI path for every wiki that previously used scheduling.
+2. Start a new Codex session, review the new hook hash through `/hooks`, then
+   ask Codex to run `wiki scheduler install` with the new plugin-owned Runtime
+   CLI path. This refreshes the one machine scheduler.
 
-The uninstall and reinstall steps are required for scheduled wikis because the
-LaunchAgent stores the absolute path to the installed plugin snapshot. Removing
-the plugin first can leave the agent pointing at a deleted or obsolete snapshot.
+The reinstall step is required when scheduling is enabled because the
+LaunchAgent stores the absolute path to the installed plugin snapshot. v0.3.1
+stores that path in one machine scheduler instead of one plist per wiki.
 
 Start a new session after each install or update. If a hook definition changed,
 review and trust its new hash through `/hooks`.
@@ -90,9 +86,7 @@ codex plugin add karpathy-wiki@toolboxmd
 ```
 
 Codex installs a snapshot from the marketplace. During local development,
-refresh it by first asking Codex in the current session to run
-`wiki scheduler uninstall <wiki-path>` for each scheduled wiki. Then remove and
-add the snapshot in your shell:
+refresh it by removing and adding the snapshot in your shell:
 
 ```bash
 codex plugin remove karpathy-wiki@toolboxmd
@@ -100,8 +94,8 @@ codex plugin add karpathy-wiki@toolboxmd
 ```
 
 Open a new session and ask Codex to run
-`wiki scheduler install <wiki-path>` through the new plugin-owned Runtime CLI
-for each wiki that should return to scheduled mode.
+`wiki scheduler install` through the new plugin-owned Runtime CLI. Scheduled
+wikis keep their per-wiki activation mode across the plugin refresh.
 
 Do not install duplicate copies of these skills under `~/.agents/skills` or
 `~/.codex/skills`.
@@ -125,9 +119,10 @@ Do not install duplicate copies of these skills under `~/.agents/skills` or
 
 ### Uninstall from Codex
 
-If a wiki uses scheduled activation, first ask Codex to run
-`wiki scheduler uninstall <wiki-path>` while the plugin is still installed.
-Then remove the plugin:
+If scheduled activation is enabled, first ask Codex to run
+`wiki scheduler uninstall --force` while the plugin is still installed, or run
+`wiki scheduler disable <wiki-path>` for each scheduled wiki and then
+`wiki scheduler uninstall`. Then remove the plugin:
 
 ```bash
 codex plugin remove karpathy-wiki@toolboxmd
@@ -266,15 +261,15 @@ it deliberately.
 ## Activation modes
 
 - `session_start`: no scheduler installation. SessionStart injects the loader and launches one bounded scan/tick.
-- `scheduled`: `wiki scheduler install <wiki>` installs a short-lived macOS LaunchAgent and switches the local mode only after successful activation. `wiki scheduler uninstall <wiki>` removes only that wiki's agent and switches back to SessionStart.
+- `scheduled`: `wiki scheduler install` installs one short-lived machine LaunchAgent. `wiki scheduler enable <wiki>` switches that trusted wiki to scheduled activation. `wiki scheduler disable <wiki>` switches it back to SessionStart. For compatibility, `wiki scheduler install <wiki>` installs the global scheduler and enables that wiki, while `wiki scheduler uninstall <wiki>` disables only that wiki and leaves the global scheduler installed.
 
-The scheduled command does not keep a model resident in memory. On non-macOS systems, use `wiki tick <wiki> --source scheduled --scan` from an external scheduler. CodexBar is optional: when usable it provides advisory preflight quota data; when absent, malformed, or timed out, the dispatcher continues in reactive mode using provider CLI results.
+The scheduled command does not keep a model resident in memory. The coordinator wakes, enumerates trusted `wikis/*/runtime.toml` records, offers at most one worker per due wiki, enforces 10 machine-wide workers and one worker per wiki, then exits. On non-macOS systems, use `wiki scheduler tick-all` from an external scheduler. CodexBar is optional: when usable it provides advisory preflight quota data; when absent, malformed, or timed out, the dispatcher continues in reactive mode using provider CLI results.
 
 Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-wiki-v2-design.md). Implementation plan: [`docs/planning/2026-04-22-karpathy-wiki-v2.md`](docs/planning/2026-04-22-karpathy-wiki-v2.md).
 
 ## Status
 
-**v0.3.0.** Codex is the qualified
+**v0.3.1.** Codex is the qualified
 primary interactive development host. Claude Code remains supported with its
 existing automated hook coverage. Codex qualification includes recorded
 interactive-host acceptance evidence; it does not claim equivalent automated
@@ -282,7 +277,7 @@ coverage for every Codex lifecycle path. Detached ingest supports Claude Code,
 Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain
 best-effort.
 
-**What works today (v2.4 + 0.2.7 read protocol + 0.2.8 hardening + 0.3.0 runtime, routing, and provider automation):**
+**What works today (v2.4 + 0.2.7 read protocol + 0.2.8 hardening + 0.3.1 runtime, routing, and provider automation):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
 - Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
 - Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.
@@ -293,7 +288,7 @@ best-effort.
 - Raw-direct ingest: drop a file into `<wiki>/inbox/` and the next configured scan ingests it directly (no fabricated wrapper). Files accidentally dropped in `raw/` are recovered to `inbox/` under the manifest lock.
 - Deep orientation (steps 1-9) in the ingester; issues surfaced to `.ingest-issues.jsonl` and the `wiki issues` / `wiki status` commands.
 - Per-wiki `.ingest-runs.jsonl` for run history; status reports selective captures awaiting a decision, kept local, or promoted.
-- Bounded provider-aware dispatcher, optional fallback profile, heartbeat, retries, failed queue, optional CodexBar preflight, and mutually exclusive SessionStart/scheduled activation.
+- Bounded provider-aware dispatcher, optional fallback profile, heartbeat, retries, failed queue, optional CodexBar preflight, one global scheduled coordinator, and mutually exclusive SessionStart/scheduled activation per wiki.
 - `wiki status` health report; `wiki capture` / `wiki ingest-now` / `wiki issues` / `wiki use` / `wiki config` / `wiki scheduler` / `wiki tick` / `wiki init-main` CLI.
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 

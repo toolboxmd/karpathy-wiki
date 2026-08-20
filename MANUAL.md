@@ -1,13 +1,20 @@
-# karpathy-wiki user manual (v0.3.0)
+# karpathy-wiki user manual (v0.3.1)
 
-A short reference for karpathy-wiki v0.3.0. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
+A short reference for karpathy-wiki v0.3.1. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
 For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
+
+## What changed in 0.3.1
+
+- Replaced per-wiki LaunchAgents with one machine-wide macOS scheduler.
+- Preserved independent per-wiki activation: `session_start` or `scheduled`.
+- Enforced fixed concurrency limits across every launch source: 10 workers machine-wide and one worker per wiki.
+- Added `wiki scheduler enable|disable|tick-all` and compatibility aliases for the v0.3.0 `install <wiki>` / `uninstall <wiki>` commands.
 
 ## What changed in 0.3.0
 
 - Added native Codex plugin packaging and qualified Codex as the primary interactive development host.
-- Added the bounded provider-aware dispatcher with explicit Claude, Codex, and Grok profiles, retries, heartbeats, cooldowns, and per-wiki process limits.
+- Added the bounded provider-aware dispatcher with explicit Claude, Codex, and Grok profiles, retries, heartbeats, cooldowns, and process limits.
 - Moved provider settings and trust decisions into private per-machine runtime files instead of tracked repository configuration.
 - Replaced competing routing and consent markers with one authoritative `project | main | both` workspace mode.
 - Made `both` project-first: the original capture stays in the project wiki and only reusable knowledge is selectively promoted to the configured main wiki.
@@ -17,10 +24,10 @@ For installation, see [README.md](README.md). For deferred work, see [TODO.md](T
 
 ## Current dispatcher changes
 
-- Ingest is bounded by `max_processes`; no SessionStart fan-out can exceed the per-wiki or per-profile ceiling.
+- Ingest is bounded by the global slot pool; no SessionStart, capture, manual tick, scheduled tick, promotion, or worker-completion refill can exceed 10 machine-wide workers or one worker per wiki.
 - Claude Code, Codex, and Grok are supported as detached ingest providers. Every profile names an exact model and reasoning effort.
 - `.wiki-config` is tracked structural identity only. Provider settings and local trust live under `.../wikis/<hash>/runtime.toml`; the one authoritative per-workspace `project|main|both` choice lives separately under `.../workspaces/<hash>/runtime.toml`.
-- Automatic activation is mutually exclusive: `session_start` or `scheduled` (the macOS LaunchAgent adapter).
+- Automatic activation is mutually exclusive per wiki: `session_start` or `scheduled` (the macOS LaunchAgent adapter).
 - Live work has a heartbeat. Technical failures retry deterministically, rate limits wait without consuming attempts, and exhausted captures move to `.wiki-pending/failed/`.
 - CodexBar is optional advisory preflight. Without it, ingestion remains fully functional in reactive mode.
 
@@ -149,15 +156,24 @@ With a valid external trust and runtime record, the selected activation mode is 
 On macOS, the built-in adapter is a LaunchAgent: a cron-like process that wakes, runs one short tick, and exits. It does not keep a model idle in memory.
 
 ```bash
-wiki scheduler install <wiki>    # installs/updates and then switches mode
+wiki scheduler install           # installs or refreshes the one machine scheduler
+wiki scheduler enable <wiki>     # switches one trusted wiki to scheduled mode
+wiki scheduler status
 wiki scheduler status <wiki>
-wiki scheduler uninstall <wiki>  # removes this wiki's agent and switches back
+wiki scheduler disable <wiki>    # switches one trusted wiki back to SessionStart
+wiki scheduler tick-all          # runs one bounded coordinator sweep
 ```
+
+For compatibility with v0.3.0, `wiki scheduler install <wiki>` installs the
+global scheduler and enables that wiki. `wiki scheduler uninstall <wiki>`
+disables only that wiki and leaves the global scheduler installed. Removing the
+global scheduler while scheduled wikis remain enabled requires disabling them
+first or passing the explicit force option.
 
 On another operating system, invoke the portable command from your own scheduler:
 
 ```bash
-wiki tick <wiki> --source scheduled --scan
+wiki scheduler tick-all
 ```
 
 Set `dispatch_mode = scheduled` only when that external scheduler actually exists; `wiki status` reports a mismatch otherwise.
@@ -227,7 +243,7 @@ wiki ingest-now    # drift-scan + drain inbox/ on demand
 wiki issues        # show recent ingester-reported issues, grouped + severity-ordered
 wiki use <mode>    # change per-cwd wiki mode (project|main|both)
 wiki config ...    # create, migrate, validate, or show per-machine runtime config
-wiki scheduler ... # install, uninstall, or inspect the macOS LaunchAgent
+wiki scheduler ... # install, enable, disable, inspect, or tick the global LaunchAgent
 wiki tick ...      # one bounded dispatcher pass
 wiki init-main     # bootstrap ~/.wiki-pointer (interactive)
 wiki doctor        # deep lint + smartest-model re-rate (NOT YET IMPLEMENTED, exits 1)
