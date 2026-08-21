@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,8 +14,24 @@ import shlex
 import shutil
 from typing import Any
 
+from wiki_yaml import extract_frontmatter, parse_yaml
+
 
 SUPPORTED_PROVIDERS = {"claude", "codex", "grok"}
+SUPPORTED_GROK_IMAGE_MIME_TYPES = {"image/jpeg", "image/png"}
+IMAGE_LIKE_SUFFIXES = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
 
 
 class ProviderError(ValueError):
@@ -34,6 +52,14 @@ class ProviderInvocation:
     stderr_path: Path
     prompt_path: Path | None = None
     output_last_message_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class NativeImageAttachment:
+    path: Path
+    data: bytes
+    mime_type: str
+    sha256: str
 
 
 def resolve_executable(
@@ -93,6 +119,160 @@ def _prompt(root: Path, capture: Path, plugin_root: Path) -> str:
     )
 
 
+def _image_prompt(prompt: str) -> str:
+    return (
+        prompt
+        + "\nNative ACP image evidence is attached below in the exact order declared "
+        "by the capture. Inspect the native image content blocks directly. A file "
+        "path, filename, read_file result, or tool call is not proof that an image "
+        "was shown to the model. Do not silently downgrade visual evidence to a "
+        "path-only or read_file-only workflow. Preserve every declared original "
+        "under the normal raw-evidence and manifest protocol.\n"
+    )
+
+
+def _detect_supported_image_mime(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    return None
+
+
+def _canonical_declared_file(raw_path: str, label: str) -> Path:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ProviderError(f"{label} must be a non-empty absolute path")
+    declared = Path(raw_path).expanduser()
+    if not declared.is_absolute():
+        raise ProviderError(f"{label} must be an absolute path: {raw_path}")
+    try:
+        canonical = declared.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ProviderError(f"missing {label}: {declared}") from exc
+    except OSError as exc:
+        raise ProviderError(f"cannot resolve {label}: {declared}: {exc}") from exc
+    if not canonical.is_file():
+        raise ProviderError(f"{label} is not a regular file: {canonical}")
+    return canonical
+
+
+def _load_native_image(path: Path, label: str) -> NativeImageAttachment:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ProviderError(f"cannot read {label}: {path}: {exc}") from exc
+    mime_type = _detect_supported_image_mime(data)
+    if mime_type not in SUPPORTED_GROK_IMAGE_MIME_TYPES:
+        supported = ", ".join(sorted(SUPPORTED_GROK_IMAGE_MIME_TYPES))
+        raise ProviderError(
+            f"unsupported image format for {label}: {path}; supported MIME types: {supported}"
+        )
+    return NativeImageAttachment(
+        path=path,
+        data=data,
+        mime_type=mime_type,
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+
+
+def _capture_frontmatter(capture: Path) -> dict[str, Any]:
+    try:
+        text = capture.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ProviderError(f"claimed capture is missing: {capture}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ProviderError(f"cannot read claimed capture: {capture}: {exc}") from exc
+    raw_frontmatter = extract_frontmatter(text)
+    if raw_frontmatter is None:
+        return {}
+    try:
+        parsed = parse_yaml(raw_frontmatter)
+    except ValueError as exc:
+        raise ProviderError(f"claimed capture frontmatter is malformed: {capture}: {exc}") from exc
+    return parsed
+
+
+def _grok_native_images(capture: Path) -> list[NativeImageAttachment]:
+    """Return only explicitly declared images in capture-stable order."""
+
+    frontmatter = _capture_frontmatter(capture)
+    evidence = frontmatter.get("evidence")
+    evidence_type = frontmatter.get("evidence_type")
+    raw_attachments = frontmatter.get("attachments", [])
+    if raw_attachments in (None, ""):
+        raw_attachments = []
+    if not isinstance(raw_attachments, list) or any(
+        not isinstance(item, str) or not item.strip() for item in raw_attachments
+    ):
+        raise ProviderError("capture attachments must be a list of non-empty absolute paths")
+
+    file_backed = evidence_type in {"file", "mixed"} and isinstance(evidence, str)
+    evidence_path: Path | None = None
+    evidence_is_image_intent = (
+        file_backed and Path(evidence).suffix.lower() in IMAGE_LIKE_SUFFIXES
+    )
+    if file_backed and (raw_attachments or evidence_is_image_intent):
+        label = (
+            "declared image evidence"
+            if evidence_is_image_intent
+            else "capture evidence file"
+        )
+        evidence_path = _canonical_declared_file(evidence, label)
+    elif file_backed:
+        declared = Path(evidence).expanduser()
+        if declared.is_absolute() and declared.is_file():
+            try:
+                evidence_path = declared.resolve(strict=True)
+            except OSError:
+                evidence_path = None
+
+    images: list[NativeImageAttachment] = []
+    if evidence_path is not None:
+        try:
+            with evidence_path.open("rb") as handle:
+                prefix = handle.read(16)
+        except OSError as exc:
+            if evidence_is_image_intent or raw_attachments:
+                raise ProviderError(
+                    f"cannot read capture evidence file: {evidence_path}: {exc}"
+                ) from exc
+            prefix = b""
+        if _detect_supported_image_mime(prefix) is not None:
+            images.append(_load_native_image(evidence_path, "declared image evidence"))
+        elif evidence_is_image_intent:
+            _load_native_image(evidence_path, "declared image evidence")
+
+    if raw_attachments:
+        if evidence_path is None:
+            raise ProviderError(
+                "declared image attachments require an existing file-backed capture evidence path"
+            )
+        evidence_root = evidence_path.parent
+        for index, raw_path in enumerate(raw_attachments, start=1):
+            label = f"declared image attachment {index}"
+            attachment_path = _canonical_declared_file(raw_path, label)
+            try:
+                attachment_path.relative_to(evidence_root)
+            except ValueError as exc:
+                raise ProviderError(
+                    f"declared image attachment is outside the capture evidence directory: "
+                    f"{attachment_path} (allowed root: {evidence_root})"
+                ) from exc
+            images.append(_load_native_image(attachment_path, label))
+    return images
+
+
+def _safe_prompt_json_limit() -> int:
+    try:
+        arg_max = int(os.sysconf("SC_ARG_MAX"))
+    except (AttributeError, OSError, TypeError, ValueError):
+        arg_max = 1024 * 1024
+    environment_bytes = sum(
+        len(key.encode()) + len(value.encode()) + 2 for key, value in os.environ.items()
+    )
+    return max(0, arg_max - environment_bytes - 64 * 1024)
+
+
 def _base_environment(
     root: Path, capture: Path, run_id: str, plugin_root: Path
 ) -> dict[str, str]:
@@ -130,10 +310,13 @@ def build_provider_invocation(
     root = Path(wiki_root).expanduser().resolve()
     claimed = Path(capture).expanduser().resolve()
     plugin = Path(plugin_root).expanduser().resolve()
+    native_images = _grok_native_images(claimed) if provider == "grok" else []
     safe_run_id = _safe_run_id(run_id)
     run_dir = root / ".locks" / "ingest-runs" / safe_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     prompt = _prompt(root, claimed, plugin)
+    if native_images:
+        prompt = _image_prompt(prompt)
     stdout_path = run_dir / "stdout.jsonl"
     stderr_path = run_dir / "stderr.log"
     environment = _base_environment(root, claimed, safe_run_id, plugin)
@@ -161,8 +344,6 @@ def build_provider_invocation(
             prompt,
         ]
     elif provider == "grok":
-        prompt_path = run_dir / "prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
         argv = [
             executable,
             "--cwd",
@@ -181,9 +362,32 @@ def build_provider_invocation(
             "--no-subagents",
             "--output-format",
             "streaming-json",
-            "--prompt-file",
-            str(prompt_path),
         ]
+        if native_images:
+            content_blocks: list[dict[str, str]] = [
+                {"type": "text", "text": prompt}
+            ]
+            content_blocks.extend(
+                {
+                    "type": "image",
+                    "data": base64.b64encode(image.data).decode("ascii"),
+                    "mimeType": image.mime_type,
+                }
+                for image in native_images
+            )
+            prompt_json = json.dumps(content_blocks, separators=(",", ":"))
+            prompt_json_bytes = len(prompt_json.encode("utf-8"))
+            prompt_json_limit = _safe_prompt_json_limit()
+            if prompt_json_bytes > prompt_json_limit:
+                raise ProviderError(
+                    "native ACP image payload is too large for the provider process "
+                    f"argument limit: {prompt_json_bytes} bytes exceeds {prompt_json_limit} bytes"
+                )
+            argv.extend(["--prompt-json", prompt_json])
+        else:
+            prompt_path = run_dir / "prompt.md"
+            prompt_path.write_text(prompt, encoding="utf-8")
+            argv.extend(["--prompt-file", str(prompt_path)])
     else:
         output_path = run_dir / "output-last-message.txt"
         stdin_bytes = prompt.encode("utf-8")
@@ -213,14 +417,32 @@ def build_provider_invocation(
     # Safe attribution metadata contains no prompt, argv, account identity, or
     # credential-bearing environment values. Failure diagnostics and explicit
     # acceptance runs may retain it for audit.
+    invocation_metadata: dict[str, Any] = {
+        "run_id": safe_run_id,
+        "provider": provider,
+        "model": model,
+        "reasoning_effort": effort,
+    }
+    if native_images:
+        invocation_metadata.update(
+            {
+                "prompt_transport": "native_acp_content_blocks",
+                "content_block_types": ["text"] + ["image"] * len(native_images),
+                "image_count": len(native_images),
+                "images": [
+                    {
+                        "ordinal": index,
+                        "mime_type": image.mime_type,
+                        "bytes": len(image.data),
+                        "sha256": image.sha256,
+                    }
+                    for index, image in enumerate(native_images, start=1)
+                ],
+            }
+        )
     (run_dir / "invocation.json").write_text(
         json.dumps(
-            {
-                "run_id": safe_run_id,
-                "provider": provider,
-                "model": model,
-                "reasoning_effort": effort,
-            },
+            invocation_metadata,
             sort_keys=True,
             separators=(",", ":"),
         )

@@ -17,6 +17,8 @@
 #      evidence: "/abs"
 #   3. chat-attached with NO --evidence-path → exit non-zero with a clear
 #      message about chat-attached requiring evidence-path.
+#   4. repeatable --attachment-path values are preserved in declared order.
+#   5. chat-only rejects image attachments because it has no file evidence root.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,5 +108,49 @@ out=$(echo "${body_attached}" | run_capture --title "T3" --kind chat-attached --
 [[ "${rc}" != 0 ]] || fail "case 3 (chat-attached, no evidence-path) should fail, exit=0"
 echo "${out}" | grep -qi "evidence-path" || \
   fail "case 3 error message should mention evidence-path. Got: ${out}"
+
+# Case 4: explicit attachments are recorded in deterministic declaration order.
+ATTACHMENT_A="${TMP}/attachment-a.png"
+ATTACHMENT_B="${TMP}/attachment-b.jpg"
+printf '\211PNG\r\n\032\nfixture-a' > "${ATTACHMENT_A}"
+printf '\377\330\377fixture-b' > "${ATTACHMENT_B}"
+sleep 1
+out=$(echo "${body_attached}" | run_capture \
+  --title "T4" \
+  --kind chat-attached \
+  --suggested-action create \
+  --evidence-path "${EV}" \
+  --attachment-path "${ATTACHMENT_B}" \
+  --attachment-path "${ATTACHMENT_A}" || true)
+echo "${out}" | grep -q "wiki capture: 1 target" || \
+  fail "case 4 (ordered attachments) did not run cleanly: ${out}"
+
+cap4=$(newest_capture)
+python3 - "${REPO_ROOT}" "${MAIN}/.wiki-pending/${cap4}" \
+  "${ATTACHMENT_B}" "${ATTACHMENT_A}" <<'PY' \
+  || fail "case 4 did not preserve attachment order"
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+from wiki_yaml import extract_frontmatter, parse_yaml
+
+capture = Path(sys.argv[2]).read_text(encoding="utf-8")
+frontmatter = extract_frontmatter(capture)
+assert frontmatter is not None
+parsed = parse_yaml(frontmatter)
+assert parsed["attachments"] == sys.argv[3:]
+PY
+
+# Case 5: attachments require a file-backed capture kind.
+sleep 1
+out=$(echo "${body_chat}" | run_capture \
+  --title "T5" \
+  --kind chat-only \
+  --suggested-action create \
+  --attachment-path "${ATTACHMENT_A}" 2>&1) && rc=0 || rc=$?
+[[ "${rc}" != 0 ]] || fail "case 5 (chat-only attachment) should fail"
+echo "${out}" | grep -qi "attachment-path.*chat-only" || \
+  fail "case 5 error should explain the chat-only attachment boundary: ${out}"
 
 echo "PASS: bin/wiki capture honors --evidence-path; chat-attached requires it"

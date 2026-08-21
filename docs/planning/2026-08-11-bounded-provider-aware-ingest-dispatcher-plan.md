@@ -5,6 +5,12 @@
 **Scope:** Ingest scheduling, concurrency, provider routing, rate-limit recovery, and worker liveness.
 **Out of scope:** Changes to the semantic knowledge-writing rubric, corpus batching strategy, vector search, UI, notifications, and per-ingest model review.
 
+> Historical configuration note, 2026-08-21: this specification records the
+> earlier Grok 4.5 text-workload decision. New general mixed-media Grok
+> configurations recommend Grok 4.6 Medium with native ACP image transport.
+> The dated evidence and limitation are in the
+> [multimodal benchmark follow-up](../benchmarks/2026-08-21-grok-4.6-native-acp-image-qualification.md).
+
 ## Document role and delivery sequence
 
 This document fixes the architectural contract. It is not the executable implementation plan.

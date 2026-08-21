@@ -60,6 +60,7 @@ case "${sub}" in
     suggested_action="create"
     body_file=""
     evidence_path=""
+    attachment_paths=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --title) title="$2"; shift 2 ;;
@@ -67,6 +68,7 @@ case "${sub}" in
         --suggested-action) suggested_action="$2"; shift 2 ;;
         --body-file) body_file="$2"; shift 2 ;;
         --evidence-path) evidence_path="$2"; shift 2 ;;
+        --attachment-path) attachment_paths+=("$2"); shift 2 ;;
         *) echo >&2 "wiki capture: unknown arg: $1"; exit 1 ;;
       esac
     done
@@ -83,6 +85,16 @@ case "${sub}" in
         exit 1
       fi
     done
+    for attachment_path in "${attachment_paths[@]}"; do
+      if [[ -z "${attachment_path}" || "${attachment_path}" == *$'\n'* || "${attachment_path}" == *$'\r'* ]]; then
+        echo >&2 "wiki capture: --attachment-path must be a non-empty single line"
+        exit 1
+      fi
+      if [[ "${attachment_path}" != /* ]]; then
+        echo >&2 "wiki capture: --attachment-path must be absolute, got: ${attachment_path}"
+        exit 1
+      fi
+    done
 
     # Evidence-path validation. Iron rule (per skill): capture's `evidence`
     # field is the canonical source path, or the literal "conversation"
@@ -93,6 +105,10 @@ case "${sub}" in
       chat-only)
         if [[ -n "${evidence_path}" ]]; then
           echo >&2 "wiki capture: --evidence-path is not valid for --kind chat-only"
+          exit 1
+        fi
+        if [[ "${#attachment_paths[@]}" -gt 0 ]]; then
+          echo >&2 "wiki capture: --attachment-path is not valid for --kind chat-only"
           exit 1
         fi
         ;;
@@ -265,6 +281,14 @@ PY
         echo "capture_kind: \"${kind}\""
         printf 'suggested_action: %s\n' "$(yaml_quote "${suggested_action}")"
         echo "suggested_pages: []"
+        if [[ "${#attachment_paths[@]}" -gt 0 ]]; then
+          echo "attachments:"
+          for attachment_path in "${attachment_paths[@]}"; do
+            printf '  - %s\n' "$(yaml_quote "${attachment_path}")"
+          done
+        else
+          echo "attachments: []"
+        fi
         echo "captured_at: \"${ts}\""
         echo "captured_by: \"in-session-agent\""
         echo "capture_id: \"${capture_id}\""
@@ -381,7 +405,7 @@ usage: wiki <subcommand>
 
 subcommands:
   capture        Write a chat-driven capture (the agent's canonical entry point)
-                   wiki capture --title T --kind chat-only|chat-attached --suggested-action <act> [--body-file <path>]
+                   wiki capture --title T --kind chat-only|chat-attached --suggested-action <act> [--body-file <path>] [--evidence-path <abs>] [--attachment-path <abs> ...]
                    Body via stdin (pipe) OR --body-file. Max 256 KB.
   ingest-now     Scan sources and run one bounded drain on demand
                    wiki ingest-now [<wiki-path>]

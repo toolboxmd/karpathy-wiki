@@ -17,8 +17,13 @@ mkdir -p "${WIKI}/.wiki-pending" "${PLUGIN}"
 printf 'capture\n' > "${CAPTURE}"
 
 python3 - "${WIKI}" "${PLUGIN}" "${CAPTURE}" <<'PY' || fail "provider argv contract failed"
-import json, pathlib, sys
-from wiki_providers import build_provider_invocation
+import base64
+import hashlib
+import json
+import pathlib
+import sys
+
+from wiki_providers import ProviderError, build_provider_invocation
 
 wiki, plugin, capture = (pathlib.Path(value).resolve() for value in sys.argv[1:])
 run_id = "in-test"
@@ -61,6 +66,141 @@ assert grok.argv == [
 ]
 assert grok.prompt_path.read_text() == grok.prompt
 assert grok.stdin_bytes is None
+
+evidence_dir = wiki / "evidence"
+evidence_dir.mkdir()
+primary = evidence_dir / "primary.jpg"
+primary_bytes = b"\xff\xd8\xffprimary-image-bytes"
+primary.write_bytes(primary_bytes)
+second = evidence_dir / "second.jpg"
+second_bytes = b"\x89PNG\r\n\x1a\nsecond-image-bytes"
+second.write_bytes(second_bytes)
+third = evidence_dir / "third.png"
+third_bytes = b"\xff\xd8\xffthird-image-bytes"
+third.write_bytes(third_bytes)
+
+capture.write_text(
+    f'''---
+title: "Native images"
+evidence: "{primary}"
+evidence_type: "file"
+capture_kind: "raw-direct"
+attachments:
+  - "{second}"
+  - "{third}"
+---
+''',
+    encoding="utf-8",
+)
+native = build_provider_invocation(
+    profile("grok", "/Applications/Grok Build/grok", "grok-4.6", "medium"),
+    wiki, capture, "in-native", plugin,
+)
+assert "--prompt-json" in native.argv
+assert "--prompt-file" not in native.argv
+blocks = json.loads(native.argv[native.argv.index("--prompt-json") + 1])
+assert blocks[0] == {"type": "text", "text": native.prompt}
+assert "native acp image" in native.prompt.lower()
+assert "read_file" in native.prompt
+assert [block["type"] for block in blocks] == ["text", "image", "image", "image"]
+assert [base64.b64decode(block["data"]) for block in blocks[1:]] == [
+    primary_bytes,
+    second_bytes,
+    third_bytes,
+]
+assert [block["mimeType"] for block in blocks[1:]] == [
+    "image/jpeg",
+    "image/png",
+    "image/jpeg",
+]
+assert native.prompt_path is None
+assert native.stdin_bytes is None
+native_metadata = json.loads((native.run_dir / "invocation.json").read_text())
+assert native_metadata["prompt_transport"] == "native_acp_content_blocks"
+assert native_metadata["image_count"] == 3
+assert [item["mime_type"] for item in native_metadata["images"]] == [
+    "image/jpeg",
+    "image/png",
+    "image/jpeg",
+]
+assert [item["sha256"] for item in native_metadata["images"]] == [
+    hashlib.sha256(data).hexdigest()
+    for data in (primary_bytes, second_bytes, third_bytes)
+]
+assert "data" not in json.dumps(native_metadata)
+assert base64.b64encode(primary_bytes).decode("ascii") not in json.dumps(native_metadata)
+
+text_evidence = evidence_dir / "notes.md"
+text_evidence.write_text("text evidence\n", encoding="utf-8")
+capture.write_text(
+    f'''---
+title: "Text only"
+evidence: "{text_evidence}"
+evidence_type: "file"
+capture_kind: "raw-direct"
+---
+''',
+    encoding="utf-8",
+)
+text_only = build_provider_invocation(
+    profile("grok", "/Applications/Grok Build/grok", "grok-4.6", "medium"),
+    wiki, capture, "in-text-only", plugin,
+)
+assert "--prompt-file" in text_only.argv
+assert "--prompt-json" not in text_only.argv
+
+def expect_image_error(frontmatter, expected):
+    capture.write_text(frontmatter, encoding="utf-8")
+    try:
+        build_provider_invocation(
+            profile("grok", "/Applications/Grok Build/grok", "grok-4.6", "medium"),
+            wiki, capture, f"in-error-{expected.split()[0]}", plugin,
+        )
+    except ProviderError as exc:
+        assert expected in str(exc), str(exc)
+    else:
+        raise AssertionError(f"expected ProviderError containing {expected!r}")
+
+missing = evidence_dir / "missing.png"
+expect_image_error(
+    f'''---
+evidence: "{text_evidence}"
+evidence_type: "mixed"
+capture_kind: "chat-attached"
+attachments:
+  - "{missing}"
+---
+''',
+    "missing declared image attachment",
+)
+
+unsupported = evidence_dir / "unsupported.gif"
+unsupported.write_bytes(b"GIF89aunsupported")
+expect_image_error(
+    f'''---
+evidence: "{text_evidence}"
+evidence_type: "mixed"
+capture_kind: "chat-attached"
+attachments:
+  - "{unsupported}"
+---
+''',
+    "unsupported image format",
+)
+
+outside = wiki.parent / "outside.jpg"
+outside.write_bytes(b"\xff\xd8\xffoutside")
+expect_image_error(
+    f'''---
+evidence: "{text_evidence}"
+evidence_type: "mixed"
+capture_kind: "chat-attached"
+attachments:
+  - "{outside}"
+---
+''',
+    "outside the capture evidence directory",
+)
 
 codex = build_provider_invocation(
     profile("codex", "/Applications/Codex CLI/codex", "gpt-5.3-codex-spark", "high"),

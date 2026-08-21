@@ -187,6 +187,18 @@ Captures land as tiny markdown files in `<wiki>/.wiki-pending/`. Two flows feed 
 - **Chat-driven capture.** The main agent calls `bin/wiki capture` with a body that encodes durable knowledge from the conversation. The resolver chooses the right wiki for the cwd (project vs main), and the file is written into that wiki's `.wiki-pending/`.
 - **Raw-direct ingest.** A file dropped into `<wiki>/inbox/` is picked up by the next configured scan (SessionStart, LaunchAgent, or `wiki ingest-now`), which writes a `capture_kind: raw-direct` capture pointing at the file's absolute path. The ingester reads the file directly — no fabricated wrapper.
 
+For Grok image ingestion, a JPEG or PNG named by the capture is sent in the
+same provider request as the normal ingester instructions using native ACP
+image content blocks. The adapter detects MIME type from the file signature,
+not the extension, and records only byte count, MIME type, and SHA-256 in
+invocation metadata. It never records image bytes or base64. A primary image is
+followed by any repeatable `--attachment-path` values in capture order. The
+adapter does not scan the wiki for images, and a declared image that is missing,
+unsupported, unreadable, outside the primary evidence directory, or too large
+for the process argument limit fails before Grok starts. There is no path-only
+or `read_file` visual fallback. The ingester still retains every original under
+the normal raw-evidence and manifest protocol.
+
 Either way, one dispatcher atomically claims captures and enforces the configured per-wiki and per-profile ceilings. It can invoke Claude Code, Codex, or Grok with the exact configured model and reasoning effort. A heartbeat keeps live `.processing` work identifiable; technical failures retry up to `max_attempts`, rate limits wait without consuming attempts, and exhausted work moves to `.wiki-pending/failed/`. Semantic ingest is not reviewed by a second model on every run; quality is selected and measured through benchmarks.
 
 ### Detached-ingester trust boundary
@@ -215,22 +227,63 @@ concurrency, activation mode, routing, auto-commit, and the explicit local trust
 record live outside the checkout under the user's config home. A checkout cannot
 enable its own provider execution by committing configuration files.
 
-Example (profile choices are illustrative, not defaults):
+For a new general mixed-media wiki, the recommended Grok profile is Grok 4.6
+Medium. No fallback profile is created unless the operator supplies one:
 
 ```bash
 wiki config init-local <wiki> \
   --trust-workspace <canonical-project-or-wiki-root> \
-  --default-provider grok --default-model grok-4.5 --default-effort medium \
-  --fallback-provider claude --fallback-model sonnet --fallback-effort low \
+  --default-provider grok --default-model grok-4.6 --default-effort medium \
   --max-processes 10 --dispatch-mode session_start
 wiki config validate <wiki>
 wiki config show <wiki>
 ```
 
 Supported provider adapters in this release are `grok`, `claude`, and `codex`;
-model IDs are not hard-coded. `executable` is one executable name or absolute
-path, never an arbitrary shell command. An executable that resolves inside the
-trusted project checkout is rejected, including through a symlink or `PATH`.
+arbitrary explicit model IDs remain supported. As a convenience,
+`--default-provider grok` without model or effort selects the built-in
+`grok-4.6` Medium recommendation and keeps the stable `grok_medium` profile
+name. An explicit `--default-model grok-4.5 --default-effort medium` pin remains
+valid for historical reproduction and intentional text-only comparison.
+`executable` is one executable name or absolute path, never an arbitrary shell
+command. An executable that resolves inside the trusted project checkout is
+rejected, including through a symlink or `PATH`.
+
+Existing runtime files are user-owned and are never rewritten merely because
+the plugin is installed, updated, or started. To opt one existing profile into
+the new recommendation, run the explicit update command:
+
+```bash
+wiki config update-runtime <wiki> \
+  --profile grok_medium --model grok-4.6 --reasoning-effort medium
+```
+
+The update changes only the named profile fields and preserves routing,
+activation, fallback, trust, and every other profile. Inspect the result with
+`wiki config show <wiki>` before draining queued work.
+
+The recommendation is workload-specific. The
+[2026-08-20 matched text-ingest benchmark](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md)
+scored Grok 4.5 Medium at 95/100 and Grok 4.6 Medium at 94/100, which correctly
+favored 4.5 for that text-oriented workload. The
+[2026-08-21 multimodal benchmark](docs/benchmarks/2026-08-21-grok-4.6-native-acp-image-qualification.md)
+later found that only Grok 4.6 Medium with native ACP images qualified among
+the three tested image configurations. Grok 4.6 through `read_file` produced
+one severe hallucination, and Grok 4.5 through `read_file` produced fourteen.
+Grok 4.5 with native image input was not tested, so the newer benchmark does
+not establish universal model superiority or isolate every model and transport
+interaction.
+
+For a chat-attached bundle, record image membership explicitly. The primary
+evidence file establishes the allowed directory; additional image paths must
+resolve below it and are delivered in the order shown:
+
+```bash
+wiki capture --title "Evidence bundle" --kind chat-attached \
+  --suggested-action create --evidence-path /absolute/bundle/notes.md \
+  --attachment-path /absolute/bundle/page-1.jpg \
+  --attachment-path /absolute/bundle/page-2.png < capture-body.md
+```
 
 For an older tracked operational config, inspect the split before applying it:
 
@@ -289,6 +342,7 @@ best-effort.
 - Deep orientation (steps 1-9) in the ingester; issues surfaced to `.ingest-issues.jsonl` and the `wiki issues` / `wiki status` commands.
 - Per-wiki `.ingest-runs.jsonl` for run history; status reports selective captures awaiting a decision, kept local, or promoted.
 - Bounded provider-aware dispatcher, optional fallback profile, heartbeat, retries, failed queue, optional CodexBar preflight, one global scheduled coordinator, and mutually exclusive SessionStart/scheduled activation per wiki.
+- Native Grok ACP image delivery for explicitly declared JPEG and PNG evidence, with fail-closed preflight and no `read_file` visual fallback.
 - `wiki status` health report; `wiki capture` / `wiki ingest-now` / `wiki issues` / `wiki use` / `wiki config` / `wiki scheduler` / `wiki tick` / `wiki init-main` CLI.
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 

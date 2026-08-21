@@ -8,6 +8,21 @@ changes, migrations, and meaningful bug fixes. Active follow-ups live in
 
 ## 2026-08-21
 
+- Added fail-closed native ACP image transport for Grok. File-backed JPEG and
+  PNG evidence is detected from signatures and sent in the same request as the
+  normal ingester text. Additional capture attachments are explicit,
+  canonicalized under the primary evidence directory, and delivered in stable
+  capture order. Missing, unreadable, unsupported, escaped, or oversized
+  declared images fail before provider launch, with no path-only or `read_file`
+  visual fallback. Normal invocation metadata stores hashes and MIME details,
+  never image bytes or base64.
+- Changed the built-in recommendation for new Grok configurations to Grok 4.6
+  Medium while retaining `grok_medium` and explicit Grok 4.5 pins. Existing
+  user runtime files remain untouched unless `wiki config update-runtime` is
+  invoked for a named profile.
+- Preserved the dated Grok 4.5 text-ingest recommendation and added the later
+  multimodal qualification as a separate benchmark decision, including the
+  untested Grok 4.5 native-image limitation.
 - Adopted the project ledger structure: `CHANGELOG.md`, `TODO.md`, `ISSUES.md`,
   and `IDEAS.md` now have separate jobs.
 - Made `AGENTS.md` the canonical project instruction file and kept `CLAUDE.md`

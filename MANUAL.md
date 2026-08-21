@@ -7,6 +7,27 @@ For installation, see [README.md](README.md). For open work, see
 shipped history, see [CHANGELOG.md](CHANGELOG.md). For contributing, see
 [AGENTS.md](AGENTS.md).
 
+## Current Grok recommendation (2026-08-21)
+
+- New general mixed-media Grok configurations use `grok-4.6` with Medium
+  reasoning effort and keep the stable profile name `grok_medium`.
+- Grok image evidence is sent with the normal ingester instructions in one
+  request as native ACP image content blocks. Supported formats are JPEG and
+  PNG, detected from file signatures.
+- `read_file` and path mentions are not qualified visual-evidence transports.
+  A declared image that cannot be encoded natively fails before Grok starts.
+- Existing runtime files remain unchanged until the operator runs an explicit
+  profile update. No fallback profile is added automatically.
+
+This updates the general mixed-media recommendation without erasing the earlier
+text-ingest result. The [2026-08-20 matched text benchmark](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md)
+scored Grok 4.5 Medium at 95/100 and Grok 4.6 Medium at 94/100, so 4.5 was the
+correct recommendation for that tested workload. The later
+[multimodal transport benchmark](docs/benchmarks/2026-08-21-grok-4.6-native-acp-image-qualification.md)
+qualified only Grok 4.6 Medium with native ACP image transport. It did not test
+Grok 4.5 with native images, so it does not prove that 4.6 is universally
+superior or isolate every model-by-transport interaction.
+
 ## What changed in 0.3.1
 
 - Replaced per-wiki LaunchAgents with one machine-wide macOS scheduler.
@@ -23,7 +44,9 @@ shipped history, see [CHANGELOG.md](CHANGELOG.md). For contributing, see
 - Made `both` project-first: the original capture stays in the project wiki and only reusable knowledge is selectively promoted to the configured main wiki.
 - Added pinned, retry-safe selective promotion plus a shared strict frontmatter parser for capture, completion, promotion, and status paths.
 - Corrected headless Grok automation to use one non-interactive permission mode, avoiding 30-second `permission_cancelled` failures caused by combining `--always-approve` with `--permission-mode auto` in Grok CLI 1.0.5.
-- Requalified Grok ingestion after the adapter fix. The matched semantic benchmark keeps Grok 4.5 Medium as the recommended Grok profile; see [the benchmark report](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md).
+- Requalified Grok ingestion after the adapter fix. At the time, the matched
+  text benchmark correctly kept Grok 4.5 Medium as the recommended profile; see
+  [the dated benchmark report](docs/benchmarks/2026-08-20-grok-4.5-vs-4.6-medium.md).
 
 ## Current dispatcher changes
 
@@ -103,17 +126,20 @@ Wiki identity/routing and ingest execution are configured separately.
 
 2. **A main wiki at the path the pointer references.** Structurally requires `.wiki-config` (with `role = "main"`), `schema.md`, `index.md`, and `.wiki-pending/` directory. Created by `wiki-init.sh main <path>`. Default path is `~/wiki/`.
 
-3. **Trusted external runtime configuration for every wiki this machine ingests.** Create it explicitly; the plugin does not guess a provider or model:
+3. **Trusted external runtime configuration for every wiki this machine ingests.** Choose the provider explicitly. Selecting Grok alone uses the current 4.6 Medium recommendation:
 
 ```bash
 wiki config init-local <wiki> \
   --trust-workspace <canonical-project-or-wiki-root> \
-  --default-provider grok --default-model grok-4.5 --default-effort medium \
-  --fallback-provider claude --fallback-model sonnet --fallback-effort low \
+  --default-provider grok --default-model grok-4.6 --default-effort medium \
   --max-processes 10 --dispatch-mode session_start
 ```
 
-The example profile choices are illustrative, not defaults. You may choose any supported provider (`grok`, `claude`, or `codex`), arbitrary model ID accepted by that CLI, and supported reasoning effort. Validate or inspect the normalized result with:
+The shorter `--default-provider grok` form produces the same `grok_medium`
+profile. Other providers still require an explicit model and effort. Grok 4.5
+can be pinned explicitly for historical reproduction or intentional text-only
+comparison. A fallback is optional and is created only when all fallback flags
+are supplied. Validate or inspect the normalized result with:
 
 ```bash
 wiki config validate <wiki>
@@ -129,6 +155,49 @@ wiki config migrate <wiki> --trust-workspace <canonical-project-or-wiki-root> \
 ```
 
 Configuration migration does not migrate, move, or rewrite wiki content.
+
+Installing or starting a newer plugin also does not rewrite an existing
+runtime. Opt into Grok 4.6 Medium for one existing profile explicitly:
+
+```bash
+wiki config update-runtime <wiki> \
+  --profile grok_medium --model grok-4.6 --reasoning-effort medium
+wiki config show <wiki>
+```
+
+This is the command to use later for Naturbiss after installing the updated
+plugin. Do not run it until that separate repository session is ready for its
+own one-image canary.
+
+## Grok image evidence
+
+An image placed directly in `<wiki>/inbox/` becomes the primary `evidence`
+path of a raw-direct capture. A chat-attached evidence bundle can record
+additional images explicitly:
+
+```bash
+wiki capture --title "Evidence bundle" --kind chat-attached \
+  --suggested-action create --evidence-path /absolute/bundle/notes.md \
+  --attachment-path /absolute/bundle/page-1.jpg \
+  --attachment-path /absolute/bundle/page-2.png < capture-body.md
+```
+
+The primary image, when present, is delivered first. Additional images follow
+the recorded `--attachment-path` order. Every additional path must resolve
+inside the canonical directory of the primary evidence file. The adapter does
+not search the wiki or attach neighboring files implicitly.
+
+Before provider launch, every declared image is canonicalized, read, checked
+for a JPEG or PNG signature, base64-encoded in memory, and placed in an ACP
+content block shaped as `{type, data, mimeType}`. Normal invocation metadata
+records only model, effort, transport, order, MIME type, byte count, and
+SHA-256. It never stores image bytes or base64. Missing, unreadable,
+unsupported, escaped, or oversized declared images fail clearly. Text-only
+Grok captures continue through the existing prompt-file path.
+
+Native delivery does not replace preservation. The detached ingester still
+copies each original into normal raw storage, records manifest provenance, and
+completes the normal validation and commit protocol.
 
 If this workspace has no routing runtime when you run `wiki capture`, the resolver returns exit 11. `bin/wiki` either prompts once for `project|main|both` (interactive) or saves the body to `~/.wiki-orphans/` with the exact `wiki use` recovery command (headless).
 
@@ -232,7 +301,7 @@ Two firing paths:
 - Next configured automatic scan: SessionStart or LaunchAgent scans `<wiki>/inbox/` for files older than 5 seconds (rsync/unzip-protection mtime defer) and emits a `capture_kind: raw-direct` capture in `.wiki-pending/` pointing at the absolute file path.
 - `wiki ingest-now`: same scan + drain, runs immediately.
 
-The selected provider/model ingester reads the file directly (no wrapper capture body), generates a wiki page, copies the file to `<wiki>/raw/<basename>` with a manifest entry, validates deterministic completion, and commits when enabled. If the file was accidentally dropped in `<wiki>/raw/`, the shared scanner recovers it to `<wiki>/inbox/` under the manifest lock.
+The selected provider/model ingester reads the file directly (no wrapper capture body), generates a wiki page, copies the file to `<wiki>/raw/<basename>` with a manifest entry, validates deterministic completion, and commits when enabled. For Grok JPEG or PNG evidence, the adapter also sends the image bytes natively in the same provider request. It does not rely on `read_file` as proof that the model saw the image. If the file was accidentally dropped in `<wiki>/raw/`, the shared scanner recovers it to `<wiki>/inbox/` under the manifest lock.
 
 ### Scenario 5 — `wiki use project` in a new directory
 

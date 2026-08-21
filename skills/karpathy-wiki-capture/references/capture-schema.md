@@ -22,6 +22,8 @@ capture_kind: "raw-direct" | "chat-attached" | "chat-only"
 suggested_action: "create" | "update" | "augment" | "auto"
 suggested_pages:
   - concepts/<slug>.md
+attachments:
+  - "/absolute/path/to/additional-image.jpg"
 captured_at: "<ISO-8601 UTC timestamp>"
 captured_by: "<source identifier>"
 capture_id: "cap-<portable opaque id>" | "prom-<stable promotion id>"
@@ -31,6 +33,12 @@ promotion_id: null | "prom-<stable promotion id>"
 propagated_from: null | "cap-<source capture id>"
 ---
 ```
+
+`attachments` is optional and defaults to an empty list for legacy captures.
+It contains additional absolute file paths that belong to the same file-backed
+evidence bundle as `evidence`. The primary `evidence` file comes first at
+provider time when it is an image, followed by `attachments` in their recorded
+order. The adapter never scans a directory or the wider wiki for images.
 
 ## `capture_kind` enum (canonical)
 
@@ -70,6 +78,22 @@ retrospectively promoted.
   the file on disk. NEVER the string `"file"`, `"mixed"`, or a
   wiki-relative path.
 - For `capture_kind: chat-only` → the literal string `conversation`.
+
+## `attachments` field
+
+- Allowed only for `chat-attached` and `raw-direct` captures.
+- Every value is an absolute path recorded explicitly by the capture protocol.
+- Every additional path must resolve within the canonical parent directory of
+  the primary `evidence` file. Symlinks cannot escape that capture-scoped root.
+- Ordering is stable: primary image evidence first, then additional paths in
+  frontmatter order.
+- Missing, unreadable, or unsupported declared images are provider preflight
+  failures. They are never silently omitted.
+- For Grok native image delivery, supported formats are JPEG and PNG detected
+  from file signatures. A filename extension or user-provided MIME string is
+  not trusted as the MIME source.
+- Each original remains part of the normal raw-evidence and manifest protocol.
+  Native provider delivery does not replace raw retention.
 
 ## `propagated_from`
 

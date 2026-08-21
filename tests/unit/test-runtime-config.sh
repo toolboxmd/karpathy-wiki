@@ -391,6 +391,95 @@ assert d["settings"]["auto_commit"] is True
   echo "PASS: test_update_runtime_changes_only_adapter_owned_fields"
 }
 
+test_explicit_profile_update_is_opt_in_and_scoped() {
+  local wiki="${TESTDIR}/update-profile"
+  make_wiki "${wiki}"
+  write_valid_local "${wiki}"
+
+  python3 "${CONFIG}" update-runtime \
+    --wiki "${wiki}" \
+    --profile grok_medium \
+    --model grok-4.6 \
+    --reasoning-effort medium >/dev/null \
+    || fail "explicit Grok profile update failed"
+
+  local output
+  output="$(python3 "${CONFIG}" show --wiki "${wiki}")" \
+    || fail "updated Grok profile did not validate"
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["ingest"]["default_profile"] == "grok_medium"
+assert d["ingest"]["fallback_profile"] == "sonnet_low"
+assert d["ingest"]["profiles"]["grok_medium"]["provider"] == "grok"
+assert d["ingest"]["profiles"]["grok_medium"]["model"] == "grok-4.6"
+assert d["ingest"]["profiles"]["grok_medium"]["reasoning_effort"] == "medium"
+assert d["ingest"]["profiles"]["sonnet_low"]["model"] == "sonnet"
+' <<< "${output}" || fail "explicit profile update changed unrelated runtime fields"
+
+  local error rc
+  set +e
+  error="$(python3 "${CONFIG}" update-runtime \
+    --wiki "${wiki}" --model grok-4.5 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "profile update without --profile should fail"
+  grep -Fq -- '--profile is required' <<< "${error}" \
+    || fail "profile update without --profile was not actionable: ${error}"
+  echo "PASS: test_explicit_profile_update_is_opt_in_and_scoped"
+}
+
+test_new_grok_config_uses_4_6_and_explicit_4_5_pin_remains_valid() {
+  local recommended="${TESTDIR}/grok-recommended"
+  make_wiki "${recommended}"
+
+  python3 "${CONFIG}" init-local \
+    --wiki "${recommended}" \
+    --default-provider grok >/dev/null \
+    || fail "recommended Grok init-local failed"
+  local output
+  output="$(python3 "${CONFIG}" show --wiki "${recommended}")" \
+    || fail "recommended Grok runtime did not validate"
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["ingest"]["default_profile"] == "grok_medium"
+assert d["ingest"]["fallback_profile"] is None
+assert d["ingest"]["profiles"]["grok_medium"]["model"] == "grok-4.6"
+assert d["ingest"]["profiles"]["grok_medium"]["reasoning_effort"] == "medium"
+' <<< "${output}" || fail "new Grok runtime did not use the 4.6 Medium recommendation"
+
+  local before
+  before="$(shasum -a 256 "${recommended}/.wiki-config.local")"
+  python3 "${CONFIG}" init-local \
+    --wiki "${recommended}" \
+    --default-provider grok \
+    --default-model grok-4.5 \
+    --default-effort medium >/dev/null \
+    || fail "idempotent init-local with an existing runtime failed"
+  [[ "$(shasum -a 256 "${recommended}/.wiki-config.local")" == "${before}" ]] \
+    || fail "new recommendation silently rewrote an existing runtime"
+
+  local pinned="${TESTDIR}/grok-pinned-4-5"
+  make_wiki "${pinned}"
+  python3 "${CONFIG}" init-local \
+    --wiki "${pinned}" \
+    --default-provider grok \
+    --default-model grok-4.5 \
+    --default-effort medium >/dev/null \
+    || fail "explicit Grok 4.5 pin was rejected"
+  output="$(python3 "${CONFIG}" show --wiki "${pinned}")" \
+    || fail "explicit Grok 4.5 runtime did not validate"
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["ingest"]["default_profile"] == "grok_medium"
+assert d["ingest"]["profiles"]["grok_medium"]["model"] == "grok-4.5"
+assert d["ingest"]["profiles"]["grok_medium"]["reasoning_effort"] == "medium"
+' <<< "${output}" || fail "explicit Grok 4.5 pin was not preserved"
+  echo "PASS: test_new_grok_config_uses_4_6_and_explicit_4_5_pin_remains_valid"
+}
+
 test_existing_local_config_repairs_ignore_entry() {
   local wiki="${TESTDIR}/repair-ignore"
   make_wiki "${wiki}"
@@ -578,6 +667,8 @@ test_shell_readers_do_not_cross_config_scopes
 test_scheduler_config_is_private_strict_and_idempotent
 test_enumerates_only_trusted_wiki_runtime_records
 test_update_runtime_changes_only_adapter_owned_fields
+test_explicit_profile_update_is_opt_in_and_scoped
+test_new_grok_config_uses_4_6_and_explicit_4_5_pin_remains_valid
 test_existing_local_config_repairs_ignore_entry
 test_checkout_runtime_config_is_not_trusted_implicitly
 test_init_local_records_runtime_outside_checkout

@@ -6,6 +6,12 @@
 **Repository baseline:** `990cb20`
 **Target release:** decide only after the implementation diff is complete; do not bump the plugin version during feature work.
 
+> Historical configuration note, 2026-08-21: the Grok 4.5 examples below
+> document the benchmark-qualified v0.3.0 implementation baseline. New general
+> mixed-media Grok configurations now recommend Grok 4.6 Medium with native ACP
+> image transport. See the
+> [dated follow-up benchmark](../benchmarks/2026-08-21-grok-4.6-native-acp-image-qualification.md).
+
 ## Goal
 
 Replace every direct ingester spawn with one bounded dispatcher while preserving the existing file lifecycle:
@@ -38,7 +44,10 @@ fallback profile: Claude Sonnet / low
 max ingests:      10
 ```
 
-These are examples, not plugin defaults. Every user chooses their own default and optional fallback profiles. Codex Spark is a development and adapter-test ingester and is never added to a user's fallback chain automatically.
+These are historical examples, not current setup instructions. Every user
+chooses a provider and any optional fallback profile. Codex Spark is a
+development and adapter-test ingester and is never added to a user's fallback
+chain automatically.
 
 ## Non-goals
 

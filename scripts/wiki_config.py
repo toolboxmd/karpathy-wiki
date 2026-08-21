@@ -36,6 +36,8 @@ SUPPORTED_DISPATCH_MODES = {"session_start", "scheduled"}
 SUPPORTED_USAGE_MONITORS = {"auto", "off"}
 SUPPORTED_ROUTING_MODES = {"project", "main", "both"}
 LEGACY_OPERATIONAL_KEYS = {"platform", "settings", "main", "fork_to_main"}
+RECOMMENDED_GROK_MODEL = "grok-4.6"
+RECOMMENDED_GROK_EFFORT = "medium"
 
 INGEST_DEFAULTS: dict[str, Any] = {
     "schedule_interval_seconds": 60,
@@ -1196,6 +1198,14 @@ def _read_explicit_profile(args: argparse.Namespace, prefix: str) -> dict[str, A
     model = getattr(args, f"{prefix}_model")
     effort = getattr(args, f"{prefix}_effort")
     executable = getattr(args, f"{prefix}_executable")
+    if (
+        prefix == "default"
+        and provider == "grok"
+        and model is None
+        and effort is None
+    ):
+        model = RECOMMENDED_GROK_MODEL
+        effort = RECOMMENDED_GROK_EFFORT
     supplied = [provider is not None, model is not None, effort is not None]
     if not any(supplied):
         return None
@@ -1263,8 +1273,14 @@ def _interactive_default_profile() -> dict[str, Any] | None:
     if not sys.stdin.isatty():
         return None
     provider = input("Default provider (codex/claude/grok): ").strip()
-    model = input("Model ID: ").strip()
-    effort = input("Reasoning effort: ").strip()
+    if provider == "grok":
+        model = input(f"Model ID [{RECOMMENDED_GROK_MODEL}]: ").strip()
+        effort = input(f"Reasoning effort [{RECOMMENDED_GROK_EFFORT}]: ").strip()
+        model = model or RECOMMENDED_GROK_MODEL
+        effort = effort or RECOMMENDED_GROK_EFFORT
+    else:
+        model = input("Model ID: ").strip()
+        effort = input("Reasoning effort: ").strip()
     if not provider or not model or not effort:
         return None
     return {
@@ -1512,6 +1528,31 @@ def update_runtime_config(args: argparse.Namespace) -> int:
     if args.dispatch_mode is not None:
         config["ingest"]["dispatch_mode"] = args.dispatch_mode
         changed = True
+    profile_update_requested = (
+        args.model is not None or args.reasoning_effort is not None
+    )
+    if profile_update_requested and args.profile is None:
+        raise ConfigError(
+            "wiki config update-runtime: --profile is required with --model or --reasoning-effort"
+        )
+    if args.profile is not None:
+        if not profile_update_requested:
+            raise ConfigError(
+                "wiki config update-runtime: --profile requires --model or --reasoning-effort"
+            )
+        profiles = config["ingest"]["profiles"]
+        if args.profile not in profiles:
+            raise ConfigError(
+                f"wiki config update-runtime: unknown profile {args.profile!r}"
+            )
+        selected_profile = profiles[args.profile]
+        if args.model is not None:
+            if not args.model.strip():
+                raise ConfigError("wiki config update-runtime: --model must not be empty")
+            selected_profile["model"] = args.model
+        if args.reasoning_effort is not None:
+            selected_profile["reasoning_effort"] = args.reasoning_effort
+        changed = True
     if not changed:
         raise ConfigError("wiki config update-runtime: no update option supplied")
     structural_text = _render_structural_config(structural)
@@ -1633,6 +1674,11 @@ def _build_parser() -> argparse.ArgumentParser:
     update.add_argument("--wiki", required=True)
     update.add_argument(
         "--dispatch-mode", choices=sorted(SUPPORTED_DISPATCH_MODES)
+    )
+    update.add_argument("--profile")
+    update.add_argument("--model")
+    update.add_argument(
+        "--reasoning-effort", choices=sorted(SUPPORTED_EFFORTS)
     )
     return parser
 

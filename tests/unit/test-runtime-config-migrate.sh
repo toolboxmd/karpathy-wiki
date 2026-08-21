@@ -39,7 +39,7 @@ EOF
 migration_args() {
   printf '%s\n' \
     --default-provider grok \
-    --default-model grok-4.5 \
+    --default-model grok-4.6 \
     --default-effort medium \
     --fallback-provider claude \
     --fallback-model sonnet \
