@@ -206,7 +206,7 @@ main wiki, but that is not a complete one-file fix: Grok must retain access to
 its authentication state, the current semantic ingest protocol uses general
 shell commands, and Grok's child-process network restriction is not enforced on
 macOS. Provider-neutral least-privilege isolation is tracked in
-[`TODO.md`](TODO.md).
+[`ISSUES.md`](ISSUES.md).
 
 ## Per-machine ingest configuration
 
@@ -292,7 +292,7 @@ best-effort.
 - `wiki status` health report; `wiki capture` / `wiki ingest-now` / `wiki issues` / `wiki use` / `wiki config` / `wiki scheduler` / `wiki tick` / `wiki init-main` CLI.
 - Tier-1 lint at every ingest: required frontmatter fields, link resolution, source existence, quality block ranges, type/path consistency.
 
-**What's deferred (see `TODO.md`):**
+**What's deferred (see `TODO.md`, `ISSUES.md`, and `IDEAS.md`):**
 - Provider-neutral least-privilege isolation for detached ingesters: a minimal
   environment, deterministic privileged helpers, per-run path policy, isolated
   provider authentication, and macOS-specific containment tests.

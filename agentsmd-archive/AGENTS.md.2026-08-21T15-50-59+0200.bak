@@ -16,19 +16,6 @@ In this repository, `ISSUES.md` means a local known-problems scratchpad. It is
 not the `wiki issues` command, not `.ingest-issues.jsonl`, not a GitHub Issues
 replacement, and not a work-package manifest.
 
-## Recent Changes
-
-- 2026-08-21: Split the old combined backlog into `CHANGELOG.md`, `TODO.md`,
-  `ISSUES.md`, and `IDEAS.md`.
-- 2026-08-21: Made `AGENTS.md` the canonical regular file and kept
-  `CLAUDE.md` as a compatibility symlink.
-- 2026-08-20: Added the global project-ledger convention and the local
-  `ISSUES.md` boundary clarification.
-- 2026-08-20: Released v0.3.1 global scheduler coordination with one
-  machine-wide LaunchAgent and fixed ingest limits.
-- 2026-08-20: Released v0.3.0 provider-aware dispatch, selective promotion,
-  and Codex plugin packaging.
-
 ## If you are an AI agent
 
 Before opening a PR against this repo:

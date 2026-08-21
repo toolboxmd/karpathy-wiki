@@ -2,7 +2,10 @@
 
 A short reference for karpathy-wiki v0.3.1. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
-For installation, see [README.md](README.md). For deferred work, see [TODO.md](TODO.md). For contributing, see [CLAUDE.md](CLAUDE.md).
+For installation, see [README.md](README.md). For open work, see
+[TODO.md](TODO.md), [ISSUES.md](ISSUES.md), and [IDEAS.md](IDEAS.md). For
+shipped history, see [CHANGELOG.md](CHANGELOG.md). For contributing, see
+[AGENTS.md](AGENTS.md).
 
 ## What changed in 0.3.1
 
@@ -59,7 +62,8 @@ the selected wiki root. It is not sufficient as the only patch:
 For v0.3.0, keep unattended ingest limited to trusted personal wikis. If a
 capture or evidence file may contain untrusted instructions, inspect it first
 or leave automatic dispatch disabled. The provider-neutral containment work is
-recorded in [TODO.md](TODO.md) and requires its own implementation and tests.
+recorded in [ISSUES.md](ISSUES.md) and requires its own implementation and
+tests.
 
 ## What changed in 0.2.8
 
@@ -208,7 +212,7 @@ Result: agent has the wiki rules loaded; cwd has no wiki to capture into yet.
 
 Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the primary wiki in the workspace routing runtime. An unconfigured workspace falls through to the cold-no-wiki case.
 
-The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. It remains deferred in [TODO.md](TODO.md) under "cold-no-wiki question path".
+The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. It remains deferred in [ISSUES.md](ISSUES.md) under "cold-no-wiki question path".
 
 ### Scenario 3 — `wiki capture` headless from a fresh directory
 
@@ -265,7 +269,8 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 
 ## What's deferred
 
-See [TODO.md](TODO.md). Highlights:
+See [TODO.md](TODO.md), [ISSUES.md](ISSUES.md), and [IDEAS.md](IDEAS.md).
+Highlights:
 
 - **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
 - **`wiki doctor` real implementation**: smartest-model re-rate, orphan repair, tag-synonym consolidation.
