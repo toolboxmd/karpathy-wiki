@@ -12,9 +12,9 @@ objects:
       identifiers: ["marblehook-upload-limit", "marblehook"]
     claims:
       must:
-        - "The size limit is rumored and unverified."
-        - "One 12MB marblehook put command succeeded."
-        - "No flag, config key, log line, error code, man page, help text, or failing reproduction is in evidence."
+        - "Marblehook upload-limit rumor is unverified."
+        - "One successful 12MB marblehook put."
+        - "No flag, config key, log line, error code, man page, help text, or failing reproduction."
       must_not:
         - "Marblehook has a 100MB upload cap."
         - "Client versus server responsibility is known."
@@ -30,8 +30,7 @@ objects:
       identifiers: ["marblehook"]
     claims:
       must: []
-      must_not:
-        - "A confident Marblehook entity page claims an upload limit."
+      must_not: []
     reason: "The evidence is intentionally insufficient."
   - id: marblehook-size-query
     kind: query
@@ -44,6 +43,5 @@ objects:
       identifiers: ["marblehook-size-limit"]
     claims:
       must: []
-      must_not:
-        - "A query answer gives a numeric limit."
+      must_not: []
     reason: "The source explicitly forbids answering with a number."

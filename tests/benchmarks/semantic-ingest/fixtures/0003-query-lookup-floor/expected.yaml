@@ -16,7 +16,7 @@ objects:
         - "Inspect retry_class, next_attempt, and last_error for a known job id."
         - "retry_class values are immediate, backoff, and dead."
         - "Unknown job id can be found by listing failed export jobs by target."
-        - "Callback HTTP status does not map one-to-one to retry_class."
+        - "A 429 on the export callback does not map one-to-one to retry_class."
       must_not:
         - "The dashboard home page shows retry_class."
         - "A downstream 429 is the retry_class mapping."
@@ -32,6 +32,5 @@ objects:
       identifiers: ["retry-policy", "ambervault-retry-policy"]
     claims:
       must: []
-      must_not:
-        - "A retry-policy essay is the primary realization."
+      must_not: []
     reason: "The source is a durable lookup answer."

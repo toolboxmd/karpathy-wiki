@@ -32,6 +32,5 @@ objects:
       identifiers: ["docs-publishing", "loomferry-publishing"]
     claims:
       must: []
-      must_not:
-        - "The bounded cutover is collapsed into a generic docs publishing concept."
+      must_not: []
     reason: "The seeded schema includes projects, so the bounded workstream should not be demoted."

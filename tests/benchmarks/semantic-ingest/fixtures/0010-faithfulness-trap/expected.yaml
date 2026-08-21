@@ -49,7 +49,5 @@ objects:
       identifiers: ["platform-rate-limiting"]
     claims:
       must: []
-      must_not:
-        - "The source defines platform-wide rate limiting."
-        - "Unsupported cluster, tenant, HTTP, or durability claims are emitted."
+      must_not: []
     reason: "The title is bait and must not override source evidence."

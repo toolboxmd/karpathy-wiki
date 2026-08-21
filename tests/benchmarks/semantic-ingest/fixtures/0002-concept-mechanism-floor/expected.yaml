@@ -16,7 +16,7 @@ objects:
         - "Mutations carry a monotonic fence."
         - "Storage rejects mutations whose fence is older than the last accepted fence."
         - "Lease expiry alone is not safety; acquisition writes fence+1 with compare-and-set."
-        - "A fence persists in the log unlike a mutex that disappears with process death."
+        - "A fence stays in the log, unlike a mutex that disappears when the process dies."
       must_not:
         - "Harborline or Foldgate is the primary object."
         - "Lease timeout alone prevents stale writes."
@@ -32,6 +32,5 @@ objects:
       identifiers: ["harborline", "foldgate"]
     claims:
       must: []
-      must_not:
-        - "Product catalogs are created from passing examples."
+      must_not: []
     reason: "The source does not provide enough product-specific evidence."

@@ -274,13 +274,48 @@ A thin-capture rejection is a feature, not a failure.
    - **Title-scope check.** Before merging into an existing wiki page in step 6, compare the new evidence's scope to the existing page's slug. Scope is the set of distinct entities (product names, versions, model names, concepts) the evidence covers. If the existing page's slug is NARROWER than the new evidence's scope (example: existing `concepts/gemma4-27b-hardware-requirements.md` vs new evidence covering a 27B+31B comparison), do NOT force-merge the broader content into the narrower-titled page. Instead, either (a) create a sibling concept page with a scope-appropriate slug (e.g. `concepts/gemma4-27b-vs-31b-hardware-comparison.md`) and cross-link both, or (b) rename the existing page's slug AND frontmatter title to cover the new scope, then merge — only if no other wiki page currently links to the old slug (if any do, use option (a) to avoid broken links). Log which option was taken in `log.md`.
    - **Overwrite-detection recovery.** If `raw/<basename>` already exists AND the new sha256 differs from the manifest entry AND the manifest's `last_ingested` is within the last 60 minutes (the evidence file on disk was replaced since the previous ingest), treat this as an overwrite situation: copy the new evidence to `raw/<basename>` AS NORMAL, but also append `## [<timestamp>] overwrite | <capture-basename> — raw sha changed since <previous_ingested_iso>, previous referenced_by: [<list>]` to `log.md`. Proceed with the rest of step 4 and the title-scope check in step 6 as above. The overwrite is not an error — it is the exact scenario from the failure-mode transcript (two research agents both wrote to `2026-04-24-gemma4-hardware.md`), and the title-scope check catches the content-divergence part.
 
-5. **Decide target pages**: `suggested_pages` is a hint; orientation may change it.
+5. **Decide target pages by extracting knowledge objects first.**
+   `suggested_pages` is a hint; orientation may change it.
+
+   Canonical wiki pages are knowledge objects, not source summaries. A
+   capture can produce zero, one, or several durable objects. Before choosing
+   paths, make an internal inventory of candidate objects:
+
+   - named durable things such as tools, services, APIs, people, repos, and
+     components usually belong in `entities/`;
+   - reusable mechanisms, patterns, principles, and comparisons usually belong
+     in `concepts/`;
+   - durable lookup answers, audits, readiness checks, comparisons, and
+     operational Q&A usually belong in `queries/`;
+   - proposed future work and experiments usually belong in `ideas/` and need
+     `status` plus `priority`;
+   - bounded workstreams with scope, window, deliverables, gates, or rollback
+     usually belong in `projects/` when that category exists;
+   - thin, rumor-only, non-repro, empty, or low-evidence material should stay
+     raw/held or become a no-page log entry.
+
+   Avoid both under-splitting and overproduction. A lookup/procedure source
+   should usually create one query page, with supporting terms kept inline or
+   linked to existing pages. Create a sibling entity or concept only when the
+   source contains enough durable, independently useful claims for that object.
+   A product name or retry-policy term mentioned only to answer the lookup is
+   not by itself enough to create a product encyclopedia or concept essay.
+
+   Do not use `concepts/` as the safe fallback. If the source is about a named
+   durable tool or service, prefer `entities/`; if it is a future proposal,
+   prefer `ideas/`; if it is a reusable answer, prefer `queries/`; if evidence
+   is too thin, hold it.
 
 6. **For each target page**:
    a. Acquire a page lock (`wiki_lock_wait_and_acquire`).
    b. Read current page content (read-before-write).
    c. Merge new material. Do NOT replace existing claims — add dated findings, use `contradictions:` frontmatter if they disagree.
-   d. Release lock (`wiki_lock_release`).
+   d. Ensure every page you changed, including an existing page that only got
+      a see-also link or timestamp update, includes the current raw evidence
+      path in `sources:` and is included in the raw manifest entry's
+      `referenced_by` list. The completion helper validates the manifest, so
+      do not treat cross-link-only updates as source-free.
+   e. Release lock (`wiki_lock_release`).
 
 6.5. **Self-rate every page you just touched.** Use your own judgment as the current ingester; do not launch another model. For each page, score four dimensions (1-5 each), compute `overall` as `round(mean, 2)`, and write the following into the page's frontmatter (creating the `quality:` block if missing, preserving `rated_by: human` if the page already has it):
    ```yaml

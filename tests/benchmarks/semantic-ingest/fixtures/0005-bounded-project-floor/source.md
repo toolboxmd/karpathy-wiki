@@ -15,9 +15,8 @@ the fileserver path returns 404, and the runbook has one rollback command.
 Rollback is restoring the scp job from the tagged recipe in the ops repo. That
 is the whole project.
 
-Loomferry itself is an existing tool. This page should not become a Loomferry
-product encyclopedia. It also should not become a generic docs publishing
-concept. The object is the cutover: window, scope, exit criteria, rollback.
+Loomferry itself is an existing tool, but this note only gives the cutover
+window, scope, exit criteria, and rollback.
 
 Staffing is two people. If the 2.3 tag slips, the window slides by the same
 number of days. There is no phase 2 in this project record. Dual publish is a

@@ -22,7 +22,5 @@ A common false friend is the HTTP status on the export callback. A 429 from a
 downstream sink does not map one-to-one onto `retry_class`. The mapping lives
 in the dispatcher, not in the sink.
 
-This note is a lookup procedure. It is not a design of Ambervault, not a
-taxonomy of retry policies, and not a proposal to change those classes. If a
-job is `dead`, the lookup answer is "requeue by a human," not a new feature
-idea.
+If a job is `dead`, the incident answer is "requeue by a human." This note does
+not describe a proposal to change retry classes.

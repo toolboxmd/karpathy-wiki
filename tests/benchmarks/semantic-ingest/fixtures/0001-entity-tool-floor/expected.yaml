@@ -32,6 +32,5 @@ objects:
       identifiers: ["reproducible-builds", "rivetkit-overview"]
     claims:
       must: []
-      must_not:
-        - "A reproducible-builds concept is the primary realization of this source."
+      must_not: []
     reason: "The source only motivates a tool entity and does not define a reusable build policy."

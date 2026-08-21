@@ -15,10 +15,10 @@ objects:
       must:
         - "Sable Queue is a named message broker with binary sable."
         - "Default listen address is 127.0.0.1:7420."
-        - "Queue creation uses --ack-deadline 30s."
+        - "Create a queue with a 30s ack deadline using --ack-deadline."
         - "Dead letters are opt-in with --dead-letter at create time."
       must_not:
-        - "Sable Queue is the job-queues concept."
+        - "Sable Queue is the same object as the job-queues concept."
         - "Dead letters are automatic in Sable Queue."
         - "Sable Queue implements delayed retry classes."
   - id: job-queues-concept-absorption
@@ -33,5 +33,7 @@ objects:
     claims:
       must: []
       must_not:
-        - "Sable Queue claims are absorbed into concepts/job-queues as the primary realization."
+        - "Sable Queue default listen address 127.0.0.1:7420."
+        - "Sable Queue ack deadline flag --ack-deadline 30s."
+        - "Sable Queue opt-in dead-letter flag --dead-letter."
     reason: "The seeded concept may receive a see-also only."

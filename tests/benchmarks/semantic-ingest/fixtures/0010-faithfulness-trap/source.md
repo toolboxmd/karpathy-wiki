@@ -15,10 +15,5 @@ reset-on-restart behavior, and the lack of coordination between processes. A
 footnote says a replica-aware window has been discussed in a design channel,
 with no spec.
 
-Do not materialize a concept called platform rate limiting as if this source
-defined it. Do not infer HTTP mapping, tenant semantics, or durability. If an
-idea object is created for replica-aware windows, mark it unscheduled and
-unspecified. Required claims stay inside the process-local window.
-
-The phrase "platform rate limiting" in a title is bait. Foldgate here is a
-local allow/deny counter with explicit non-sharing.
+A replica-aware window has only been discussed, with no spec and no schedule.
+Foldgate here is a local allow/deny counter with explicit non-sharing.

@@ -8,6 +8,16 @@ changes, migrations, and meaningful bug fixes. Active follow-ups live in
 
 ## Unreleased - 2026-08-21
 
+- Hardened the semantic-ingest benchmark after audit feedback. The first ten
+  fixtures are now documented as a development set, source text no longer tells
+  the model which category to choose, and the scorer has negative-control
+  self-tests plus deterministic gates for validation, manifest/source
+  traceability, indexes, idea metadata, and category control.
+- Updated the detached ingester instructions to inventory knowledge objects
+  before choosing pages, avoid overproducing entity/concept pages from lookup
+  sources, and cite the current raw source on every touched page including
+  see-also-only updates. The hardened development benchmark moved from `8/10`
+  before the instruction patch to `10/10` after it on Grok 4.6 Medium.
 - Added snapshot rescoring for the semantic-ingest benchmark and tightened its
   heuristic scorer after manual review of Grok 4.6 Medium output. The scorer now
   prefers title/path matches in the expected category, ignores negated forbidden

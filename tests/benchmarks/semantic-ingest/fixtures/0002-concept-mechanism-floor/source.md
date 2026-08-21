@@ -19,8 +19,7 @@ observes the new fence. Others just drop stale mutations. Either policy is
 still lease fencing so long as storage is the source of truth for the highest
 fence.
 
-Do not model this as a product page. Harborline and Foldgate both implement
-variants, and those names appear here only as existence proofs. The mechanism
-is the compare-and-set rule, the mutex contrast, and the fact that expiry alone
-is not safety. A passing product mention is not enough evidence to rebuild
-those tools' catalogs from this note.
+Harborline and Foldgate both implement variants, but this note does not list
+their product commands, configuration, release versions, or ownership. The
+reusable mechanism described here is the compare-and-set rule, the mutex
+contrast, and the fact that expiry alone is not safety.

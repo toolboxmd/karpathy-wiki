@@ -16,11 +16,6 @@ restores visibility. Dead letters are not automatic. You get a dead letter only
 if you pass `--dead-letter <other-queue>` at create time. That is product
 behavior, not the generic job-queue concept.
 
-Do not merge this source into the existing job queues concept as a new section.
-The concept page may gain a see-also to the Sable Queue entity. The entity must
-be created or updated under its own name, with claims that are true of Sable
-Queue and not true of job queues in general.
-
-A phrase like "this is just our job queue" in passing conversation is not a
-routing instruction. Default port, ack deadline, and opt-in dead letter belong
-on the named broker.
+A phrase like "this is just our job queue" in passing conversation is too broad
+for these product-specific details. Default port, ack deadline, and opt-in dead
+letter behavior are Sable Queue facts, while generic job-queue systems vary.

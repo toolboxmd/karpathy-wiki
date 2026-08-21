@@ -19,7 +19,5 @@ header. If both tools could emit that, digests could be compared without
 picking an iterator order. Nobody has scheduled this. Neither repo has a
 fixture emitter.
 
-Do not collapse Pylon Graph and Cragmap into one tool page. Do not file the
-portable fixture as a current feature of either tool. Do not dump the whole
-note into a single graph-databases concept. The digest mismatch is the concept.
-The two CLIs are entities. The fixture is an idea.
+The note is for later comparison work. Keep the current behavior separate from
+the unscheduled portable-fixture sketch when carrying the facts forward.

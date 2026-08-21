@@ -7,6 +7,12 @@ The benchmark tests whether an ingester turns raw sources into the right
 knowledge objects instead of collapsing named tools, lookup answers, ideas,
 projects, and low-evidence notes into `concepts/`.
 
+The first ten fixtures are a development set, not a held-out leaderboard. They
+were originally synthetic and later de-instructed after audit feedback removed
+source text that directly told the model which category to choose. Use them to
+harden the scorer and detect known regressions. Add a separate frozen challenge
+pack before making broad model leaderboard claims.
+
 ## Fixture Shape
 
 Each fixture is a directory:
@@ -27,6 +33,9 @@ fixtures/<case-id>-<slug>/
 
 Gold labels must be written from `source.md` plus `context.yaml`, not from a
 live wiki page that the current ingester already produced.
+Do not put category-routing answers in `source.md`, such as "this is an
+entity", "create a query", or "do not file this under concepts". The expected
+object belongs in `expected.yaml`; the source should contain domain evidence.
 
 ## MVP Cases
 
@@ -66,6 +75,12 @@ tests/benchmarks/semantic-ingest/run_baseline.py \
   --output-dir /tmp/semantic-ingest-baseline-validate
 ```
 
+Run scorer negative controls:
+
+```bash
+tests/benchmarks/semantic-ingest/run_baseline.py --self-test
+```
+
 Run real detached ingesters only when paid/provider execution is intentional:
 
 ```bash
@@ -96,9 +111,12 @@ events, and writes `baseline.json` plus `baseline.md`. Per-case provider
 diagnostics are copied to `cases/<fixture>/provider-runs/` before the disposable
 wiki is removed. Provider mode runs from an isolated plugin root containing only
 `bin`, `scripts`, and `skills`, so the provider does not receive the benchmark
-spec or gold labels through the normal prompt path. The scoring is heuristic v0:
-use it to expose routing failures and candidates for human review, not as a
-final model leaderboard.
+spec or gold labels through the normal prompt path. Scoring is heuristic and
+gate-backed. It checks object matches plus deterministic gates for terminal
+status, page validation, manifest validation, index rebuild, source citation on
+touched pages, `type`/path consistency, idea metadata, and unknown categories.
+Use the result to expose routing failures and candidates for human review, not
+as a final model leaderboard.
 
 Snapshot scoring exists because scorer changes are cheaper than provider
 reruns. Use it after manual review exposes scoring artifacts such as negative

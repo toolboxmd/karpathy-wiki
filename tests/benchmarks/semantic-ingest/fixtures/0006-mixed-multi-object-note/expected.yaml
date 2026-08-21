@@ -35,7 +35,7 @@ objects:
         - "Cragmap iterator yields edges in packed CSR order."
         - "Cragmap hash command is cragmap hash-sub --node <id> --hops 2 --order csr."
       must_not:
-        - "Cragmap is the same tool as Pylon Graph."
+        - "Cragmap and Pylon Graph are one combined tool page."
         - "Cragmap emits the portable sorted-triple fixture."
   - id: subgraph-digest-order-sensitivity
     kind: concept
@@ -45,12 +45,12 @@ objects:
       forbidden: [entities]
     realization: page_or_update
     match:
-      names: ["Subgraph digest mismatch", "Subgraph digest order sensitivity", "iterator-order digest mismatch"]
-      identifiers: ["subgraph-digest-order-sensitivity", "iterator-order-digest"]
+      names: ["Subgraph digest", "Subgraph digest mismatch", "Subgraph digest order sensitivity", "iterator-order digest mismatch"]
+      identifiers: ["subgraph-digest", "subgraph-digest-order-sensitivity", "iterator-order-digest"]
     claims:
       must:
-        - "Digests that hash neighbor ids in iterator order can differ across tools."
-        - "Pylon Graph uses log order while Cragmap uses CSR order."
+        - "A subgraph digest that hashes neighbor ids in iterator order will not match between Pylon Graph and Cragmap."
+        - "Pylon Graph log order and Cragmap packed CSR order are the iterator-order mismatch."
       must_not:
         - "A generic graph database concept is the primary object."
   - id: portable-subgraph-fixture
@@ -81,6 +81,5 @@ objects:
       identifiers: ["graph-databases"]
     claims:
       must: []
-      must_not:
-        - "The two entities, comparison concept, and idea are absorbed into one concept page."
+      must_not: []
     reason: "This fixture exists to detect under-splitting."

@@ -23,5 +23,4 @@ semver field. Versioning is the caller's job.
 RivetKit is not a package registry and does not publish crates. It only records
 what is already on disk. Teams that want a higher-level reproducible build
 policy still need their own CI rules. RivetKit only supplies the lockfile
-primitive. Mentions of reproducible builds in this note name a motivation, not
-the primary object.
+primitive.

@@ -15,7 +15,7 @@ objects:
       must:
         - "Wicktrace 0.9 reads .wick files."
         - "It is installed as wicktrace on PATH."
-        - "Opening a file is wicktrace open ./capture.wick."
+        - "Open a capture with wicktrace open ./capture.wick."
         - "Current export is wicktrace dump --format jsonl only."
       must_not:
         - "wicktrace flame exists in version 0.9."
@@ -49,7 +49,7 @@ objects:
       identifiers: ["wicktrace-sampled-flame-export", "wicktrace-flame"]
     claims:
       must:
-        - "wicktrace flame --sample 0.01 is a proposal and does not exist in 0.9."
+        - "wicktrace flame --sample 0.01 is proposed, not current Wicktrace behavior."
         - "The idea would downsample stacks before writing a folded file."
       must_not:
         - "Sampled flame export is current Wicktrace behavior."
@@ -64,6 +64,5 @@ objects:
       identifiers: ["tracing-playbooks", "operator-playbooks"]
     claims:
       must: []
-      must_not:
-        - "The concepts suggested_pages hint is honored over source evidence."
+      must_not: []
     reason: "suggested_pages is intentionally adversarial."

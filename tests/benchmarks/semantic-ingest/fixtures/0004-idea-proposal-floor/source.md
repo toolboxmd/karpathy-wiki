@@ -22,7 +22,7 @@ rename, not a rebuild.
 Open question: should shadow compile be a flag on `gen` or a new subcommand.
 The lean is subcommand so CI job names stay obvious.
 
-Do not treat this as documentation of current Trestle behavior beyond the two
-existing commands. Do not claim a release version or a date. Nobody has agreed
-to schedule it. Implementation detail in the sketch is intent, not an API
-contract.
+Current Trestle behavior in this note is limited to `trestle gen` and
+`trestle clean`. Nobody has agreed to schedule the shadow compile work, and no
+release version or date is attached. Implementation detail in the sketch is
+intent, not an API contract.
