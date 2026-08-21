@@ -73,16 +73,24 @@ tests/benchmarks/semantic-ingest/run_baseline.py \
   --run-provider \
   --provider grok \
   --model grok-4.6 \
-  --effort xhigh \
+  --effort medium \
   --executable /Users/lukaszmaj/.grok/bin/grok \
-  --output-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-xhigh
+  --output-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-medium
 ```
+
+Use the same model and effort as the production ingester for the frozen
+baseline. Higher efforts such as `xhigh` belong in separate oracle or challenge
+runs, not in the production baseline.
 
 Provider mode creates one temporary wiki per selected fixture, writes a
 raw-direct capture, runs the existing dispatcher path, waits for terminal ingest
-events, and writes `baseline.json` plus `baseline.md`. The scoring is
-heuristic v0: use it to expose routing failures and candidates for human
-review, not as a final model leaderboard.
+events, and writes `baseline.json` plus `baseline.md`. Per-case provider
+diagnostics are copied to `cases/<fixture>/provider-runs/` before the disposable
+wiki is removed. Provider mode runs from an isolated plugin root containing only
+`bin`, `scripts`, and `skills`, so the provider does not receive the benchmark
+spec or gold labels through the normal prompt path. The scoring is heuristic v0:
+use it to expose routing failures and candidates for human review, not as a
+final model leaderboard.
 
 ## Source Policy
 

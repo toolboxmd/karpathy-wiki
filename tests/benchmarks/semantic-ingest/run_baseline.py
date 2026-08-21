@@ -76,6 +76,18 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def prepare_isolated_plugin_root(output_root: Path) -> Path:
+    """Create a minimal plugin root without benchmark gold/spec files."""
+
+    isolated = output_root / "isolated-plugin-root"
+    if isolated.exists():
+        shutil.rmtree(isolated)
+    isolated.mkdir(parents=True)
+    for name in ("scripts", "skills", "bin"):
+        shutil.copytree(REPO_ROOT / name, isolated / name)
+    return isolated
+
+
 def slugify(text: str) -> str:
     out = []
     last_dash = False
@@ -196,12 +208,17 @@ def copy_seed(fixture: Path, wiki: Path) -> None:
 
 
 def init_wiki(wiki: Path, workspace: Path, env: dict[str, str], args: argparse.Namespace) -> None:
+    wiki = wiki.resolve()
     subprocess.run(
         ["bash", str(SCRIPTS / "wiki-init.sh"), "project", str(wiki)],
         env=env,
         check=True,
         stdout=subprocess.DEVNULL,
     )
+    # wiki-init creates a standalone git repository inside the wiki root.
+    # The runtime trust validator therefore treats the wiki root itself as the
+    # canonical workspace for these disposable benchmark wikis.
+    workspace = wiki.resolve()
     subprocess.run(
         [
             sys.executable,
@@ -453,28 +470,46 @@ def run_provider_case(
     case_dir = output_root / "cases" / fixture.name
     if case_dir.exists():
         shutil.rmtree(case_dir)
-    workspace = case_dir / "workspace"
-    wiki = workspace / "wiki"
-    workspace.mkdir(parents=True)
-    init_wiki(wiki, workspace, env, args)
-    copy_seed(fixture, wiki)
-    capture_name = write_capture(fixture, wiki)
-    subprocess.run(
-        [sys.executable, str(SCRIPTS / "wiki_dispatch.py"), "tick", "--wiki", str(wiki), "--source", "manual"],
-        env=env,
-        check=True,
-    )
-    status = wait_for_capture(wiki, capture_name, args.timeout_seconds)
-    result = score_case(fixture, wiki, status)
-    result["wiki"] = str(wiki)
-    runs = wiki / ".ingest-runs.jsonl"
-    if runs.exists():
-        shutil.copy2(runs, case_dir / "ingest-runs.jsonl")
-    (case_dir / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return result
+    case_dir.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix=f"semantic-ingest-{fixture.name}-") as temp:
+        workspace = Path(temp) / "workspace"
+        wiki = workspace / "wiki"
+        workspace.mkdir(parents=True)
+        init_wiki(wiki, workspace, env, args)
+        copy_seed(fixture, wiki)
+        capture_name = write_capture(fixture, wiki)
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "wiki_dispatch.py"),
+                "tick",
+                "--wiki",
+                str(wiki),
+                "--source",
+                "manual",
+            ],
+            env=env,
+            check=True,
+        )
+        status = wait_for_capture(wiki, capture_name, args.timeout_seconds)
+        result = score_case(fixture, wiki, status)
+        result["wiki_snapshot"] = str(case_dir / "wiki-snapshot")
+        runs = wiki / ".ingest-runs.jsonl"
+        if runs.exists():
+            shutil.copy2(runs, case_dir / "ingest-runs.jsonl")
+        provider_runs = wiki / ".locks" / "ingest-runs"
+        if provider_runs.exists():
+            shutil.copytree(provider_runs, case_dir / "provider-runs")
+        shutil.copytree(
+            wiki,
+            case_dir / "wiki-snapshot",
+            ignore=shutil.ignore_patterns(".locks", ".git"),
+        )
+        (case_dir / "result.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return result
 
 
 def write_markdown_report(path: Path, payload: dict[str, Any]) -> None:
@@ -508,6 +543,8 @@ def write_markdown_report(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global SCRIPTS
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixtures-dir", default=str(BENCH_ROOT / "fixtures"))
     parser.add_argument("--output-dir", default=str(BENCH_ROOT / "runs" / "baseline-current"))
@@ -555,6 +592,9 @@ def main(argv: list[str] | None = None) -> int:
         env = os.environ.copy()
         env["WIKI_CONFIG_HOME"] = str(output_root / "config-home")
         env["WIKI_CODEXBAR_EXECUTABLE"] = str(output_root / "codexbar-not-installed")
+        isolated_root = prepare_isolated_plugin_root(output_root)
+        payload["isolated_plugin_root"] = str(isolated_root)
+        SCRIPTS = isolated_root / "scripts"
         for fixture in fixtures:
             payload["results"].append(run_provider_case(fixture, output_root, args, env))
 
