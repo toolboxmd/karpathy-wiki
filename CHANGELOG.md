@@ -6,6 +6,14 @@ This file records shipped behavior, architecture, API contracts, operational
 changes, migrations, and meaningful bug fixes. Active follow-ups live in
 `TODO.md` or `ISSUES.md`; speculative future options live in `IDEAS.md`.
 
+## Unreleased - 2026-08-21
+
+- Added snapshot rescoring for the semantic-ingest benchmark and tightened its
+  heuristic scorer after manual review of Grok 4.6 Medium output. The scorer now
+  prefers title/path matches in the expected category, ignores negated forbidden
+  claims, strips frontmatter from claim checks, preserves numeric/code tokens,
+  and avoids provider reruns when only scoring logic changes.
+
 ## 0.3.2 - 2026-08-21
 
 - Added fail-closed native ACP image transport for Grok. File-backed JPEG and

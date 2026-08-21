@@ -45,7 +45,7 @@ objects:
       forbidden: [entities]
     realization: page_or_update
     match:
-      names: ["Subgraph digest order sensitivity", "iterator-order digest mismatch"]
+      names: ["Subgraph digest mismatch", "Subgraph digest order sensitivity", "iterator-order digest mismatch"]
       identifiers: ["subgraph-digest-order-sensitivity", "iterator-order-digest"]
     claims:
       must:

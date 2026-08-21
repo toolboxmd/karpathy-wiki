@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -66,6 +67,16 @@ def load_yaml(path: Path) -> Any:
     if result.returncode != 0:
         raise RuntimeError(f"cannot parse YAML {path}: {result.stderr.strip()}")
     return json.loads(result.stdout)
+
+
+def strip_frontmatter(text: str) -> str:
+    if not text.startswith("---\n"):
+        return text
+    marker = "\n---\n"
+    end = text.find(marker, 4)
+    if end == -1:
+        return text
+    return text[end + len(marker) :]
 
 
 def sha256_file(path: Path) -> str:
@@ -141,12 +152,52 @@ def token_set(text: str) -> set[str]:
 
 
 def claim_covered(claim: str, text: str) -> bool:
+    special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
+    if special_tokens and all(token in text.lower() for token in special_tokens):
+        return True
     tokens = token_set(claim)
     if not tokens:
         return True
     haystack = token_set(text)
     overlap = len(tokens & haystack)
+    if len(tokens) <= 3:
+        return overlap >= max(1, len(tokens) - 1)
     return overlap >= max(1, min(len(tokens), 3))
+
+
+def claim_violated(claim: str, text: str) -> bool:
+    """Return true when a forbidden claim is asserted, not merely rejected."""
+
+    tokens = token_set(claim)
+    if not tokens:
+        return False
+    negation_markers = (
+        " not ",
+        "n't",
+        " no ",
+        " neither ",
+        " without ",
+        " do not ",
+        " does not ",
+        " did not ",
+        " cannot ",
+        " never ",
+        " not current ",
+        " not implemented ",
+        " not automatic ",
+        " does not exist ",
+        " unscheduled ",
+        " unspecified ",
+    )
+    for raw_line in text.splitlines():
+        line = f" {raw_line.lower()} "
+        overlap = len(tokens & token_set(line))
+        if overlap < max(1, min(len(tokens), 3)):
+            continue
+        if any(marker in line for marker in negation_markers):
+            continue
+        return True
+    return False
 
 
 def fixture_dirs(fixtures_root: Path, selected: list[str]) -> list[Path]:
@@ -380,28 +431,46 @@ def match_page(obj: dict[str, Any], pages: list[dict[str, Any]]) -> tuple[dict[s
     required_category = obj.get("category", {}).get("required")
     allowed = set(obj.get("category", {}).get("allowed") or [])
     forbidden = set(obj.get("category", {}).get("forbidden") or [])
+    presence = obj.get("presence")
 
     best: dict[str, Any] | None = None
     best_score = 0
+    best_title_score = 0
+    best_rank = -1
     best_status = "miss"
     for page in pages:
-        hay = f"{page['path']} {page['title']} {page['text']}".lower()
+        title_hay = f"{page['path']} {page['title']}".lower()
+        if presence == "forbidden":
+            hay = title_hay
+        else:
+            hay = f"{title_hay} {page['text']}".lower()
+        title_score = 0
+        title_score += sum(20 for name in names if name and name in title_hay)
+        title_score += sum(15 for ident in identifiers if ident and ident in title_hay)
         score = 0
         score += sum(3 for name in names if name and name in hay)
         score += sum(2 for ident in identifiers if ident and ident in hay)
-        if score <= best_score:
+        if score <= 0:
             continue
         category = page["category"]
         if category in forbidden:
             status = "absorbed"
+            rank = 0
         elif required_category and category != required_category:
             status = "kind_confusion"
+            rank = 1
         elif allowed and category not in allowed:
             status = "kind_confusion"
+            rank = 1
         else:
             status = "matched"
+            rank = 2
+        if (rank, title_score, score) <= (best_rank, best_title_score, best_score):
+            continue
         best = page
         best_score = score
+        best_title_score = title_score
+        best_rank = rank
         best_status = status
     return best, best_status
 
@@ -415,18 +484,21 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
         page, match_status = match_page(obj, pages)
         claims = obj.get("claims", {})
         text = page["text"] if page is not None else ""
+        claim_text = strip_frontmatter(text)
         must = claims.get("must") or []
         must_not = claims.get("must_not") or []
-        must_hits = [claim for claim in must if claim_covered(str(claim), text)]
+        must_hits = [claim for claim in must if claim_covered(str(claim), claim_text)]
         must_not_hits = [
-            claim for claim in must_not if claim_covered(str(claim), text)
+            claim for claim in must_not if claim_violated(str(claim), claim_text)
         ]
         presence = obj.get("presence")
         kind = obj.get("kind")
         if kind == "hold" and presence == "required":
             outcome = "passed" if not pages or status == "needs_more_detail" else "failed"
         elif presence == "forbidden":
-            outcome = "passed" if page is None else "failed"
+            outcome = "failed" if page is not None and (not must_not or must_not_hits) else "passed"
+        elif presence == "optional" and page is None:
+            outcome = "passed"
         elif match_status == "matched" and len(must_hits) == len(must) and not must_not_hits:
             outcome = "passed"
         elif match_status in {"absorbed", "kind_confusion"}:
@@ -512,6 +584,31 @@ def run_provider_case(
         return result
 
 
+def run_snapshot_case(fixture: Path, output_root: Path, snapshots_root: Path) -> dict[str, Any]:
+    case_dir = output_root / "cases" / fixture.name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    source_case_dir = snapshots_root / "cases" / fixture.name
+    wiki = source_case_dir / "wiki-snapshot"
+    if not wiki.is_dir():
+        raise RuntimeError(f"{fixture.name}: missing wiki snapshot: {wiki}")
+    status = "snapshot"
+    previous_result = source_case_dir / "result.json"
+    if previous_result.is_file():
+        try:
+            status = str(json.loads(previous_result.read_text(encoding="utf-8")).get("run_status"))
+        except json.JSONDecodeError:
+            status = "snapshot"
+    result = score_case(fixture, wiki, status)
+    result["wiki_snapshot"] = str(wiki)
+    (case_dir / "result.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return result
+
+
 def write_markdown_report(path: Path, payload: dict[str, Any]) -> None:
     lines = [
         "# Semantic Ingest Baseline",
@@ -550,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", default=str(BENCH_ROOT / "runs" / "baseline-current"))
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--run-provider", action="store_true")
+    parser.add_argument("--score-snapshots-dir")
     parser.add_argument("--provider", choices=["codex", "grok", "claude"], default="codex")
     parser.add_argument("--model")
     parser.add_argument("--effort", default="medium")
@@ -571,7 +669,13 @@ def main(argv: list[str] | None = None) -> int:
     ).strip()
     payload: dict[str, Any] = {
         "generated_at": utc_now(),
-        "mode": "provider" if args.run_provider else "validate-only",
+        "mode": (
+            "provider"
+            if args.run_provider
+            else "snapshot"
+            if args.score_snapshots_dir
+            else "validate-only"
+        ),
         "repo_head": repo_head,
         "skill": {
             "path": str(skill.relative_to(REPO_ROOT)),
@@ -580,6 +684,9 @@ def main(argv: list[str] | None = None) -> int:
         "fixtures": fixture_summary,
         "results": [],
     }
+
+    if args.run_provider and args.score_snapshots_dir:
+        raise SystemExit("--run-provider and --score-snapshots-dir are mutually exclusive")
 
     output_root.mkdir(parents=True, exist_ok=True)
     if args.run_provider:
@@ -597,6 +704,10 @@ def main(argv: list[str] | None = None) -> int:
         SCRIPTS = isolated_root / "scripts"
         for fixture in fixtures:
             payload["results"].append(run_provider_case(fixture, output_root, args, env))
+    elif args.score_snapshots_dir:
+        snapshots_root = Path(args.score_snapshots_dir).resolve()
+        for fixture in fixtures:
+            payload["results"].append(run_snapshot_case(fixture, output_root, snapshots_root))
 
     (output_root / "baseline.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -607,7 +718,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"fixtures: {len(fixtures)}")
     print(f"skill_sha256: {payload['skill']['sha256']}")
     if not args.run_provider:
-        print("validate-only: pass --run-provider with --model to run detached ingesters")
+        if args.score_snapshots_dir:
+            print("snapshot scoring: reused existing wiki snapshots")
+        else:
+            print("validate-only: pass --run-provider with --model to run detached ingesters")
     return 0
 
 

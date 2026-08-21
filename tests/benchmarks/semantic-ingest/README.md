@@ -78,6 +78,14 @@ tests/benchmarks/semantic-ingest/run_baseline.py \
   --output-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-medium
 ```
 
+Rescore existing wiki snapshots without calling a provider:
+
+```bash
+tests/benchmarks/semantic-ingest/run_baseline.py \
+  --score-snapshots-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-medium \
+  --output-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-medium-rescore
+```
+
 Use the same model and effort as the production ingester for the frozen
 baseline. Higher efforts such as `xhigh` belong in separate oracle or challenge
 runs, not in the production baseline.
@@ -91,6 +99,11 @@ wiki is removed. Provider mode runs from an isolated plugin root containing only
 spec or gold labels through the normal prompt path. The scoring is heuristic v0:
 use it to expose routing failures and candidates for human review, not as a
 final model leaderboard.
+
+Snapshot scoring exists because scorer changes are cheaper than provider
+reruns. Use it after manual review exposes scoring artifacts such as negative
+guardrail text (`does not exist`, `not implemented`) being mistaken for
+positive unsupported claims.
 
 ## Source Policy
 
