@@ -57,6 +57,33 @@ The future runner should report per-fixture results plus:
 Validation, index building, and source traceability are gates or diagnostics.
 They are not averaged into a single semantic score.
 
+## Runner
+
+Validate fixture metadata and record the frozen current skill hash:
+
+```bash
+tests/benchmarks/semantic-ingest/run_baseline.py \
+  --output-dir /tmp/semantic-ingest-baseline-validate
+```
+
+Run real detached ingesters only when paid/provider execution is intentional:
+
+```bash
+tests/benchmarks/semantic-ingest/run_baseline.py \
+  --run-provider \
+  --provider grok \
+  --model grok-4.6 \
+  --effort xhigh \
+  --executable /Users/lukaszmaj/.grok/bin/grok \
+  --output-dir tests/benchmarks/semantic-ingest/runs/baseline-grok-4.6-xhigh
+```
+
+Provider mode creates one temporary wiki per selected fixture, writes a
+raw-direct capture, runs the existing dispatcher path, waits for terminal ingest
+events, and writes `baseline.json` plus `baseline.md`. The scoring is
+heuristic v0: use it to expose routing failures and candidates for human
+review, not as a final model leaderboard.
+
 ## Source Policy
 
 Fixtures in this MVP are synthetic and public-safe. Existing local `wiki/raw`
