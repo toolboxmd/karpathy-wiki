@@ -1,0 +1,7 @@
+case_id: "0001"
+title: "Reproducible builds after the lockfile rewrite"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - concepts/reproducible-builds
+fixture_intent: "Concept-shaped title and suggestion, but source is about a named CLI entity."

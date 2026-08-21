@@ -1,0 +1,69 @@
+case_id: "0007"
+slug: adversarial-suggested-pages
+objects:
+  - id: wicktrace
+    kind: entity
+    presence: required
+    category:
+      required: entities
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["Wicktrace", "wicktrace"]
+      identifiers: ["wicktrace"]
+    claims:
+      must:
+        - "Wicktrace 0.9 reads .wick files."
+        - "It is installed as wicktrace on PATH."
+        - "Opening a file is wicktrace open ./capture.wick."
+        - "Current export is wicktrace dump --format jsonl only."
+      must_not:
+        - "wicktrace flame exists in version 0.9."
+        - "Wicktrace is only a generic tracing-playbook example."
+  - id: wicktrace-parent-span-lookup
+    kind: query
+    presence: required
+    category:
+      required: queries
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["How do I find the parent span for a Wicktrace span id?", "Wicktrace parent span lookup"]
+      identifiers: ["wicktrace-parent-span", "parent-span-lookup"]
+    claims:
+      must:
+        - "Parent lookup command is wicktrace span <span-id> --parent."
+        - "The parent id is in the header, not the log body."
+        - "none means the span is a root."
+      must_not:
+        - "none means the parent record is missing."
+  - id: wicktrace-sampled-flame-export
+    kind: idea
+    presence: required
+    category:
+      required: ideas
+      forbidden: [entities, concepts]
+    realization: page_or_update
+    match:
+      names: ["Wicktrace sampled flame export", "wicktrace flame"]
+      identifiers: ["wicktrace-sampled-flame-export", "wicktrace-flame"]
+    claims:
+      must:
+        - "wicktrace flame --sample 0.01 is a proposal and does not exist in 0.9."
+        - "The idea would downsample stacks before writing a folded file."
+      must_not:
+        - "Sampled flame export is current Wicktrace behavior."
+  - id: tracing-playbooks-dump
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Tracing playbooks", "Operator playbooks"]
+      identifiers: ["tracing-playbooks", "operator-playbooks"]
+    claims:
+      must: []
+      must_not:
+        - "The concepts suggested_pages hint is honored over source evidence."
+    reason: "suggested_pages is intentionally adversarial."

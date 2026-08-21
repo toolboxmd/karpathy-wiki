@@ -1,0 +1,8 @@
+case_id: "0002"
+title: "Harborline fencing notes"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - entities/harborline
+  - entities/foldgate
+fixture_intent: "Product names are bait; the durable object is a reusable mechanism."

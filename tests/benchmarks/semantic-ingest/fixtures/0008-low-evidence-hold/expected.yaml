@@ -1,0 +1,49 @@
+case_id: "0008"
+slug: low-evidence-hold
+objects:
+  - id: marblehook-upload-limit-hold
+    kind: hold
+    presence: required
+    category:
+      forbidden: [entities, concepts, queries]
+    realization: hold
+    match:
+      names: ["Marblehook upload limit rumor", "Marblehook upload limits"]
+      identifiers: ["marblehook-upload-limit", "marblehook"]
+    claims:
+      must:
+        - "The size limit is rumored and unverified."
+        - "One 12MB marblehook put command succeeded."
+        - "No flag, config key, log line, error code, man page, help text, or failing reproduction is in evidence."
+      must_not:
+        - "Marblehook has a 100MB upload cap."
+        - "Client versus server responsibility is known."
+        - "Upload throttling is established by this source."
+  - id: marblehook-confident-entity
+    kind: entity
+    presence: forbidden
+    category:
+      required: entities
+    realization: must_not_page
+    match:
+      names: ["Marblehook"]
+      identifiers: ["marblehook"]
+    claims:
+      must: []
+      must_not:
+        - "A confident Marblehook entity page claims an upload limit."
+    reason: "The evidence is intentionally insufficient."
+  - id: marblehook-size-query
+    kind: query
+    presence: forbidden
+    category:
+      required: queries
+    realization: must_not_page
+    match:
+      names: ["What is the Marblehook size limit?", "Marblehook size limit"]
+      identifiers: ["marblehook-size-limit"]
+    claims:
+      must: []
+      must_not:
+        - "A query answer gives a numeric limit."
+    reason: "The source explicitly forbids answering with a number."

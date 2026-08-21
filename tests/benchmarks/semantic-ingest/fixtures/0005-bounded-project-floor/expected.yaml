@@ -1,0 +1,37 @@
+case_id: "0005"
+slug: bounded-project-floor
+objects:
+  - id: loomferry-cutover
+    kind: project
+    presence: required
+    category:
+      required: projects
+      forbidden: [concepts, entities]
+    realization: page_or_update
+    match:
+      names: ["Loomferry cutover", "Northridge docs cutover"]
+      identifiers: ["loomferry-cutover", "northridge-docs-cutover"]
+    claims:
+      must:
+        - "The project window is 14 working days starting the first Monday after the 2.3 tag."
+        - "In scope: inventory scp job, write Loomferry recipe, dual-publish for five days, flip canonical URL, delete scp job."
+        - "Exit criteria include three consecutive 200 snapshots, fileserver 404, and one rollback command."
+        - "Out of scope: docs theme rewrite, other teams, and experimental delta codec."
+      must_not:
+        - "This is a Loomferry product encyclopedia."
+        - "Dual publish is the permanent architecture."
+        - "Delta codec or docs theme work is in scope."
+  - id: docs-publishing-concept-dump
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Docs publishing", "Loomferry publishing"]
+      identifiers: ["docs-publishing", "loomferry-publishing"]
+    claims:
+      must: []
+      must_not:
+        - "The bounded cutover is collapsed into a generic docs publishing concept."
+    reason: "The seeded schema includes projects, so the bounded workstream should not be demoted."

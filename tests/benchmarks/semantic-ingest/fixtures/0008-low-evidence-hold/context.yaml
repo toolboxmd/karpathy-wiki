@@ -1,0 +1,9 @@
+case_id: "0008"
+title: "Marblehook upload limits"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - entities/marblehook
+  - concepts/upload-throttling
+  - queries/marblehook-size-limit
+fixture_intent: "Named tool and query magnets should still result in hold/raw-only because evidence is weak."

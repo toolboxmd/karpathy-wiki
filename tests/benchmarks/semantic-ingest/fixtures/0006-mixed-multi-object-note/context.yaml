@@ -1,0 +1,7 @@
+case_id: "0006"
+title: "Graph database notes"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - concepts/graph-databases
+fixture_intent: "One source should split into two entities, one comparison concept, and one idea."

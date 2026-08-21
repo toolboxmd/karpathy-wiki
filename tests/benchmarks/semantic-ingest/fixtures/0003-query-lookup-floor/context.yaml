@@ -1,0 +1,8 @@
+case_id: "0003"
+title: "Ambervault retry policy"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - concepts/retry-policy
+  - entities/ambervault
+fixture_intent: "A reusable operator lookup should become a query, not a retry concept or product profile."

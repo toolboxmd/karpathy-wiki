@@ -1,0 +1,37 @@
+case_id: "0001"
+slug: entity-tool-floor
+objects:
+  - id: rivetkit
+    kind: entity
+    presence: required
+    category:
+      required: entities
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["RivetKit", "rivet"]
+      identifiers: ["rivetkit", "rivet"]
+    claims:
+      must:
+        - "RivetKit writes rivet.lock from rivet.toml."
+        - "The binary name is rivet."
+        - "rivet stamp hashes source trees with BLAKE3 and refuses network access."
+        - "rivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
+      must_not:
+        - "RivetKit publishes crates or acts as a package registry."
+        - "rivet stamp fetches dependencies by default."
+        - "RivetKit is itself a complete reproducible build policy."
+  - id: reproducible-builds-primary-dump
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Reproducible builds", "RivetKit overview"]
+      identifiers: ["reproducible-builds", "rivetkit-overview"]
+    claims:
+      must: []
+      must_not:
+        - "A reproducible-builds concept is the primary realization of this source."
+    reason: "The source only motivates a tool entity and does not define a reusable build policy."

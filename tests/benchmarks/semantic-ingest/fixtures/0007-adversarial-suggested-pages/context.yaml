@@ -1,0 +1,8 @@
+case_id: "0007"
+title: "Tracing playbook"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - concepts/tracing-playbooks
+  - concepts/operator-playbooks
+fixture_intent: "Metadata points at concepts, but source contains entity, query, and idea objects."

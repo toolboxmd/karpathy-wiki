@@ -1,0 +1,37 @@
+case_id: "0002"
+slug: concept-mechanism-floor
+objects:
+  - id: lease-fencing
+    kind: concept
+    presence: required
+    category:
+      required: concepts
+      forbidden: [entities]
+    realization: page_or_update
+    match:
+      names: ["Lease fencing", "Fenced writes"]
+      identifiers: ["lease-fencing", "fenced-writes"]
+    claims:
+      must:
+        - "Mutations carry a monotonic fence."
+        - "Storage rejects mutations whose fence is older than the last accepted fence."
+        - "Lease expiry alone is not safety; acquisition writes fence+1 with compare-and-set."
+        - "A fence persists in the log unlike a mutex that disappears with process death."
+      must_not:
+        - "Harborline or Foldgate is the primary object."
+        - "Lease timeout alone prevents stale writes."
+        - "Poisoning is required for lease fencing."
+  - id: harborline-product-page
+    kind: entity
+    presence: forbidden
+    category:
+      required: entities
+    realization: must_not_page
+    match:
+      names: ["Harborline", "Foldgate"]
+      identifiers: ["harborline", "foldgate"]
+    claims:
+      must: []
+      must_not:
+        - "Product catalogs are created from passing examples."
+    reason: "The source does not provide enough product-specific evidence."

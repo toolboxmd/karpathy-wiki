@@ -1,0 +1,10 @@
+case_id: "0005"
+title: "Loomferry publishing"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - entities/loomferry
+  - concepts/docs-publishing
+wiki_seed:
+  include: true
+fixture_intent: "When projects/ exists, a bounded cutover should become a project."

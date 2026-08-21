@@ -1,0 +1,8 @@
+case_id: "0010"
+title: "Platform rate limiting with Foldgate"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - concepts/platform-rate-limiting
+  - entities/foldgate
+fixture_intent: "Title invites platform-wide extrapolation, but source only supports a narrow local primitive."

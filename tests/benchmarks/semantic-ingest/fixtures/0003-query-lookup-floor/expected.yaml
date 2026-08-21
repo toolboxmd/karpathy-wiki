@@ -1,0 +1,37 @@
+case_id: "0003"
+slug: query-lookup-floor
+objects:
+  - id: ambervault-retry-class-lookup
+    kind: query
+    presence: required
+    category:
+      required: queries
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["How do I look up the retry class for a failed Ambervault export job?", "Ambervault retry class lookup"]
+      identifiers: ["ambervault-retry-class", "retry-class-lookup"]
+    claims:
+      must:
+        - "Inspect retry_class, next_attempt, and last_error for a known job id."
+        - "retry_class values are immediate, backoff, and dead."
+        - "Unknown job id can be found by listing failed export jobs by target."
+        - "Callback HTTP status does not map one-to-one to retry_class."
+      must_not:
+        - "The dashboard home page shows retry_class."
+        - "A downstream 429 is the retry_class mapping."
+        - "The source proposes changing retry classes."
+  - id: retry-policy-concept-dump
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Retry policy", "Ambervault retry policy"]
+      identifiers: ["retry-policy", "ambervault-retry-policy"]
+    claims:
+      must: []
+      must_not:
+        - "A retry-policy essay is the primary realization."
+    reason: "The source is a durable lookup answer."

@@ -1,0 +1,8 @@
+case_id: "0004"
+title: "Trestle check command"
+kind: raw-direct
+suggested_action: create
+suggested_pages:
+  - entities/trestle-cli
+  - concepts/codegen-typecheck
+fixture_intent: "Detailed proposal should become an idea, not current Trestle docs."

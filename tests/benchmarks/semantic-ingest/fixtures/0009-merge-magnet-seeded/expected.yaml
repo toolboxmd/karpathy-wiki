@@ -1,0 +1,37 @@
+case_id: "0009"
+slug: merge-magnet-seeded
+objects:
+  - id: sable-queue
+    kind: entity
+    presence: required
+    category:
+      required: entities
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["Sable Queue", "sable"]
+      identifiers: ["sable-queue", "sable"]
+    claims:
+      must:
+        - "Sable Queue is a named message broker with binary sable."
+        - "Default listen address is 127.0.0.1:7420."
+        - "Queue creation uses --ack-deadline 30s."
+        - "Dead letters are opt-in with --dead-letter at create time."
+      must_not:
+        - "Sable Queue is the job-queues concept."
+        - "Dead letters are automatic in Sable Queue."
+        - "Sable Queue implements delayed retry classes."
+  - id: job-queues-concept-absorption
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Job queues", "Sable Queue section"]
+      identifiers: ["job-queues"]
+    claims:
+      must: []
+      must_not:
+        - "Sable Queue claims are absorbed into concepts/job-queues as the primary realization."
+    reason: "The seeded concept may receive a see-also only."

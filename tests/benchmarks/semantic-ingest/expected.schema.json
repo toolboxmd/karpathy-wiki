@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Semantic ingest expected fixture",
+  "type": "object",
+  "required": ["case_id", "slug", "objects"],
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[0-9]{4}$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "objects": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "presence", "category", "realization", "match", "claims"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["entity", "concept", "query", "idea", "project", "hold"]
+          },
+          "presence": {
+            "type": "string",
+            "enum": ["required", "optional", "forbidden"]
+          },
+          "category": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "required": {
+                "type": "string"
+              },
+              "allowed": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "forbidden": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "realization": {
+            "type": "string",
+            "enum": ["page_or_update", "page", "update", "section", "hold", "drop", "must_not_page"]
+          },
+          "match": {
+            "type": "object",
+            "required": ["names"],
+            "additionalProperties": false,
+            "properties": {
+              "names": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string" }
+              },
+              "identifiers": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "claims": {
+            "type": "object",
+            "required": ["must", "must_not"],
+            "additionalProperties": false,
+            "properties": {
+              "must": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "must_not": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

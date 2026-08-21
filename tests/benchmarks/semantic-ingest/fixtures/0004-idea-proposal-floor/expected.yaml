@@ -1,0 +1,37 @@
+case_id: "0004"
+slug: idea-proposal-floor
+objects:
+  - id: trestle-shadow-compile
+    kind: idea
+    presence: required
+    category:
+      required: ideas
+      forbidden: [entities, concepts]
+    realization: page_or_update
+    match:
+      names: ["Trestle shadow compile", "Trestle check command", "non-writing check command"]
+      identifiers: ["trestle-shadow-compile", "trestle-check-command"]
+    claims:
+      must:
+        - "The non-writing check command is a proposal, not a shipped feature."
+        - "Trestle 2.1 has trestle gen and trestle clean only."
+        - "Current trestle gen --dry-run prints file lists and skips codegen and typecheck."
+        - "The proposal writes no files unless --commit is passed."
+      must_not:
+        - "trestle check ships in Trestle 2.1."
+        - "The proposal has a release date or agreed schedule."
+        - "Current dry-run already typechecks generated bindings."
+  - id: trestle-current-api-docs
+    kind: entity
+    presence: forbidden
+    category:
+      required: entities
+    realization: must_not_page
+    match:
+      names: ["Trestle CLI", "trestle check"]
+      identifiers: ["trestle-cli", "trestle-check"]
+    claims:
+      must: []
+      must_not:
+        - "The proposed check command is documented as current Trestle behavior."
+    reason: "A current entity update may mention gen and clean, but check must stay an idea."

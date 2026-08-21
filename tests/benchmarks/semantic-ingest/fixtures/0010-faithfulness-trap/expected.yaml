@@ -1,0 +1,55 @@
+case_id: "0010"
+slug: faithfulness-trap
+objects:
+  - id: foldgate-process-local-window
+    kind: entity
+    presence: required
+    category:
+      allowed: [entities, concepts]
+      forbidden: [queries]
+    realization: page_or_update
+    match:
+      names: ["Foldgate", "process-local rate window", "Foldgate allow"]
+      identifiers: ["foldgate", "process-local-window"]
+    claims:
+      must:
+        - "foldgate allow --key <id> --limit 5 --every 1s returns ok or deny."
+        - "The window is in-memory and per process."
+        - "Restarting the process resets counts."
+        - "Two processes with the same key do not coordinate."
+      must_not:
+        - "Foldgate is cluster-wide or the platform standard limiter."
+        - "deny maps to HTTP 429."
+        - "Keys are tenant-scoped."
+        - "The window survives restart."
+  - id: replica-aware-window
+    kind: idea
+    presence: optional
+    category:
+      required: ideas
+      forbidden: [concepts]
+    realization: page_or_update
+    match:
+      names: ["Replica-aware Foldgate window", "replica-aware window"]
+      identifiers: ["replica-aware-window", "foldgate-replica-aware-window"]
+    claims:
+      must:
+        - "A replica-aware window was discussed with no spec."
+        - "Any idea must be unscheduled and unspecified."
+      must_not:
+        - "Replica-aware windows are current Foldgate behavior."
+  - id: platform-rate-limiting-dump
+    kind: concept
+    presence: forbidden
+    category:
+      required: concepts
+    realization: must_not_page
+    match:
+      names: ["Platform rate limiting"]
+      identifiers: ["platform-rate-limiting"]
+    claims:
+      must: []
+      must_not:
+        - "The source defines platform-wide rate limiting."
+        - "Unsupported cluster, tenant, HTTP, or durability claims are emitted."
+    reason: "The title is bait and must not override source evidence."

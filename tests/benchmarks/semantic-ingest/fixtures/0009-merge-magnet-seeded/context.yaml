@@ -1,0 +1,9 @@
+case_id: "0009"
+title: "Job queues"
+kind: raw-direct
+suggested_action: augment
+suggested_pages:
+  - concepts/job-queues
+wiki_seed:
+  include: true
+fixture_intent: "Existing broad concept is a merge magnet, but source requires a named entity."
