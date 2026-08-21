@@ -6,7 +6,7 @@ This file records shipped behavior, architecture, API contracts, operational
 changes, migrations, and meaningful bug fixes. Active follow-ups live in
 `TODO.md` or `ISSUES.md`; speculative future options live in `IDEAS.md`.
 
-## 2026-08-21
+## 0.3.2 - 2026-08-21
 
 - Added fail-closed native ACP image transport for Grok. File-backed JPEG and
   PNG evidence is detected from signatures and sent in the same request as the

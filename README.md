@@ -322,7 +322,7 @@ Design doc: [`docs/planning/karpathy-wiki-v2-design.md`](docs/planning/karpathy-
 
 ## Status
 
-**v0.3.1.** Codex is the qualified
+**v0.3.2.** Codex is the qualified
 primary interactive development host. Claude Code remains supported with its
 existing automated hook coverage. Codex qualification includes recorded
 interactive-host acceptance evidence; it does not claim equivalent automated
@@ -330,7 +330,7 @@ coverage for every Codex lifecycle path. Detached ingest supports Claude Code,
 Codex, and Grok. Cursor, Copilot CLI, OpenCode, and Gemini loader paths remain
 best-effort.
 
-**What works today (v2.4 + 0.2.7 read protocol + 0.2.8 hardening + 0.3.1 runtime, routing, and provider automation):**
+**What works today (v2.4 + 0.2.7 read protocol + 0.2.8 hardening + 0.3.1 scheduler and provider automation + 0.3.2 native Grok image ingestion):**
 - Auto-capture + detached background ingest into a git-versioned wiki.
 - Discovery-driven categories: any top-level `mkdir <name>/` at the wiki root creates a category. No code changes required.
 - Per-directory `_index.md` tree (recursive); root `index.md` is a small MOC.

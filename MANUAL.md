@@ -1,6 +1,6 @@
-# karpathy-wiki user manual (v0.3.1)
+# karpathy-wiki user manual (v0.3.2)
 
-A short reference for karpathy-wiki v0.3.1. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
+A short reference for karpathy-wiki v0.3.2. It covers setup, the common scenarios, and what the plugin handles automatically versus per-machine configuration.
 
 For installation, see [README.md](README.md). For open work, see
 [TODO.md](TODO.md), [ISSUES.md](ISSUES.md), and [IDEAS.md](IDEAS.md). For
@@ -27,6 +27,27 @@ correct recommendation for that tested workload. The later
 qualified only Grok 4.6 Medium with native ACP image transport. It did not test
 Grok 4.5 with native images, so it does not prove that 4.6 is universally
 superior or isolate every model-by-transport interaction.
+
+## What changed in 0.3.2
+
+- New Grok configurations recommend `grok-4.6` with Medium reasoning effort
+  while retaining the stable `grok_medium` profile name. Explicit Grok 4.5
+  pins remain valid, and no fallback profile is added automatically.
+- Explicitly declared JPEG and PNG evidence is delivered to Grok with the
+  normal ingester text in one `--prompt-json` request using native ACP image
+  content blocks. MIME types come from file signatures, and multiple images
+  retain capture order.
+- Missing, unreadable, unsupported, escaped, or oversized declared images fail
+  before provider launch. A file path or `read_file` result is not treated as
+  proof that Grok received visual evidence. Text-only Grok ingestion continues
+  to use the existing prompt-file transport.
+- Existing user runtime configurations are not rewritten. Opt a named profile
+  into the new recommendation explicitly with:
+
+```bash
+wiki config update-runtime <wiki> \
+  --profile grok_medium --model grok-4.6 --reasoning-effort medium
+```
 
 ## What changed in 0.3.1
 
