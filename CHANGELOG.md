@@ -8,6 +8,10 @@ changes, migrations, and meaningful bug fixes. Active follow-ups live in
 
 ## Unreleased - 2026-08-22
 
+- Parked the semantic-ingest benchmark and scorer workstream. The latest Grok
+  4.6 Medium development run suggests the ingester no longer collapses wiki
+  objects into `concepts/`, while the scorer remains too brittle to use as an
+  acceptance gate without further diagnostics and snapshot rescoring.
 - Made the cold-no-wiki read path explicit without adding a new command:
   unconfigured workspaces go directly to Step F, while the existing capture
   flow remains the sole owner of orphan preservation and routing choice.
@@ -313,6 +317,12 @@ refs:
 ```
 
 **SHIPPED in v2.4 Leg 1 (2026-05-06).** The session-start hook reads `skills/using-karpathy-wiki/SKILL.md` and emits its body wrapped in `<EXTREMELY_IMPORTANT>` tags as `hookSpecificOutput.additionalContext`, so the agent reads the wiki rules in every conversation regardless of whether it chooses to invoke. The legacy `skills/karpathy-wiki/SKILL.md` was split into three focused skills (`using-karpathy-wiki` loader, `karpathy-wiki-capture` for the main agent, `karpathy-wiki-ingest` for the spawned ingester) so subagents and ingesters get only the surface they need. Subagent fork-bomb guard already in place from 0.2.4 prevents the loader from re-firing inside dispatched subagents.
+
+## [0.3.13] - 2026-08-22
+
+### Changed
+
+- Park semantic ingest benchmark workstream
 
 ## [0.3.12] - 2026-08-22
 
