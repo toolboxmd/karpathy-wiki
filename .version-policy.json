@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "bumpPolicy": "every-deliverable",
+  "versionSource": "VERSION",
+  "tagPattern": "v{version}",
+  "tagPolicy": "every-version",
+  "githubReleasePolicy": "manual",
+  "distributionPolicy": "released-tags-only",
+  "publishPolicy": "manual",
+  "releaseBranch": "main",
+  "wipPrefixes": ["wip:"],
+  "mirrors": []
+}
