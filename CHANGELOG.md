@@ -304,6 +304,12 @@ refs:
 
 **SHIPPED in v2.4 Leg 1 (2026-05-06).** The session-start hook reads `skills/using-karpathy-wiki/SKILL.md` and emits its body wrapped in `<EXTREMELY_IMPORTANT>` tags as `hookSpecificOutput.additionalContext`, so the agent reads the wiki rules in every conversation regardless of whether it chooses to invoke. The legacy `skills/karpathy-wiki/SKILL.md` was split into three focused skills (`using-karpathy-wiki` loader, `karpathy-wiki-capture` for the main agent, `karpathy-wiki-ingest` for the spawned ingester) so subagents and ingesters get only the surface they need. Subagent fork-bomb guard already in place from 0.2.4 prevents the loader from re-firing inside dispatched subagents.
 
+## [0.3.8] - 2026-08-22
+
+### Changed
+
+- Archive the v2.2 migration and retire resolved ledger entries
+
 ## [0.3.7] - 2026-08-22
 
 ### Changed

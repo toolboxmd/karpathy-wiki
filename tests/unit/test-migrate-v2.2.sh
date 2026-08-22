@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test: wiki-migrate-v2.2.sh in --dry-run mode lists every mutation it WOULD
+# Test: the historical wiki-migrate-v2.2.sh documents every mutation it WOULD
 # perform, given a fixture wiki that mirrors the v2.2 audit's findings.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-MIGRATE="${REPO_ROOT}/scripts/wiki-migrate-v2.2.sh"
+MIGRATE="${REPO_ROOT}/scripts/historical/wiki-migrate-v2.2.sh"
 
 tmp="$(mktemp -d)"
 trap "rm -rf '${tmp}'" EXIT

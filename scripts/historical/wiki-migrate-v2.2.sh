@@ -1,9 +1,12 @@
 #!/bin/bash
-# wiki-migrate-v2.2.sh -- apply v2.2 hardening to a live wiki.
+# wiki-migrate-v2.2.sh -- historical one-shot v2.2 live-wiki backfill.
+#
+# This script is retained as migration documentation and is not part of the
+# current wiki runtime.
 #
 # Usage:
-#   wiki-migrate-v2.2.sh <wiki_root>            # apply
-#   wiki-migrate-v2.2.sh --dry-run <wiki_root>  # report only
+#   scripts/historical/wiki-migrate-v2.2.sh <wiki_root>            # apply
+#   scripts/historical/wiki-migrate-v2.2.sh --dry-run <wiki_root>  # report only
 #
 # Mutations performed:
 #   1. Remove sources/ category (every file inside).
