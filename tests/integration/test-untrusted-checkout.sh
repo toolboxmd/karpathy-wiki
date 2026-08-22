@@ -70,12 +70,10 @@ set -e
 grep -q 'trusted runtime configuration missing' <<< "${tick_output}" \
   || fail "direct tick trust refusal is not actionable"
 
-(cd "${PROJECT}" && bash "${REPO_ROOT}/hooks/stop")
-[[ ! -e "${WIKI}/.ingest.log" ]] || fail "untrusted Stop hook wrote a checkout log"
 [[ -f "${WIKI}/.wiki-pending/attacker-capture.md" ]] \
   || fail "direct tick claimed the pending capture before trust validation"
 
-echo "PASS: untrusted checkout is loader-only across hooks and direct tick"
+echo "PASS: untrusted checkout is loader-only at SessionStart and direct tick"
 
 # A checkout-owned project pointer must not be able to redirect capture into a
 # different workspace's already-trusted wiki. This is a separate boundary from

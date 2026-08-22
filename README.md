@@ -177,15 +177,18 @@ The skill is split into four focused parts, each loaded only when its moment arr
 - `skills/karpathy-wiki-read/SKILL.md` — main agent, on-demand. Deterministic 6-step orientation ladder for finding wiki coverage of a user question (orient → count candidates → inline-read OR Explore subagent OR web search → cite). Loaded for any user question, per Iron Rule 4.
 - `skills/karpathy-wiki-ingest/SKILL.md` — detached runtime ingester only. Provider-neutral deep orientation, page format, validator contract, manifest protocol, and deterministic completion contract.
 
-Two hooks live at repo level:
+One hook lives at repo level:
 
 - `hooks/session-start` — applies the subagent/ingester guard, injects the loader, resolves the wiki, and starts exactly one short dispatcher tick only when that wiki's local mode is `session_start`. In `scheduled` mode it is loader-only.
-- `hooks/stop` — session-end stub (transcript sweep is post-MVP).
 
 Captures land as tiny markdown files in `<wiki>/.wiki-pending/`. Two flows feed it:
 
 - **Chat-driven capture.** The main agent calls `bin/wiki capture` with a body that encodes durable knowledge from the conversation. The resolver chooses the right wiki for the cwd (project vs main), and the file is written into that wiki's `.wiki-pending/`.
 - **Raw-direct ingest.** A file dropped into `<wiki>/inbox/` is picked up by the next configured scan (SessionStart, LaunchAgent, or `wiki ingest-now`), which writes a `capture_kind: raw-direct` capture pointing at the file's absolute path. The ingester reads the file directly — no fabricated wrapper.
+
+A successful `wiki capture` call completes the foreground handoff. The main
+agent does not wait for `.wiki-pending/` to drain; the scheduler owns queue
+claiming, leases, retries, cooldowns, and failed-work handling.
 
 For Grok image ingestion, a JPEG or PNG named by the capture is sent in the
 same provider request as the normal ingester instructions using native ACP
@@ -353,7 +356,6 @@ best-effort.
 - `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred — observe whether prose-only fix produces reliable behavior first).
 - `allowed-tools` scoping on the four skills (deferred — orthogonal to read-protocol restoration).
 - `wiki doctor` real implementation (smartest-model re-rate, orphan repair, tag-synonym consolidation).
-- Stop-hook gate for turn-closure enforcement (`hooks/stop` is currently a stub).
 - `.ingest.log` → `.ingest.jsonl` migration (dual-artifact pattern, scheduled for v2.5).
 - Test coverage for non-Claude-Code platforms other than the qualified Codex
   plugin host (Cursor / Copilot CLI / OpenCode / Gemini).

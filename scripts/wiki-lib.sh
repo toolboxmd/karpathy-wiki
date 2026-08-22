@@ -64,7 +64,7 @@ _wiki_deref_pointer() {
   # A project-pointer config marks a PROJECT ROOT, not a wiki. Callers that
   # treated the pointer dir as the wiki measured the wrong directory —
   # wiki-status reported no manifest / no git / empty index, and the
-  # session-start/stop hooks ran their drift-scan and drain as silent no-ops.
+  # session-start hook ran its drift-scan and drain as a silent no-op.
   # Parsing mirrors wiki-resolve.sh's project-pointer case (grep + sed, no
   # python dependency). Target validation stays with the caller so a
   # half-built pointer target fails loudly instead of silently re-pointing.

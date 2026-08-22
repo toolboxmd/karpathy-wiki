@@ -6,7 +6,14 @@ This file records shipped behavior, architecture, API contracts, operational
 changes, migrations, and meaningful bug fixes. Active follow-ups live in
 `TODO.md` or `ISSUES.md`; speculative future options live in `IDEAS.md`.
 
-## Unreleased - 2026-08-21
+## Unreleased - 2026-08-22
+
+- Removed the no-op Stop hook and the foreground queue-drain gate. A successful
+  `wiki capture` is now the explicit durable handoff to the scheduler; capture
+  failures remain the foreground agent's responsibility.
+- Removed future Claude `--bare` and tool-flag compatibility from the known
+  problems ledger. It is tracked as a wiki watchpoint until an observable
+  compatibility change occurs.
 
 - Hardened the semantic-ingest benchmark after audit feedback. The first ten
   fixtures are now documented as a development set, source text no longer tells
@@ -303,6 +310,12 @@ refs:
 ```
 
 **SHIPPED in v2.4 Leg 1 (2026-05-06).** The session-start hook reads `skills/using-karpathy-wiki/SKILL.md` and emits its body wrapped in `<EXTREMELY_IMPORTANT>` tags as `hookSpecificOutput.additionalContext`, so the agent reads the wiki rules in every conversation regardless of whether it chooses to invoke. The legacy `skills/karpathy-wiki/SKILL.md` was split into three focused skills (`using-karpathy-wiki` loader, `karpathy-wiki-capture` for the main agent, `karpathy-wiki-ingest` for the spawned ingester) so subagents and ingesters get only the surface they need. Subagent fork-bomb guard already in place from 0.2.4 prevents the loader from re-firing inside dispatched subagents.
+
+## [0.3.10] - 2026-08-22
+
+### Changed
+
+- Remove the obsolete Stop hook gate and reclassify future Claude compatibility as a wiki watchpoint
 
 ## [0.3.9] - 2026-08-22
 

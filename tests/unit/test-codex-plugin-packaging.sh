@@ -47,9 +47,10 @@ if not skill_dirs:
     raise SystemExit("Codex plugin exposes no skills")
 
 hook_map = hooks.get("hooks", {})
-for event in ("SessionStart", "Stop"):
-    if event not in hook_map:
-        raise SystemExit(f"hooks/hooks.json is missing {event}")
+if "SessionStart" not in hook_map:
+    raise SystemExit("hooks/hooks.json is missing SessionStart")
+if "Stop" in hook_map:
+    raise SystemExit("Stop must not gate the scheduler-owned capture queue")
 
 commands = [
     hook.get("command", "")

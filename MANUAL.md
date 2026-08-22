@@ -364,6 +364,5 @@ Highlights:
 
 - **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
 - **`wiki doctor` real implementation**: smartest-model re-rate, orphan repair, tag-synonym consolidation.
-- **Stop-hook gate** for turn-closure enforcement (`hooks/stop` is currently a stub).
 - **`.ingest.log` → `.ingest.jsonl` migration** (dual-artifact pattern, scheduled for v2.5).
 - **Loader-hook coverage outside Claude Code**: Cursor, Copilot CLI, OpenCode, and Gemini. Detached Codex/Grok/Claude provider adapters have deterministic coverage.

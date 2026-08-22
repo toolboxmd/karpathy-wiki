@@ -162,22 +162,18 @@ makes the choice explicit.
 
 Reply to the user FIRST. The user is waiting; capture mechanics are
 not. After your reply emits, write any captures whose triggers fired
-(via `bin/wiki capture`), then run a turn-closure check.
+(via `bin/wiki capture`).
 
-## Turn closure — before you stop
+## Durable handoff before you stop
 
-Before emitting your final assistant message, check:
+Each required `bin/wiki capture` command must return success before the
+foreground turn ends. Once it succeeds, the durable queue belongs to the
+scheduler and detached worker. Do not wait for `.wiki-pending/` to drain and
+do not ingest queued work from the foreground session.
 
-```bash
-ls "<wiki_root>/.wiki-pending/" 2>/dev/null | grep -v '^archive$\|^schema-proposals$' | head -20
-```
-
-If the output lists any `.md` file OR any `.md.processing` file older
-than 10 minutes, the turn is NOT done. Handle the pending captures
-first (rejection-handling, stalled-recovery, missed-capture from
-earlier turns), then re-check, then close the turn.
-
-This is a self-discipline rule until a Stop-hook gate is wired.
+If the capture command fails, handle or surface that error before stopping.
+An empty queue cannot prove that no capture trigger was missed, so queue state
+is not a valid foreground turn-closure gate.
 
 ## What's NOT in this skill
 
