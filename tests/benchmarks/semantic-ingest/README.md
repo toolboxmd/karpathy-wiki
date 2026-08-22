@@ -111,15 +111,16 @@ runs, not in the production baseline.
 Provider mode creates one temporary wiki per selected fixture, writes a
 raw-direct capture, runs the existing dispatcher path, waits for terminal ingest
 events, and writes `baseline.json` plus `baseline.md`. Per-case provider
-diagnostics are copied to `cases/<fixture>/provider-runs/` before the disposable
-wiki is removed. Provider mode runs from an isolated plugin root containing only
-`bin`, `scripts`, and `skills`, so the provider does not receive the benchmark
-spec or gold labels through the normal prompt path. Scoring is heuristic and
-gate-backed. It checks object matches plus deterministic gates for terminal
-status, page validation, manifest validation, index rebuild, current
-`raw/source.md` citation on touched pages, raw manifest references for touched
-pages, `type`/path consistency, idea metadata, fixture-specific category
-control, malformed frontmatter, and unassigned extra content pages.
+diagnostics are copied to neutral `cases/<case-id>/provider-runs/` directories
+before the disposable wiki is removed. Provider mode runs from an isolated
+plugin root containing only `bin`, `scripts`, and `skills`, so the provider
+does not receive the benchmark spec or gold labels through the normal prompt
+path. Scoring is heuristic and gate-backed. It checks object matches plus
+deterministic gates for terminal status, page validation, manifest validation,
+index rebuild, current `raw/source.md` citation on touched pages, raw source
+SHA and manifest SHA integrity, raw manifest references for touched pages,
+`type`/path consistency, idea metadata, fixture-specific category control,
+malformed frontmatter, and unassigned extra content pages.
 Use the result to expose routing failures and candidates for human review, not
 as a final model leaderboard.
 

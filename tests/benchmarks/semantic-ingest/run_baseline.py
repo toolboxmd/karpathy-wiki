@@ -204,6 +204,52 @@ def claim_has_negation(claim: str) -> bool:
     return line_has_negation(claim)
 
 
+def split_claim_variants(claim: str) -> list[str]:
+    parts = re.split(r"\s+\bor\b\s+", claim, flags=re.IGNORECASE)
+    variants = [part.strip(" .;:,") for part in parts if token_set(part)]
+    return variants or [claim]
+
+
+def claim_chunks(text: str) -> list[str]:
+    chunks: list[str] = []
+    paragraph: list[str] = []
+    previous_line = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            if paragraph:
+                chunks.append(" ".join(paragraph))
+                paragraph = []
+            previous_line = ""
+            continue
+        chunks.append(stripped)
+        for sentence in re.split(r"(?<=[.!?])\s+|\s+but\s+|\s+however\s+", stripped):
+            sentence = sentence.strip(" -;:,")
+            if token_set(sentence):
+                chunks.append(sentence)
+        if previous_line:
+            chunks.append(f"{previous_line} {stripped}")
+        paragraph.append(stripped)
+        previous_line = stripped
+    if paragraph:
+        chunks.append(" ".join(paragraph))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        key = chunk.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(chunk)
+    return unique
+
+
+def polarity_compatible(claim: str, chunk: str) -> bool:
+    if claim_has_negation(claim):
+        return line_has_negation(chunk)
+    return not line_has_negation(chunk)
+
+
 def line_covers_claim(claim: str, line: str) -> bool:
     special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
     tokens = token_set(claim)
@@ -221,13 +267,10 @@ def line_covers_claim(claim: str, line: str) -> bool:
 
 
 def claim_covered(claim: str, text: str) -> bool:
-    negated_claim = claim_has_negation(claim)
-    for raw_line in text.splitlines():
-        if raw_line.lstrip().startswith("#"):
+    for chunk in claim_chunks(text):
+        if not polarity_compatible(claim, chunk):
             continue
-        if not negated_claim and line_has_negation(raw_line):
-            continue
-        if line_covers_claim(claim, raw_line):
+        if line_covers_claim(claim, chunk):
             return True
     return False
 
@@ -238,15 +281,12 @@ def claim_violated(claim: str, text: str) -> bool:
     tokens = token_set(claim)
     if not tokens:
         return False
-    negated_claim = claim_has_negation(claim)
-    for raw_line in text.splitlines():
-        if raw_line.lstrip().startswith("#"):
-            continue
-        if not line_covers_claim(claim, raw_line):
-            continue
-        if not negated_claim and line_has_negation(raw_line):
-            continue
-        return True
+    for variant in split_claim_variants(claim):
+        for chunk in claim_chunks(text):
+            if not polarity_compatible(variant, chunk):
+                continue
+            if line_covers_claim(variant, chunk):
+                return True
     return False
 
 
@@ -691,6 +731,32 @@ def evaluate_gates(
     touched = touched_page_paths(fixture, pages)
     manifest = read_manifest(wiki)
     raw_entry = manifest.get(EXPECTED_RAW_SOURCE)
+    raw_path = wiki / EXPECTED_RAW_SOURCE
+    expected_source_sha = sha256_file(fixture / "source.md")
+    raw_exists = raw_path.is_file()
+    raw_sha = sha256_file(raw_path) if raw_exists else None
+    manifest_sha = raw_entry.get("sha256") if isinstance(raw_entry, dict) else None
+    origin = str(raw_entry.get("origin")) if isinstance(raw_entry, dict) else ""
+    raw_integrity_ok = (
+        raw_exists
+        and raw_sha == expected_source_sha
+        and manifest_sha == expected_source_sha
+        and f"/inbox/{fixture.name.split('-', 1)[0]}/source.md" in origin
+    )
+    raw_integrity_detail = "ok"
+    if not raw_integrity_ok:
+        raw_integrity_detail = (
+            f"raw_exists={raw_exists} raw_sha={raw_sha} "
+            f"expected_sha={expected_source_sha} manifest_sha={manifest_sha} "
+            f"origin={origin or '<missing>'}"
+        )
+    gates.append(
+        {
+            "name": "current_raw_source_integrity",
+            "passed": raw_integrity_ok,
+            "detail": raw_integrity_detail,
+        }
+    )
     raw_refs = set()
     if isinstance(raw_entry, dict) and isinstance(raw_entry.get("referenced_by"), list):
         raw_refs = {str(item) for item in raw_entry["referenced_by"]}
@@ -846,13 +912,9 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
     pages = collect_pages(wiki)
     gates = evaluate_gates(fixture, wiki, status, pages, expected)
     object_results = []
-    counts: Counter[str] = Counter()
     assigned_required_pages: dict[str, str] = {}
-    matched_expected_pages: set[str] = set()
     for obj in expected["objects"]:
         page, match_status = match_page(obj, pages)
-        if page is not None and match_status in {"matched", "absorbed", "kind_confusion"}:
-            matched_expected_pages.add(page["path"])
         claims = obj.get("claims", {})
         text = page["text"] if page is not None else ""
         claim_text = strip_frontmatter(text)
@@ -884,7 +946,7 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
             seed = seed_page_texts(fixture)
             new_matching_page = page is not None and page["path"] not in seed and match_status == "matched"
             outcome = "failed" if new_matching_page or must_not_hits else "passed"
-        elif presence == "optional" and (page is None or match_status != "matched"):
+        elif presence == "optional" and page is None:
             outcome = "passed"
         elif match_status == "matched" and len(must_hits) == len(must) and not must_not_hits:
             outcome = "passed"
@@ -895,7 +957,7 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
         if (
             outcome == "passed"
             and page is not None
-            and presence in {"required", "optional"}
+            and presence == "required"
             and kind != "hold"
             and match_status == "matched"
         ):
@@ -904,7 +966,6 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
                 outcome = "under_split"
             else:
                 assigned_required_pages[page["path"]] = str(obj.get("id"))
-        counts[outcome] += 1
         object_results.append(
             {
                 "id": obj.get("id"),
@@ -918,6 +979,35 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
                 "must_not_violations": must_not_hits,
             }
         )
+    assigned_pages = {
+        str(result["matched_page"])
+        for result in object_results
+        if result.get("matched_page")
+        and result.get("outcome") == "passed"
+        and result.get("presence") in {"required", "optional"}
+        and result.get("match_status") == "matched"
+    }
+    seed = seed_page_texts(fixture)
+    for result in object_results:
+        page_path = result.get("matched_page")
+        if not page_path:
+            continue
+        if result.get("presence") == "forbidden":
+            if page_path in seed and not result.get("must_not_violations"):
+                result["outcome"] = "passed"
+            elif page_path not in assigned_pages:
+                result["outcome"] = "failed"
+        elif result.get("presence") == "optional" and result.get("match_status") != "matched":
+            if page_path in assigned_pages:
+                result["outcome"] = "passed"
+            else:
+                result["outcome"] = result.get("match_status") or "failed"
+    counts: Counter[str] = Counter(str(result.get("outcome")) for result in object_results)
+    matched_expected_pages = {
+        str(result["matched_page"])
+        for result in object_results
+        if result.get("matched_page") and result.get("outcome") == "passed"
+    }
     seed = seed_page_texts(fixture)
     unassigned_pages = sorted(
         page["path"]
@@ -961,7 +1051,7 @@ def run_provider_case(
     args: argparse.Namespace,
     env: dict[str, str],
 ) -> dict[str, Any]:
-    case_dir = output_root / "cases" / fixture.name
+    case_dir = output_root / "cases" / fixture.name.split("-", 1)[0]
     if case_dir.exists():
         shutil.rmtree(case_dir)
     case_dir.mkdir(parents=True)
@@ -1012,6 +1102,8 @@ def run_snapshot_case(fixture: Path, output_root: Path, snapshots_root: Path) ->
         shutil.rmtree(case_dir)
     case_dir.mkdir(parents=True)
     source_case_dir = snapshots_root / "cases" / fixture.name
+    if not source_case_dir.is_dir():
+        source_case_dir = snapshots_root / "cases" / fixture.name.split("-", 1)[0]
     wiki = source_case_dir / "wiki-snapshot"
     if not wiki.is_dir():
         raise RuntimeError(f"{fixture.name}: missing wiki snapshot: {wiki}")
@@ -1173,13 +1265,15 @@ def write_fixture_page(path: Path, category: str, title: str, body: str, sources
     )
 
 
-def write_manifest_for_pages(wiki: Path, refs: list[str]) -> None:
+def write_manifest_for_pages(wiki: Path, refs: list[str], case_id: str = "0000") -> None:
+    raw_path = wiki / EXPECTED_RAW_SOURCE
+    raw_sha = sha256_file(raw_path) if raw_path.is_file() else "missing"
     (wiki / ".manifest.json").write_text(
         json.dumps(
             {
                 EXPECTED_RAW_SOURCE: {
-                    "sha256": "selftest",
-                    "origin": "conversation",
+                    "sha256": raw_sha,
+                    "origin": f"/tmp/semantic-ingest-selftest/wiki/inbox/{case_id}/source.md",
                     "copied_at": "2026-08-21T00:00:00Z",
                     "last_ingested": "2026-08-21T00:00:00Z",
                     "referenced_by": refs,
@@ -1193,7 +1287,7 @@ def write_manifest_for_pages(wiki: Path, refs: list[str]) -> None:
     )
 
 
-def init_selftest_wiki(root: Path, source: str = "selftest source") -> Path:
+def init_selftest_wiki(root: Path, source: str = "selftest source", case_id: str = "0000") -> Path:
     wiki = root / "wiki"
     wiki.mkdir(parents=True)
     (wiki / ".wiki-config").write_text("", encoding="utf-8")
@@ -1202,7 +1296,7 @@ def init_selftest_wiki(root: Path, source: str = "selftest source") -> Path:
     (wiki / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
     (wiki / "raw").mkdir()
     (wiki / "raw" / "source.md").write_text(source, encoding="utf-8")
-    write_manifest_for_pages(wiki, [])
+    write_manifest_for_pages(wiki, [], case_id)
     return wiki
 
 
@@ -1239,10 +1333,10 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0001")
         body = "RivetKit writes rivet.lock from rivet.toml. The binary name is rivet. rivet stamp hashes source trees with BLAKE3 and refuses network access. rivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
         write_fixture_page(wiki / "concepts" / "reproducible-builds.md", "concepts", "Reproducible builds", body)
-        write_manifest_for_pages(wiki, ["concepts/reproducible-builds.md"])
+        write_manifest_for_pages(wiki, ["concepts/reproducible-builds.md"], "0001")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1253,11 +1347,11 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0001")
         entity_body = "RivetKit writes rivet.lock from rivet.toml.\nThe binary name is rivet.\nrivet stamp hashes source trees with BLAKE3 and refuses network access.\nrivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
         write_fixture_page(wiki / "entities" / "rivetkit.md", "entities", "RivetKit", entity_body)
         write_fixture_page(wiki / "concepts" / "lockfile-primitive.md", "concepts", "Lockfile primitive", "Extra page that is not assigned to any expected object.")
-        write_manifest_for_pages(wiki, ["entities/rivetkit.md", "concepts/lockfile-primitive.md"])
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md", "concepts/lockfile-primitive.md"], "0001")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1268,10 +1362,10 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0001")
         entity_body = "RivetKit writes rivet.lock from rivet.toml.\nThe binary name is rivet.\nrivet stamp hashes source trees with BLAKE3 and refuses network access.\nrivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
         write_fixture_page(wiki / "entities" / "rivetkit.md", "entities", "RivetKit", entity_body, sources=["raw/other.md"])
-        write_manifest_for_pages(wiki, ["entities/rivetkit.md"])
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md"], "0001")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1282,11 +1376,11 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0001")
         bad = wiki / "entities" / "rivetkit.md"
         bad.parent.mkdir(parents=True, exist_ok=True)
         bad.write_text("---\ntitle: [unterminated\n---\nRivetKit writes rivet.lock from rivet.toml.\n", encoding="utf-8")
-        write_manifest_for_pages(wiki, ["entities/rivetkit.md"])
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md"], "0001")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1297,11 +1391,11 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0003-query-lookup-floor"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0003")
         query_body = "Inspect retry_class, next_attempt, and last_error for a known job id.\nretry_class values are immediate, backoff, and dead.\nUnknown job id can be found by listing failed export jobs by target.\nA 429 on the export callback does not map one-to-one to retry_class."
         write_fixture_page(wiki / "queries" / "ambervault-retry-class-lookup.md", "queries", "Ambervault retry class lookup", query_body)
         write_fixture_page(wiki / "entities" / "ambervault.md", "entities", "Ambervault", "Ambervault export jobs appear in the lookup source.")
-        write_manifest_for_pages(wiki, ["queries/ambervault-retry-class-lookup.md", "entities/ambervault.md"])
+        write_manifest_for_pages(wiki, ["queries/ambervault-retry-class-lookup.md", "entities/ambervault.md"], "0003")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1311,11 +1405,56 @@ def run_self_tests() -> int:
         )
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0003-query-lookup-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0003")
+        query_body = "Inspect retry_class, next_attempt, and last_error for a known job id.\nretry_class values are immediate, backoff, and dead.\nUnknown job id can be found by listing failed export jobs by target.\nA 429 on the export callback does not map one-to-one to retry_class."
+        write_fixture_page(wiki / "queries" / "ambervault-retry-class-lookup.md", "queries", "Ambervault retry class lookup", query_body)
+        write_fixture_page(wiki / "concepts" / "ambervault.md", "concepts", "Ambervault", "Ambervault export jobs appear in the lookup source.")
+        write_manifest_for_pages(wiki, ["queries/ambervault-retry-class-lookup.md", "concepts/ambervault.md"], "0003")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(obj["id"] == "ambervault-product-page" and obj["outcome"] == "failed" for obj in result["objects"]),
+            "sibling Ambervault concept fails lookup floor",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0003-query-lookup-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0003")
+        query_body = "Inspect retry_class, next_attempt, and last_error for a known job id.\nretry_class values are immediate, backoff, and dead.\nUnknown job id can be found by listing failed export jobs by target.\nA 429 on the export callback does not map one-to-one to retry_class."
+        write_fixture_page(wiki / "queries" / "ambervault-retry-class-lookup.md", "queries", "Ambervault retry class lookup", query_body)
+        write_fixture_page(wiki / "entities" / "retry-policy.md", "entities", "Retry policy", "Extra retry policy page.")
+        write_manifest_for_pages(wiki, ["queries/ambervault-retry-class-lookup.md", "entities/retry-policy.md"], "0003")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(gate["name"] == "no_unassigned_content_pages" and not gate["passed"] for gate in result["gates"]),
+            "retry-policy entity dump fails lookup floor",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0004-idea-proposal-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0004")
+        idea_body = "The non-writing check command is a proposal, not a shipped feature.\nTrestle 2.1 has trestle gen and trestle clean only.\nCurrent trestle gen --dry-run prints file lists and skips codegen and typecheck.\nThe proposal writes no files unless --commit is passed."
+        write_fixture_page(wiki / "ideas" / "trestle-shadow-compile.md", "ideas", "Trestle shadow compile", idea_body)
+        write_fixture_page(wiki / "concepts" / "trestle-cli.md", "concepts", "Trestle CLI", "Extra Trestle concept page.")
+        write_manifest_for_pages(wiki, ["ideas/trestle-shadow-compile.md", "concepts/trestle-cli.md"], "0004")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(obj["id"] == "trestle-current-api-docs" and obj["outcome"] != "passed" for obj in result["objects"]),
+            "Trestle concept dump fails idea floor",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0006-mixed-multi-object-note"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0006")
         body = (fixture / "source.md").read_text(encoding="utf-8")
         write_fixture_page(wiki / "concepts" / "graph-databases.md", "concepts", "Graph databases", body)
-        write_manifest_for_pages(wiki, ["concepts/graph-databases.md"])
+        write_manifest_for_pages(wiki, ["concepts/graph-databases.md"], "0006")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1326,7 +1465,7 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0008-low-evidence-hold"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0008")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
@@ -1337,7 +1476,7 @@ def run_self_tests() -> int:
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0009-merge-magnet-seeded"
-        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0009")
         copy_seed(fixture, wiki)
         write_fixture_page(
             wiki / "entities" / "sable-queue.md",
@@ -1351,7 +1490,7 @@ def run_self_tests() -> int:
             + "\nSable Queue default listen address is 127.0.0.1:7420. Queue creation uses --ack-deadline 30s. Dead letters use --dead-letter.\n",
             encoding="utf-8",
         )
-        write_manifest_for_pages(wiki, ["entities/sable-queue.md"])
+        write_manifest_for_pages(wiki, ["entities/sable-queue.md"], "0009")
         result = score_case(fixture, wiki, "completed")
         assert_selftest(
             not result["case_passed"]
