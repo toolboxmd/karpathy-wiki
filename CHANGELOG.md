@@ -8,6 +8,9 @@ changes, migrations, and meaningful bug fixes. Active follow-ups live in
 
 ## Unreleased - 2026-08-22
 
+- Made the cold-no-wiki read path explicit without adding a new command:
+  unconfigured workspaces go directly to Step F, while the existing capture
+  flow remains the sole owner of orphan preservation and routing choice.
 - Removed the no-op Stop hook and the foreground queue-drain gate. A successful
   `wiki capture` is now the explicit durable handoff to the scheduler; capture
   failures remain the foreground agent's responsibility.
@@ -310,6 +313,12 @@ refs:
 ```
 
 **SHIPPED in v2.4 Leg 1 (2026-05-06).** The session-start hook reads `skills/using-karpathy-wiki/SKILL.md` and emits its body wrapped in `<EXTREMELY_IMPORTANT>` tags as `hookSpecificOutput.additionalContext`, so the agent reads the wiki rules in every conversation regardless of whether it chooses to invoke. The legacy `skills/karpathy-wiki/SKILL.md` was split into three focused skills (`using-karpathy-wiki` loader, `karpathy-wiki-capture` for the main agent, `karpathy-wiki-ingest` for the spawned ingester) so subagents and ingesters get only the surface they need. Subagent fork-bomb guard already in place from 0.2.4 prevents the loader from re-firing inside dispatched subagents.
+
+## [0.3.12] - 2026-08-22
+
+### Changed
+
+- Make cold-no-wiki reads use the existing capture-owned routing flow
 
 ## [0.3.11] - 2026-08-22
 

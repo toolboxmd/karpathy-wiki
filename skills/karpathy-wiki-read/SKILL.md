@@ -12,6 +12,16 @@ You loaded this skill because the user asked a question (per Iron Rule 4 in the 
 
 Every step is deterministic. There is no agent judgement at branch points; each branch is gated on a counted or boolean condition.
 
+### Step A.0: Unconfigured workspace
+
+If no wiki root resolves because workspace routing is unconfigured, do not
+silently choose or initialize one. Skip the impossible schema/index reads and
+continue directly at Step F. After answering, follow the required capture flow.
+The capture skill is the sole owner of orphan preservation and the `project`,
+`main`, or `both` question. Do not add a second setup prompt here.
+
+Malformed or incomplete configured routing is an error, not this branch.
+
 ### Step A — Orient
 
 Read these files in order:
@@ -84,9 +94,10 @@ When the subagent returns:
 
 The subagent dispatch maps to the patterns in your `~/.claude/CLAUDE.md` Task Delegation rule: this is a context-isolation case where the main agent needs the synthesis, not the page contents.
 
-### Step F — Cold result (no candidates)
+### Step F — Cold result (no candidates or unconfigured workspace)
 
-Zero signal matches in `_index.md`. The wiki has no coverage for this question.
+Zero signal matches in `_index.md`, or Step A.0 found no configured wiki. The
+wiki has no coverage for this question.
 
 1. Web search for the answer (`WebFetch` or `WebSearch`).
 2. Cite the web source(s) in the answer.

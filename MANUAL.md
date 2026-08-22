@@ -302,7 +302,9 @@ Result: agent has the wiki rules loaded; cwd has no wiki to capture into yet.
 
 Iron Rule 4 fires. Agent loads `karpathy-wiki-read` and runs Steps A-F against the primary wiki in the workspace routing runtime. An unconfigured workspace falls through to the cold-no-wiki case.
 
-The cold-no-wiki case has a known gap: Step F's gap-capture skips because there's nowhere to capture to. It remains deferred in [ISSUES.md](ISSUES.md) under "cold-no-wiki question path".
+Step A.0 sends an unconfigured workspace directly to Step F. After the answer,
+the standard capture flow preserves the body and asks once whether routing
+should be `project`, `main`, or `both`.
 
 ### Scenario 3 — `wiki capture` headless from a fresh directory
 
@@ -362,7 +364,7 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 See [TODO.md](TODO.md), [ISSUES.md](ISSUES.md), and [IDEAS.md](IDEAS.md).
 Highlights:
 
-- **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills; cold-no-wiki question path nudge.
+- **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills.
 - **`wiki doctor` real implementation**: smartest-model re-rate, orphan repair, tag-synonym consolidation.
 - **`.ingest.log` → `.ingest.jsonl` migration** (dual-artifact pattern, scheduled for v2.5).
 - **Loader-hook coverage outside Claude Code**: Cursor, Copilot CLI, OpenCode, and Gemini. Detached Codex/Grok/Claude provider adapters have deterministic coverage.
