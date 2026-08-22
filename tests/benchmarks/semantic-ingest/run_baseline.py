@@ -189,6 +189,13 @@ NEGATION_MARKERS = (
     " not current ",
     " not implemented ",
     " not automatic ",
+    " nobody ",
+    " absent ",
+    " absence ",
+    " lacks ",
+    " lack of ",
+    " missing ",
+    " disabled ",
     " does not exist ",
     " unscheduled ",
     " unspecified ",
@@ -213,8 +220,9 @@ def split_claim_variants(claim: str) -> list[str]:
 def split_chunks(line: str) -> list[str]:
     chunks = []
     clause_boundary = (
-        r"(?<=[.!?])\s+|[;]\s*|,\s*(?:and|but|instead|while|whereas|however)\s+|"
-        r"\s+(?:but|instead|while|whereas|however)\s+"
+        r"(?<=[.!?])\s+|[;]\s*|"
+        r",\s*(?:but|instead|while|whereas|however|though|although|yet)\s+|"
+        r"\s+(?:but|instead|while|whereas|however|though|although|yet)\s+"
     )
     for chunk in re.split(clause_boundary, line, flags=re.IGNORECASE):
         chunk = chunk.strip(" -;:,")
@@ -260,21 +268,77 @@ def origin_matches_case_source(origin: str, case_id: str) -> bool:
     return len(parts) >= 3 and parts[-3:] == ("inbox", case_id, "source.md")
 
 
-def line_covers_claim(claim: str, line: str, *, strict: bool = False) -> bool:
+STRICT_TOKEN_ALIASES = {
+    "automatic": {"automatic", "automatically", "default", "defaults"},
+    "emits": {"emits", "emit", "emitted", "emitting", "emitter", "emitters"},
+    "yields": {"yields", "yield", "yielded", "yielding"},
+    "writes": {"writes", "write", "wrote", "written", "writing"},
+}
+
+
+def token_variants(token: str) -> set[str]:
+    variants = {token}
+    if token.endswith("s") and len(token) > 4:
+        variants.add(token[:-1])
+    else:
+        variants.add(f"{token}s")
+    return variants | STRICT_TOKEN_ALIASES.get(token, set())
+
+
+def contextual_anchor_tokens(claim: str) -> set[str]:
+    anchors: set[str] = set()
+    for match in re.finditer(
+        r"\b(?:in|for every|for)\s+((?:[A-Z][A-Za-z0-9-]*\s*){1,4})(?=[.;:,]|$)",
+        claim,
+    ):
+        anchors.update(token_set(match.group(1)))
+    return anchors
+
+
+def strict_tokens_cover_claim(
+    claim: str,
+    haystack: set[str],
+    *,
+    context_haystack: set[str] | None = None,
+) -> bool:
+    context_haystack = context_haystack or set()
+    contextual = contextual_anchor_tokens(claim)
+    for token in token_set(claim):
+        variants = token_variants(token)
+        if variants & haystack:
+            continue
+        if token in contextual and variants & context_haystack:
+            continue
+        return False
+    return True
+
+
+def special_requirements_met(claim: str, line_lower: str) -> bool:
     special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
+    if special_tokens and not all(token in line_lower for token in special_tokens):
+        return False
+    if "opt-in" in claim.lower() and "opt-in" not in line_lower and "opt in" not in line_lower:
+        return False
+    return True
+
+
+def line_covers_claim(
+    claim: str,
+    line: str,
+    *,
+    strict: bool = False,
+    context_haystack: set[str] | None = None,
+) -> bool:
     tokens = token_set(claim)
     if not tokens:
         return True
     line_lower = line.lower()
     haystack = token_set(line_lower)
     overlap = len(tokens & haystack)
-    if special_tokens and not all(token in line_lower for token in special_tokens):
+    if not special_requirements_met(claim, line_lower):
         return False
     if strict:
-        if len(tokens) <= 6:
-            return overlap == len(tokens)
-        required = max(4, math.ceil(len(tokens) * 0.85))
-        return overlap >= required
+        return strict_tokens_cover_claim(claim, haystack, context_haystack=context_haystack)
     if len(tokens) <= 3:
         return overlap >= max(1, len(tokens) - 1)
     required = max(3, math.ceil(len(tokens) * 0.70))
@@ -296,11 +360,12 @@ def claim_violated(claim: str, text: str) -> bool:
     tokens = token_set(claim)
     if not tokens:
         return False
+    context_haystack = token_set(text)
     for variant in split_claim_variants(claim):
         for chunk in claim_chunks(text):
             if not polarity_compatible(variant, chunk):
                 continue
-            if line_covers_claim(variant, chunk, strict=True):
+            if line_covers_claim(variant, chunk, strict=True, context_haystack=context_haystack):
                 return True
     return False
 
@@ -1338,6 +1403,22 @@ def run_self_tests() -> int:
         failures,
     )
     assert_selftest(
+        claim_covered(
+            "Inspect retry_class, next_attempt, and last_error for a known job id.",
+            "Inspect retry_class, next_attempt, and last_error for a known job id.",
+        ),
+        "claim_covered preserves Oxford-comma lookup lists",
+        failures,
+    )
+    assert_selftest(
+        claim_covered(
+            "Out of scope: docs theme rewrite, other teams, and experimental delta codec.",
+            "Out of scope: rewriting the docs theme, migrating other teams, and enabling Loomferry's experimental delta codec.",
+        ),
+        "claim_covered preserves out-of-scope comma lists",
+        failures,
+    )
+    assert_selftest(
         claim_violated(
             "Foldgate is cluster-wide or the platform standard limiter.",
             "Foldgate is not merely a local helper. Foldgate is cluster-wide and the platform standard limiter.",
@@ -1362,11 +1443,67 @@ def run_self_tests() -> int:
         failures,
     )
     assert_selftest(
+        claim_violated(
+            "trestle check ships in Trestle 2.1.",
+            "Trestle check ships in Trestle 2.1, though dry-run does not typecheck.",
+        ),
+        "claim_violated detects positive clause beside though-negation",
+        failures,
+    )
+    assert_selftest(
         not claim_violated(
             "Dead letters are automatic in Sable Queue.",
             "Sable Queue is a named message broker. Dead letters are opt-in with --dead-letter at create time.",
         ),
         "claim_violated ignores correct compact Sable Queue dead-letter prose",
+        failures,
+    )
+    assert_selftest(
+        claim_violated(
+            "Dead letters are automatic in Sable Queue.",
+            "Dead-letter routing is enabled by default for every Sable Queue.",
+        ),
+        "claim_violated catches Sable Queue default-enabled paraphrase",
+        failures,
+    )
+    assert_selftest(
+        claim_violated(
+            "Dead letters are automatic in Sable Queue.",
+            "Sable Queue is a named message broker. Dead letters are automatic with --dead-letter at create time.",
+        ),
+        "claim_violated uses page context for compact Sable Queue automatic prose",
+        failures,
+    )
+    assert_selftest(
+        not claim_violated(
+            "Dead letters are automatic in Sable Queue.",
+            "Automatic dead letters are absent from Sable Queue.",
+        ),
+        "claim_violated treats absent automatic dead letters as denial",
+        failures,
+    )
+    assert_selftest(
+        not claim_violated(
+            "Pylon Graph emits the portable sorted-triple fixture.",
+            "Pylon Graph describes the portable sorted-triple fixture proposal.",
+        ),
+        "claim_violated requires central emits predicate",
+        failures,
+    )
+    assert_selftest(
+        not claim_violated(
+            "The proposal has a release date or agreed schedule.",
+            "Nobody has agreed to schedule the shadow compile work, and no release version or date is attached.",
+        ),
+        "claim_violated treats nobody-agreed schedule prose as denial",
+        failures,
+    )
+    assert_selftest(
+        not claim_covered(
+            "Dead letters are opt-in with --dead-letter at create time.",
+            "Dead letters are automatic with --dead-letter at create time.",
+        ),
+        "claim_covered requires opt-in phrase for dead-letter opt-in claim",
         failures,
     )
     assert_selftest(
@@ -1539,6 +1676,50 @@ def run_self_tests() -> int:
         )
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0004-idea-proposal-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0004")
+        idea_body = (
+            "The non-writing check command is a proposal, not a shipped feature.\n"
+            "Trestle 2.1 has trestle gen and trestle clean only.\n"
+            "Current trestle gen --dry-run prints file lists and skips codegen and typecheck.\n"
+            "The proposal writes no files unless --commit is passed.\n"
+            "Trestle check ships in Trestle 2.1, though dry-run does not typecheck."
+        )
+        write_fixture_page(wiki / "ideas" / "trestle-shadow-compile.md", "ideas", "Trestle shadow compile", idea_body)
+        write_manifest_for_pages(wiki, ["ideas/trestle-shadow-compile.md"], "0004")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(
+                obj["id"] == "trestle-shadow-compile"
+                and "trestle check ships in Trestle 2.1." in obj["must_not_violations"]
+                for obj in result["objects"]
+            ),
+            "Trestle though-clause violation fails full idea case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0004-idea-proposal-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0004")
+        idea_body = (
+            "The non-writing check command is a proposal, not a shipped feature.\n"
+            "Trestle 2.1 has trestle gen and trestle clean only.\n"
+            "Current trestle gen --dry-run prints file lists and skips codegen and typecheck.\n"
+            "The proposal writes no files unless --commit is passed.\n"
+            "Nobody has agreed to schedule the shadow compile work, and no release version or date is attached."
+        )
+        write_fixture_page(wiki / "ideas" / "trestle-shadow-compile.md", "ideas", "Trestle shadow compile", idea_body)
+        write_manifest_for_pages(wiki, ["ideas/trestle-shadow-compile.md"], "0004")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            result["case_passed"]
+            and all(not obj["must_not_violations"] for obj in result["objects"]),
+            "Trestle nobody-agreed schedule prose passes full idea case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0006-mixed-multi-object-note"
         wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0006")
         body = (fixture / "source.md").read_text(encoding="utf-8")
@@ -1604,6 +1785,52 @@ def run_self_tests() -> int:
             result["case_passed"]
             and all(not obj["must_not_violations"] for obj in result["objects"]),
             "compact correct Sable Queue entity passes merge-magnet case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0009-merge-magnet-seeded"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0009")
+        copy_seed(fixture, wiki)
+        write_fixture_page(
+            wiki / "entities" / "sable-queue.md",
+            "entities",
+            "Sable Queue",
+            "Sable Queue is a named message broker with binary sable. Default listen address is 127.0.0.1:7420. Create a queue with a 30s ack deadline using --ack-deadline. Dead letters are opt-in with --dead-letter at create time. Dead-letter routing is enabled by default for every Sable Queue.",
+        )
+        write_manifest_for_pages(wiki, ["entities/sable-queue.md"], "0009")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(
+                obj["id"] == "sable-queue"
+                and "Dead letters are automatic in Sable Queue." in obj["must_not_violations"]
+                for obj in result["objects"]
+            ),
+            "Sable Queue default-enabled paraphrase fails full merge-magnet case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0009-merge-magnet-seeded"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0009")
+        copy_seed(fixture, wiki)
+        write_fixture_page(
+            wiki / "entities" / "sable-queue.md",
+            "entities",
+            "Sable Queue",
+            "Sable Queue is a named message broker with binary sable. Default listen address is 127.0.0.1:7420. Create a queue with a 30s ack deadline using --ack-deadline. Dead letters are automatic with --dead-letter at create time.",
+        )
+        write_manifest_for_pages(wiki, ["entities/sable-queue.md"], "0009")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(
+                obj["id"] == "sable-queue"
+                and "Dead letters are automatic in Sable Queue." in obj["must_not_violations"]
+                for obj in result["objects"]
+            ),
+            "compact Sable Queue automatic dead-letter prose fails full merge-magnet case",
             failures,
         )
 
