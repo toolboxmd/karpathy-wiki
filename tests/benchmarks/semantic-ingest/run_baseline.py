@@ -210,29 +210,30 @@ def split_claim_variants(claim: str) -> list[str]:
     return variants or [claim]
 
 
+def split_chunks(line: str) -> list[str]:
+    chunks = []
+    for chunk in re.split(r"(?<=[.!?])\s+|[;]\s*|\s+but\s+|\s+however\s+", line):
+        chunk = chunk.strip(" -;:,")
+        if token_set(chunk):
+            chunks.append(chunk)
+    return chunks
+
+
 def claim_chunks(text: str) -> list[str]:
     chunks: list[str] = []
-    paragraph: list[str] = []
     previous_line = ""
     for raw_line in text.splitlines():
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
-            if paragraph:
-                chunks.append(" ".join(paragraph))
-                paragraph = []
             previous_line = ""
             continue
-        chunks.append(stripped)
-        for sentence in re.split(r"(?<=[.!?])\s+|\s+but\s+|\s+however\s+", stripped):
-            sentence = sentence.strip(" -;:,")
-            if token_set(sentence):
-                chunks.append(sentence)
-        if previous_line:
+        line_chunks = split_chunks(stripped)
+        chunks.extend(line_chunks)
+        if len(line_chunks) == 1:
+            chunks.append(stripped)
+        if previous_line and len(line_chunks) == 1 and len(split_chunks(previous_line)) == 1:
             chunks.append(f"{previous_line} {stripped}")
-        paragraph.append(stripped)
         previous_line = stripped
-    if paragraph:
-        chunks.append(" ".join(paragraph))
 
     unique: list[str] = []
     seen: set[str] = set()
@@ -248,6 +249,11 @@ def polarity_compatible(claim: str, chunk: str) -> bool:
     if claim_has_negation(claim):
         return line_has_negation(chunk)
     return not line_has_negation(chunk)
+
+
+def origin_matches_case_source(origin: str, case_id: str) -> bool:
+    parts = Path(origin).parts
+    return len(parts) >= 3 and parts[-3:] == ("inbox", case_id, "source.md")
 
 
 def line_covers_claim(claim: str, line: str) -> bool:
@@ -741,7 +747,7 @@ def evaluate_gates(
         raw_exists
         and raw_sha == expected_source_sha
         and manifest_sha == expected_source_sha
-        and f"/inbox/{fixture.name.split('-', 1)[0]}/source.md" in origin
+        and origin_matches_case_source(origin, fixture.name.split("-", 1)[0])
     )
     raw_integrity_detail = "ok"
     if not raw_integrity_ok:
@@ -1330,6 +1336,37 @@ def run_self_tests() -> int:
         "claim_violated is not masked by unrelated negation",
         failures,
     )
+    assert_selftest(
+        not claim_covered(
+            "The non-writing check command is a proposal, not a shipped feature.",
+            "The non-writing check command is not a proposal, but a shipped feature.",
+        ),
+        "claim_covered rejects reversed mixed-polarity clauses",
+        failures,
+    )
+    assert_selftest(
+        claim_violated(
+            "trestle check ships in Trestle 2.1.",
+            "Trestle check ships in Trestle 2.1; dry-run does not typecheck.",
+        ),
+        "claim_violated detects positive clause beside unrelated negation",
+        failures,
+    )
+    assert_selftest(
+        not claim_violated(
+            "Dead letters are automatic in Sable Queue.",
+            "Sable Queue is a named message broker. Dead letters are opt-in with --dead-letter at create time.",
+        ),
+        "claim_violated ignores correct compact Sable Queue dead-letter prose",
+        failures,
+    )
+    assert_selftest(
+        origin_matches_case_source("/tmp/inbox/0001/source.md", "0001")
+        and not origin_matches_case_source("/tmp/inbox/0001/source.md.bak", "0001")
+        and not origin_matches_case_source("/tmp/inbox/0002/source.md", "0001"),
+        "origin check requires exact neutral case source path",
+        failures,
+    )
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
@@ -1496,6 +1533,25 @@ def run_self_tests() -> int:
             not result["case_passed"]
             and any(obj["id"] == "job-queues-concept-absorption" and obj["outcome"] == "failed" for obj in result["objects"]),
             "seeded concept absorption fails merge-magnet case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0009-merge-magnet-seeded"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0009")
+        copy_seed(fixture, wiki)
+        write_fixture_page(
+            wiki / "entities" / "sable-queue.md",
+            "entities",
+            "Sable Queue",
+            "Sable Queue is a named message broker with binary sable. Default listen address is 127.0.0.1:7420. Create a queue with a 30s ack deadline using --ack-deadline. Dead letters are opt-in with --dead-letter at create time.",
+        )
+        write_manifest_for_pages(wiki, ["entities/sable-queue.md"], "0009")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            result["case_passed"]
+            and all(not obj["must_not_violations"] for obj in result["objects"]),
+            "compact correct Sable Queue entity passes merge-magnet case",
             failures,
         )
 
