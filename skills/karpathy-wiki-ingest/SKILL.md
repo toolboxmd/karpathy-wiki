@@ -298,8 +298,9 @@ A thin-capture rejection is a feature, not a failure.
    should usually create one query page, with supporting terms kept inline or
    linked to existing pages. Create a sibling entity or concept only when the
    source contains enough durable, independently useful claims for that object.
-   A product name or retry-policy term mentioned only to answer the lookup is
-   not by itself enough to create a product encyclopedia or concept essay.
+   A named product, flag, status, error class, or internal term mentioned only
+   to answer the lookup is not by itself enough to create a product
+   encyclopedia or concept essay.
 
    Do not use `concepts/` as the safe fallback. If the source is about a named
    durable tool or service, prefer `entities/`; if it is a future proposal,

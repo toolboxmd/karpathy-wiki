@@ -1,8 +1,8 @@
 # Loomferry publishing
 
-The Loomferry cutover is a bounded project for the Northridge docs team, not a
-standing program. Window: 14 working days starting the first Monday after the
-2.3 tag. Goal: stop publishing the nightly docs bundle as a tarball on the
+The Loomferry cutover is a time-boxed effort for the Northridge docs team, not
+a standing program. Window: 14 working days starting the first Monday after
+the 2.3 tag. Goal: stop publishing the nightly docs bundle as a tarball on the
 fileserver and start publishing through Loomferry's snapshot channel.
 
 In scope: inventory the current scp job, write a Loomferry recipe for the docs
@@ -19,5 +19,5 @@ Loomferry itself is an existing tool, but this note only gives the cutover
 window, scope, exit criteria, and rollback.
 
 Staffing is two people. If the 2.3 tag slips, the window slides by the same
-number of days. There is no phase 2 in this project record. Dual publish is a
-five-day bridge inside the window, not a permanent architecture.
+number of days. There is no phase 2. Dual publish is a five-day bridge inside
+the window, not a permanent architecture.

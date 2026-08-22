@@ -45,6 +45,7 @@ RESERVED_TOP_LEVEL = {
     "log.md",
     "schema.md",
 }
+EXPECTED_RAW_SOURCE = "raw/source.md"
 EXPECTED_KINDS = {"entity", "concept", "query", "idea", "project", "hold"}
 EXPECTED_PRESENCE = {"required", "optional", "forbidden"}
 EXPECTED_REALIZATIONS = {
@@ -174,14 +175,44 @@ def token_set(text: str) -> set[str]:
     return {token for token in tokens if token not in stop}
 
 
-def claim_covered(claim: str, text: str) -> bool:
+NEGATION_MARKERS = (
+    " not ",
+    "n't",
+    " no ",
+    " neither ",
+    " without ",
+    " do not ",
+    " does not ",
+    " did not ",
+    " cannot ",
+    " never ",
+    " not current ",
+    " not implemented ",
+    " not automatic ",
+    " does not exist ",
+    " unscheduled ",
+    " unspecified ",
+)
+
+
+def line_has_negation(line: str) -> bool:
+    normalized = f" {line.lower()} ".replace(" not merely ", " ")
+    return any(marker in normalized for marker in NEGATION_MARKERS)
+
+
+def claim_has_negation(claim: str) -> bool:
+    return line_has_negation(claim)
+
+
+def line_covers_claim(claim: str, line: str) -> bool:
     special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
     tokens = token_set(claim)
     if not tokens:
         return True
-    haystack = token_set(text)
+    line_lower = line.lower()
+    haystack = token_set(line_lower)
     overlap = len(tokens & haystack)
-    if special_tokens and not all(token in text.lower() for token in special_tokens):
+    if special_tokens and not all(token in line_lower for token in special_tokens):
         return False
     if len(tokens) <= 3:
         return overlap >= max(1, len(tokens) - 1)
@@ -189,42 +220,31 @@ def claim_covered(claim: str, text: str) -> bool:
     return overlap >= required
 
 
-def claim_violated(claim: str, text: str) -> bool:
-    """Return true when a forbidden claim is asserted, not merely rejected."""
-
-    special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
-    tokens = token_set(claim)
-    if not tokens:
-        return False
-    negation_markers = (
-        " not ",
-        "n't",
-        " no ",
-        " neither ",
-        " without ",
-        " do not ",
-        " does not ",
-        " did not ",
-        " cannot ",
-        " never ",
-        " not current ",
-        " not implemented ",
-        " not automatic ",
-        " does not exist ",
-        " unscheduled ",
-        " unspecified ",
-    )
+def claim_covered(claim: str, text: str) -> bool:
+    negated_claim = claim_has_negation(claim)
     for raw_line in text.splitlines():
         if raw_line.lstrip().startswith("#"):
             continue
-        line = f" {raw_line.lower()} "
-        overlap = len(tokens & token_set(line))
-        required = max(3, math.ceil(len(tokens) * 0.70))
-        if overlap < required:
+        if not negated_claim and line_has_negation(raw_line):
             continue
-        if special_tokens and not all(token in line for token in special_tokens):
+        if line_covers_claim(claim, raw_line):
+            return True
+    return False
+
+
+def claim_violated(claim: str, text: str) -> bool:
+    """Return true when a forbidden claim is asserted, not merely rejected."""
+
+    tokens = token_set(claim)
+    if not tokens:
+        return False
+    negated_claim = claim_has_negation(claim)
+    for raw_line in text.splitlines():
+        if raw_line.lstrip().startswith("#"):
             continue
-        if any(marker in line for marker in negation_markers):
+        if not line_covers_claim(claim, raw_line):
+            continue
+        if not negated_claim and line_has_negation(raw_line):
             continue
         return True
     return False
@@ -401,12 +421,13 @@ def init_wiki(wiki: Path, workspace: Path, env: dict[str, str], args: argparse.N
 
 def write_capture(fixture: Path, wiki: Path) -> str:
     context = load_yaml(fixture / "context.yaml")
-    source_copy = wiki / "inbox" / fixture.name / "source.md"
+    case_id = fixture.name.split("-", 1)[0]
+    source_copy = wiki / "inbox" / case_id / "source.md"
     source_copy.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(fixture / "source.md", source_copy)
 
     title = context.get("title") or fixture.name
-    capture_name = f"baseline-{fixture.name}.md"
+    capture_name = f"baseline-{case_id}.md"
     capture = wiki / ".wiki-pending" / capture_name
     suggested_pages = context.get("suggested_pages") or []
     body = "\n".join(
@@ -420,7 +441,7 @@ def write_capture(fixture: Path, wiki: Path) -> str:
             f"suggested_pages: {yaml_list([str(item) for item in suggested_pages])}",
             f"captured_at: {yaml_scalar(utc_now())}",
             'captured_by: "semantic-ingest-benchmark"',
-            f"capture_id: {yaml_scalar('cap-' + hashlib.sha1(fixture.name.encode()).hexdigest())}",
+            f"capture_id: {yaml_scalar('cap-' + hashlib.sha1(case_id.encode()).hexdigest())}",
             'promotion_policy: "none"',
             "promotion_decision: null",
             "promotion_id: null",
@@ -485,7 +506,15 @@ def collect_pages(wiki: Path) -> list[dict[str, Any]]:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             fm_raw = extract_frontmatter(text)
-            fm = parse_yaml(fm_raw) if fm_raw is not None else {}
+            fm_error = None
+            try:
+                fm = parse_yaml(fm_raw) if fm_raw is not None else {}
+                if not isinstance(fm, dict):
+                    fm_error = "frontmatter is not a mapping"
+                    fm = {}
+            except Exception as exc:  # validator also reports the exact parse issue.
+                fm_error = str(exc)
+                fm = {}
             rel = str(path.relative_to(wiki))
             pages.append(
                 {
@@ -494,6 +523,7 @@ def collect_pages(wiki: Path) -> list[dict[str, Any]]:
                     "title": str(fm.get("title") or path.stem),
                     "type": fm.get("type"),
                     "frontmatter": fm,
+                    "frontmatter_error": fm_error,
                     "text": text,
                 }
             )
@@ -612,6 +642,20 @@ def manifest_referenced_pages(manifest: dict[str, Any]) -> set[str]:
     return referenced
 
 
+def fixture_categories(fixture: Path, expected: dict[str, Any]) -> set[str]:
+    categories: set[str] = set()
+    for obj in expected.get("objects", []):
+        category = obj.get("category") or {}
+        if isinstance(category.get("required"), str):
+            categories.add(category["required"])
+        for key in ("allowed", "forbidden"):
+            if isinstance(category.get(key), list):
+                categories.update(str(item) for item in category[key])
+    for path in seed_page_texts(fixture):
+        categories.add(path.split("/", 1)[0])
+    return categories
+
+
 def run_check(command: list[str]) -> tuple[bool, str]:
     result = subprocess.run(
         command,
@@ -646,11 +690,14 @@ def evaluate_gates(
 
     touched = touched_page_paths(fixture, pages)
     manifest = read_manifest(wiki)
-    referenced = manifest_referenced_pages(manifest)
-    missing_manifest_refs = sorted(path for path in touched if path not in referenced)
+    raw_entry = manifest.get(EXPECTED_RAW_SOURCE)
+    raw_refs = set()
+    if isinstance(raw_entry, dict) and isinstance(raw_entry.get("referenced_by"), list):
+        raw_refs = {str(item) for item in raw_entry["referenced_by"]}
+    missing_manifest_refs = sorted(path for path in touched if path not in raw_refs)
     gates.append(
         {
-            "name": "manifest_references_touched_pages",
+            "name": "current_raw_manifest_references_touched_pages",
             "passed": not missing_manifest_refs,
             "detail": ", ".join(missing_manifest_refs) or "ok",
         }
@@ -659,13 +706,26 @@ def evaluate_gates(
     missing_sources = sorted(
         page["path"]
         for page in pages
-        if page["path"] in touched and not source_list(page)
+        if page["path"] in touched and EXPECTED_RAW_SOURCE not in source_list(page)
     )
     gates.append(
         {
-            "name": "touched_pages_cite_source",
+            "name": "touched_pages_cite_current_raw_source",
             "passed": not missing_sources,
             "detail": ", ".join(missing_sources) or "ok",
+        }
+    )
+
+    malformed_frontmatter = sorted(
+        f"{page['path']}: {page['frontmatter_error']}"
+        for page in pages
+        if page.get("frontmatter_error")
+    )
+    gates.append(
+        {
+            "name": "frontmatter_parse",
+            "passed": not malformed_frontmatter,
+            "detail": " | ".join(malformed_frontmatter) or "ok",
         }
     )
 
@@ -694,6 +754,22 @@ def evaluate_gates(
             "name": "no_unknown_categories",
             "passed": not unknown_categories,
             "detail": ", ".join(unknown_categories) or "ok",
+        }
+    )
+
+    fixture_allowed = fixture_categories(fixture, expected)
+    unexpected_fixture_categories = sorted(
+        {
+            page["category"]
+            for page in pages
+            if page["category"] in CONTENT_CATEGORIES and page["category"] not in fixture_allowed
+        }
+    )
+    gates.append(
+        {
+            "name": "no_fixture_unexpected_categories",
+            "passed": not unexpected_fixture_categories,
+            "detail": ", ".join(unexpected_fixture_categories) or "ok",
         }
     )
 
@@ -772,8 +848,11 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
     object_results = []
     counts: Counter[str] = Counter()
     assigned_required_pages: dict[str, str] = {}
+    matched_expected_pages: set[str] = set()
     for obj in expected["objects"]:
         page, match_status = match_page(obj, pages)
+        if page is not None and match_status in {"matched", "absorbed", "kind_confusion"}:
+            matched_expected_pages.add(page["path"])
         claims = obj.get("claims", {})
         text = page["text"] if page is not None else ""
         claim_text = strip_frontmatter(text)
@@ -804,10 +883,7 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
         elif presence == "forbidden":
             seed = seed_page_texts(fixture)
             new_matching_page = page is not None and page["path"] not in seed and match_status == "matched"
-            if must_not:
-                outcome = "failed" if must_not_hits else "passed"
-            else:
-                outcome = "failed" if new_matching_page else "passed"
+            outcome = "failed" if new_matching_page or must_not_hits else "passed"
         elif presence == "optional" and (page is None or match_status != "matched"):
             outcome = "passed"
         elif match_status == "matched" and len(must_hits) == len(must) and not must_not_hits:
@@ -842,6 +918,21 @@ def score_case(fixture: Path, wiki: Path, status: str) -> dict[str, Any]:
                 "must_not_violations": must_not_hits,
             }
         )
+    seed = seed_page_texts(fixture)
+    unassigned_pages = sorted(
+        page["path"]
+        for page in pages
+        if page["category"] in CONTENT_CATEGORIES
+        and (page["path"] not in seed or page["path"] in touched_page_paths(fixture, pages))
+        and page["path"] not in matched_expected_pages
+    )
+    gates.append(
+        {
+            "name": "no_unassigned_content_pages",
+            "passed": not unassigned_pages,
+            "detail": ", ".join(unassigned_pages) or "ok",
+        }
+    )
     gate_counts = Counter("passed" if gate["passed"] else "failed" for gate in gates)
     case_passed = (
         gate_counts.get("failed", 0) == 0
@@ -874,7 +965,7 @@ def run_provider_case(
     if case_dir.exists():
         shutil.rmtree(case_dir)
     case_dir.mkdir(parents=True)
-    with tempfile.TemporaryDirectory(prefix=f"semantic-ingest-{fixture.name}-") as temp:
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-case-") as temp:
         workspace = Path(temp) / "workspace"
         wiki = workspace / "wiki"
         workspace.mkdir(parents=True)
@@ -1086,7 +1177,7 @@ def write_manifest_for_pages(wiki: Path, refs: list[str]) -> None:
     (wiki / ".manifest.json").write_text(
         json.dumps(
             {
-                "raw/source.md": {
+                EXPECTED_RAW_SOURCE: {
                     "sha256": "selftest",
                     "origin": "conversation",
                     "copied_at": "2026-08-21T00:00:00Z",
@@ -1132,6 +1223,19 @@ def run_self_tests() -> int:
         "claim_covered rejects flag-only false positives",
         failures,
     )
+    assert_selftest(
+        not claim_covered("The window is in-memory and per process.", "The window is not in-memory; it is persisted."),
+        "claim_covered rejects negated positive claims",
+        failures,
+    )
+    assert_selftest(
+        claim_violated(
+            "Foldgate is cluster-wide or the platform standard limiter.",
+            "Foldgate is not merely a local helper. Foldgate is cluster-wide and the platform standard limiter.",
+        ),
+        "claim_violated is not masked by unrelated negation",
+        failures,
+    )
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
@@ -1144,6 +1248,65 @@ def run_self_tests() -> int:
             not result["case_passed"]
             and any(obj["outcome"] in {"absorbed", "failed"} for obj in result["objects"]),
             "concept dump does not pass entity floor",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        entity_body = "RivetKit writes rivet.lock from rivet.toml.\nThe binary name is rivet.\nrivet stamp hashes source trees with BLAKE3 and refuses network access.\nrivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
+        write_fixture_page(wiki / "entities" / "rivetkit.md", "entities", "RivetKit", entity_body)
+        write_fixture_page(wiki / "concepts" / "lockfile-primitive.md", "concepts", "Lockfile primitive", "Extra page that is not assigned to any expected object.")
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md", "concepts/lockfile-primitive.md"])
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(gate["name"] == "no_unassigned_content_pages" and not gate["passed"] for gate in result["gates"]),
+            "extra unassigned content page fails",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        entity_body = "RivetKit writes rivet.lock from rivet.toml.\nThe binary name is rivet.\nrivet stamp hashes source trees with BLAKE3 and refuses network access.\nrivet fetch is separate and requires RIVET_ALLOW_FETCH=1."
+        write_fixture_page(wiki / "entities" / "rivetkit.md", "entities", "RivetKit", entity_body, sources=["raw/other.md"])
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md"])
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(gate["name"] == "touched_pages_cite_current_raw_source" and not gate["passed"] for gate in result["gates"]),
+            "stale or wrong sources fail current raw source gate",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0001-entity-tool-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        bad = wiki / "entities" / "rivetkit.md"
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.write_text("---\ntitle: [unterminated\n---\nRivetKit writes rivet.lock from rivet.toml.\n", encoding="utf-8")
+        write_manifest_for_pages(wiki, ["entities/rivetkit.md"])
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(gate["name"] == "frontmatter_parse" and not gate["passed"] for gate in result["gates"]),
+            "malformed frontmatter fails as a gate",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0003-query-lookup-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"))
+        query_body = "Inspect retry_class, next_attempt, and last_error for a known job id.\nretry_class values are immediate, backoff, and dead.\nUnknown job id can be found by listing failed export jobs by target.\nA 429 on the export callback does not map one-to-one to retry_class."
+        write_fixture_page(wiki / "queries" / "ambervault-retry-class-lookup.md", "queries", "Ambervault retry class lookup", query_body)
+        write_fixture_page(wiki / "entities" / "ambervault.md", "entities", "Ambervault", "Ambervault export jobs appear in the lookup source.")
+        write_manifest_for_pages(wiki, ["queries/ambervault-retry-class-lookup.md", "entities/ambervault.md"])
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(obj["id"] == "ambervault-product-page" and obj["outcome"] == "failed" for obj in result["objects"]),
+            "sibling Ambervault entity fails lookup floor",
             failures,
         )
 

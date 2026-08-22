@@ -5,8 +5,8 @@ objects:
     kind: entity
     presence: required
     category:
-      allowed: [entities, concepts]
-      forbidden: [queries]
+      required: entities
+      forbidden: [concepts, queries]
     realization: page_or_update
     match:
       names: ["Foldgate", "process-local rate window", "Foldgate allow"]

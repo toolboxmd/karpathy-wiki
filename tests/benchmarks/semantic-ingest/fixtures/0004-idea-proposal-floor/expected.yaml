@@ -23,10 +23,10 @@ objects:
         - "Current dry-run already typechecks generated bindings."
   - id: trestle-current-api-docs
     kind: entity
-    presence: forbidden
+    presence: optional
     category:
       required: entities
-    realization: must_not_page
+    realization: page_or_update
     match:
       names: ["Trestle CLI", "trestle check"]
       identifiers: ["trestle-cli", "trestle-check"]

@@ -21,5 +21,5 @@ fence.
 
 Harborline and Foldgate both implement variants, but this note does not list
 their product commands, configuration, release versions, or ownership. The
-reusable mechanism described here is the compare-and-set rule, the mutex
-contrast, and the fact that expiry alone is not safety.
+important part here is the compare-and-set rule, the mutex contrast, and the
+fact that expiry alone is not safety.

@@ -9,9 +9,11 @@ projects, and low-evidence notes into `concepts/`.
 
 The first ten fixtures are a development set, not a held-out leaderboard. They
 were originally synthetic and later de-instructed after audit feedback removed
-source text that directly told the model which category to choose. Use them to
-harden the scorer and detect known regressions. Add a separate frozen challenge
-pack before making broad model leaderboard claims.
+source text that directly told the model which category to choose. Provider
+runs also use neutral case-only capture and evidence paths so fixture slugs do
+not leak category answers through filenames. Use this set to harden the scorer
+and detect known regressions. Add a separate frozen challenge pack before
+making broad model leaderboard claims.
 
 ## Fixture Shape
 
@@ -34,8 +36,9 @@ fixtures/<case-id>-<slug>/
 Gold labels must be written from `source.md` plus `context.yaml`, not from a
 live wiki page that the current ingester already produced.
 Do not put category-routing answers in `source.md`, such as "this is an
-entity", "create a query", or "do not file this under concepts". The expected
-object belongs in `expected.yaml`; the source should contain domain evidence.
+entity", "create a query", "comparison concept", "project record", or "do not
+file this under concepts". The expected object belongs in `expected.yaml`; the
+source should contain domain evidence.
 
 ## MVP Cases
 
@@ -113,8 +116,10 @@ wiki is removed. Provider mode runs from an isolated plugin root containing only
 `bin`, `scripts`, and `skills`, so the provider does not receive the benchmark
 spec or gold labels through the normal prompt path. Scoring is heuristic and
 gate-backed. It checks object matches plus deterministic gates for terminal
-status, page validation, manifest validation, index rebuild, source citation on
-touched pages, `type`/path consistency, idea metadata, and unknown categories.
+status, page validation, manifest validation, index rebuild, current
+`raw/source.md` citation on touched pages, raw manifest references for touched
+pages, `type`/path consistency, idea metadata, fixture-specific category
+control, malformed frontmatter, and unassigned extra content pages.
 Use the result to expose routing failures and candidates for human review, not
 as a final model leaderboard.
 

@@ -34,3 +34,16 @@ objects:
       must: []
       must_not: []
     reason: "The source is a durable lookup answer."
+  - id: ambervault-product-page
+    kind: entity
+    presence: forbidden
+    category:
+      required: entities
+    realization: must_not_page
+    match:
+      names: ["Ambervault", "Ambervault export"]
+      identifiers: ["ambervault"]
+    claims:
+      must: []
+      must_not: []
+    reason: "Ambervault is mentioned only to scope the lookup answer."

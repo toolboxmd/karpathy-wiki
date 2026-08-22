@@ -1,8 +1,7 @@
 # Job queues
 
-The wiki already has a broad concept page on job queues covering retries,
-visibility timeouts, and dead letters as generic patterns. This source is
-about Sable Queue, a specific broker.
+General job-queue notes cover retries, visibility timeouts, and dead letters
+as broad patterns. These notes are about Sable Queue, a specific broker.
 
 Sable Queue is a named message broker. Binary: `sable`. Default listen:
 `127.0.0.1:7420`. A queue is created with
@@ -13,9 +12,9 @@ visible again.
 
 Sable Queue does not implement delayed retry classes. A failed ack just
 restores visibility. Dead letters are not automatic. You get a dead letter only
-if you pass `--dead-letter <other-queue>` at create time. That is product
-behavior, not the generic job-queue concept.
+if you pass `--dead-letter <other-queue>` at create time. That behavior is
+specific to Sable Queue.
 
 A phrase like "this is just our job queue" in passing conversation is too broad
-for these product-specific details. Default port, ack deadline, and opt-in dead
-letter behavior are Sable Queue facts, while generic job-queue systems vary.
+for these details. Default port, ack deadline, and opt-in dead letter behavior
+are Sable Queue facts, while generic job-queue systems vary.
