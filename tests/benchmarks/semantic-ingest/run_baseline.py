@@ -212,7 +212,11 @@ def split_claim_variants(claim: str) -> list[str]:
 
 def split_chunks(line: str) -> list[str]:
     chunks = []
-    for chunk in re.split(r"(?<=[.!?])\s+|[;]\s*|\s+but\s+|\s+however\s+", line):
+    clause_boundary = (
+        r"(?<=[.!?])\s+|[;]\s*|,\s*(?:and|but|instead|while|whereas|however)\s+|"
+        r"\s+(?:but|instead|while|whereas|however)\s+"
+    )
+    for chunk in re.split(clause_boundary, line, flags=re.IGNORECASE):
         chunk = chunk.strip(" -;:,")
         if token_set(chunk):
             chunks.append(chunk)
@@ -256,7 +260,7 @@ def origin_matches_case_source(origin: str, case_id: str) -> bool:
     return len(parts) >= 3 and parts[-3:] == ("inbox", case_id, "source.md")
 
 
-def line_covers_claim(claim: str, line: str) -> bool:
+def line_covers_claim(claim: str, line: str, *, strict: bool = False) -> bool:
     special_tokens = re.findall(r"--[A-Za-z0-9-]+|[0-9][0-9.:]*[0-9]", claim.lower())
     tokens = token_set(claim)
     if not tokens:
@@ -266,6 +270,11 @@ def line_covers_claim(claim: str, line: str) -> bool:
     overlap = len(tokens & haystack)
     if special_tokens and not all(token in line_lower for token in special_tokens):
         return False
+    if strict:
+        if len(tokens) <= 6:
+            return overlap == len(tokens)
+        required = max(4, math.ceil(len(tokens) * 0.85))
+        return overlap >= required
     if len(tokens) <= 3:
         return overlap >= max(1, len(tokens) - 1)
     required = max(3, math.ceil(len(tokens) * 0.70))
@@ -291,7 +300,7 @@ def claim_violated(claim: str, text: str) -> bool:
         for chunk in claim_chunks(text):
             if not polarity_compatible(variant, chunk):
                 continue
-            if line_covers_claim(variant, chunk):
+            if line_covers_claim(variant, chunk, strict=True):
                 return True
     return False
 
@@ -1339,7 +1348,7 @@ def run_self_tests() -> int:
     assert_selftest(
         not claim_covered(
             "The non-writing check command is a proposal, not a shipped feature.",
-            "The non-writing check command is not a proposal, but a shipped feature.",
+            "The non-writing check command is not a proposal, instead a shipped feature.",
         ),
         "claim_covered rejects reversed mixed-polarity clauses",
         failures,
@@ -1347,7 +1356,7 @@ def run_self_tests() -> int:
     assert_selftest(
         claim_violated(
             "trestle check ships in Trestle 2.1.",
-            "Trestle check ships in Trestle 2.1; dry-run does not typecheck.",
+            "Trestle check ships in Trestle 2.1, while dry-run does not typecheck.",
         ),
         "claim_violated detects positive clause beside unrelated negation",
         failures,
@@ -1487,6 +1496,49 @@ def run_self_tests() -> int:
         )
 
     with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0004-idea-proposal-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0004")
+        idea_body = (
+            "The non-writing check command is not a proposal, instead a shipped feature.\n"
+            "Trestle 2.1 has trestle gen and trestle clean only.\n"
+            "Current trestle gen --dry-run prints file lists and skips codegen and typecheck.\n"
+            "The proposal writes no files unless --commit is passed."
+        )
+        write_fixture_page(wiki / "ideas" / "trestle-shadow-compile.md", "ideas", "Trestle shadow compile", idea_body)
+        write_manifest_for_pages(wiki, ["ideas/trestle-shadow-compile.md"], "0004")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(obj["id"] == "trestle-shadow-compile" and obj["outcome"] == "failed" for obj in result["objects"]),
+            "reversed Trestle proposal polarity fails full idea case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
+        fixture = BENCH_ROOT / "fixtures" / "0004-idea-proposal-floor"
+        wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0004")
+        idea_body = (
+            "The non-writing check command is a proposal, not a shipped feature.\n"
+            "Trestle 2.1 has trestle gen and trestle clean only.\n"
+            "Current trestle gen --dry-run prints file lists and skips codegen and typecheck.\n"
+            "The proposal writes no files unless --commit is passed.\n"
+            "Trestle check ships in Trestle 2.1, while dry-run does not typecheck."
+        )
+        write_fixture_page(wiki / "ideas" / "trestle-shadow-compile.md", "ideas", "Trestle shadow compile", idea_body)
+        write_manifest_for_pages(wiki, ["ideas/trestle-shadow-compile.md"], "0004")
+        result = score_case(fixture, wiki, "completed")
+        assert_selftest(
+            not result["case_passed"]
+            and any(
+                obj["id"] == "trestle-shadow-compile"
+                and "trestle check ships in Trestle 2.1." in obj["must_not_violations"]
+                for obj in result["objects"]
+            ),
+            "Trestle shipped-clause violation fails full idea case",
+            failures,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="semantic-ingest-selftest-") as temp:
         fixture = BENCH_ROOT / "fixtures" / "0006-mixed-multi-object-note"
         wiki = init_selftest_wiki(Path(temp), (fixture / "source.md").read_text(encoding="utf-8"), "0006")
         body = (fixture / "source.md").read_text(encoding="utf-8")
@@ -1544,7 +1596,7 @@ def run_self_tests() -> int:
             wiki / "entities" / "sable-queue.md",
             "entities",
             "Sable Queue",
-            "Sable Queue is a named message broker with binary sable. Default listen address is 127.0.0.1:7420. Create a queue with a 30s ack deadline using --ack-deadline. Dead letters are opt-in with --dead-letter at create time.",
+            "Sable Queue is a named message broker with binary sable. Default listen address is 127.0.0.1:7420. Create a queue with a 30s ack deadline using --ack-deadline. In Sable Queue, dead letters are opt-in with --dead-letter at create time.",
         )
         write_manifest_for_pages(wiki, ["entities/sable-queue.md"], "0009")
         result = score_case(fixture, wiki, "completed")
