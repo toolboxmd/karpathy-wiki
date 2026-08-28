@@ -1706,6 +1706,24 @@ def _rewrite_job_payload(path: Path) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _is_entity_rewrite_job(root: Path, path: Path) -> bool:
+    job = _rewrite_job_payload(path)
+    if job is None:
+        return False
+    kind = str(job.get("kind") or "").strip().lower()
+    if kind == "entity":
+        return True
+    if kind == "cluster":
+        return False
+    pages = job.get("pages") or []
+    if isinstance(pages, list):
+        for rel in pages:
+            if str(rel).lstrip("/").startswith("entities/"):
+                return True
+    token = str(job.get("object") or path.stem).strip()
+    return bool(token and (root / "entities" / f"{token}.md").is_file())
+
+
 def _is_cluster_rewrite_job(root: Path, path: Path) -> bool:
     job = _rewrite_job_payload(path)
     if job is None:
@@ -1733,7 +1751,10 @@ def _rewrite_jobs(root: Path) -> list[Path]:
     return sorted(
         path
         for path in folder.glob("*.md")
-        if path.is_file() and _is_cluster_rewrite_job(root, path)
+        if path.is_file()
+        and (
+            _is_cluster_rewrite_job(root, path) or _is_entity_rewrite_job(root, path)
+        )
     )
 
 

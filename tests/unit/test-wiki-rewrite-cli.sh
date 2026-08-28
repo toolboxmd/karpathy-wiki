@@ -248,23 +248,23 @@ test_failed_helper_does_not_stamp_completed() {
   echo "PASS: test_failed_helper_does_not_stamp_completed"
 }
 
-test_entity_job_is_not_drained() {
+test_entity_job_is_drained() {
   local wiki="${TESTDIR}/cli-entity"
   make_wiki "${wiki}" true
   write_entity_job "${wiki}"
-  local before out
+  local before after
   before="$(cd "${wiki}" && git rev-list --count HEAD)"
-  out="$(WIKI_REWRITE_TEST=1 bash "${WIKI_BIN}" rewrite "${wiki}" 2>&1)" \
-    || fail "entity-only rewrite should be a no-op: ${out}"
-  grep -q 'nothing pending' <<< "${out}" || fail "entity-only rewrite did not skip, got: ${out}"
-  [[ -f "${wiki}/.wiki-pending/rewrite-jobs/carl-weische.md" ]] \
-    || fail "entity job was consumed"
-  grep -q 'Catalog body' "${wiki}/entities/carl-weische.md" \
-    || fail "entity page was rewritten"
-  local after
+  WIKI_REWRITE_TEST=1 bash "${WIKI_BIN}" rewrite "${wiki}" >/dev/null \
+    || fail "entity-only rewrite should drain"
+  [[ ! -f "${wiki}/.wiki-pending/rewrite-jobs/carl-weische.md" ]] \
+    || fail "entity job was not archived"
+  grep -qv 'Catalog body' "${wiki}/entities/carl-weische.md" \
+    || fail "entity page is still a catalog"
+  grep -qi 'entity map\|playbook' "${wiki}/entities/carl-weische.md" \
+    || fail "entity page is not a map"
   after="$(cd "${wiki}" && git rev-list --count HEAD)"
-  [[ "${after}" -eq "${before}" ]] || fail "entity skip created a commit"
-  echo "PASS: test_entity_job_is_not_drained"
+  [[ "${after}" -eq $((before + 1)) ]] || fail "entity rewrite did not commit once"
+  echo "PASS: test_entity_job_is_drained"
 }
 
 test_dispatch_spawns_rewrite_worker_lease() {
@@ -371,7 +371,7 @@ test_skill_and_help
 test_test_mode_compacts_two_siblings_and_commits_once
 test_doctor_test_mode_does_not_compact
 test_failed_helper_does_not_stamp_completed
-test_entity_job_is_not_drained
+test_entity_job_is_drained
 test_dispatch_spawns_rewrite_worker_lease
 test_second_rewrite_skips_while_leased
 test_tick_starts_rewrite_when_idle

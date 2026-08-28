@@ -364,7 +364,7 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 | `karpathy-wiki-read` | Main agent on-demand (when ANY user question fires per Iron Rule 4) | Read protocol: 6-step ladder, cite contract |
 | `karpathy-wiki-ingest` | Detached provider-neutral runtime ingester only | Page writing: 9-step deep orientation, role guardrail, validator, manifest, deterministic completion |
 | `karpathy-wiki-doctor` | Detached census worker (`wiki doctor` or cadence enqueue) | Tests, schema/tags/frontmatter/related, rewrite jobs; no body rewrite |
-| `karpathy-wiki-rewrite` | Detached rewriter (`wiki rewrite` or scheduler tick) | One cluster job: compact siblings onto a playbook, leave pointer files |
+| `karpathy-wiki-rewrite` | Detached rewriter (`wiki rewrite` or scheduler tick) | One job: cluster compact onto a playbook, or catalog entity into an entity map |
 
 ## What's deferred
 

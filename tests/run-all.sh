@@ -68,6 +68,7 @@ group_for_test() {
     unit/test-ingest-run-events.sh|\
     unit/test-wiki-doctor-cli.sh|\
     unit/test-wiki-rewrite-cli.sh|\
+    unit/test-wiki-entity-rewrite.sh|\
     unit/test-no-direct-spawn-path.sh|\
     unit/test-session-start-claude-code-hookeventname.sh|\
     unit/test-session-start-grok-plugin-root.sh|\
