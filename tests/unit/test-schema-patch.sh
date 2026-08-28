@@ -145,10 +145,106 @@ PY
   teardown
 }
 
+objects_section() {
+  awk '/^## Objects/{f=1;next} /^## /{f=0} f' "${TESTDIR}/wiki/schema.md"
+}
+
+contract_section() {
+  awk '/^## Page contract/{f=1;next} /^## /{f=0} f' "${TESTDIR}/wiki/schema.md"
+}
+
+test_junk_and_spray_tags_are_not_objects() {
+  setup
+  local i
+  for i in $(seq 1 12); do
+    write_page "${TESTDIR}/wiki/concepts/home-${i}.md" \
+      "Homepage layout not merged first ${i}" "[cro, homepage]"
+  done
+  python3 "${BUILD}" --wiki-root "${TESTDIR}/wiki" --rebuild-all
+  python3 "${PATCH}" --wiki-root "${TESTDIR}/wiki"
+  objects="$(objects_section)"
+  printf '%s\n' "${objects}" | grep -q '^- homepage$' \
+    || { echo "FAIL: homepage missing from Objects"; echo "${objects}"; teardown; exit 1; }
+  for junk in not merged first cro; do
+    if printf '%s\n' "${objects}" | grep -q "^- ${junk}$"; then
+      echo "FAIL: ${junk} must not be an Object"; echo "${objects}"; teardown; exit 1
+    fi
+  done
+  grep -q '^- cro$' "${TESTDIR}/wiki/schema.md" \
+    || { echo "FAIL: cro missing from Tag Taxonomy"; teardown; exit 1; }
+  echo "PASS: test_junk_and_spray_tags_are_not_objects"
+  teardown
+}
+
+test_stale_object_is_pruned() {
+  setup
+  local i
+  for i in 1 2 3 4 5 6; do
+    write_page "${TESTDIR}/wiki/concepts/home-${i}.md" \
+      "Homepage layout ${i}" "[homepage]"
+  done
+  python3 "${BUILD}" --wiki-root "${TESTDIR}/wiki" --rebuild-all
+  python3 "${PATCH}" --wiki-root "${TESTDIR}/wiki"
+  objects="$(objects_section)"
+  printf '%s\n' "${objects}" | grep -q '^- homepage$' \
+    || { echo "FAIL: homepage missing before prune"; echo "${objects}"; teardown; exit 1; }
+  rm -f "${TESTDIR}/wiki/concepts/home-4.md" \
+    "${TESTDIR}/wiki/concepts/home-5.md" \
+    "${TESTDIR}/wiki/concepts/home-6.md"
+  python3 "${BUILD}" --wiki-root "${TESTDIR}/wiki" --rebuild-all
+  python3 "${PATCH}" --wiki-root "${TESTDIR}/wiki"
+  objects="$(objects_section)"
+  if printf '%s\n' "${objects}" | grep -q '^- homepage$'; then
+    echo "FAIL: homepage still listed after dropping under 6 hits"; echo "${objects}"; teardown; exit 1
+  fi
+  echo "PASS: test_stale_object_is_pruned"
+  teardown
+}
+
+test_annotated_contract_key_is_not_duplicated() {
+  setup
+  python3 - "${TESTDIR}/wiki/schema.md" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+needle = "If it names none, write only the plugin defaults.\n"
+insert = needle + "Extra frontmatter keys:\n- evidence_class: internal_shop_fact | customer_evidence | external_expert_claim | ingest_operations\n- source_owner: the person or corpus, only when evidence_class is external_expert_claim\n"
+if needle not in text:
+    raise SystemExit("seed schema missing page-contract prose")
+path.write_text(text.replace(needle, insert, 1))
+PY
+  write_page "${TESTDIR}/wiki/concepts/home.md" "Homepage" "[homepage]"
+  python3 - "${TESTDIR}/wiki/concepts/home.md" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+text = text.replace("tags: [homepage]\n", "tags: [homepage]\nevidence_class: external_expert_claim\nsource_owner: Carl Weische\n")
+path.write_text(text)
+PY
+  python3 "${PATCH}" --wiki-root "${TESTDIR}/wiki"
+  contract="$(contract_section)"
+  count="$(printf '%s\n' "${contract}" | grep -c '^- evidence_class' || true)"
+  if [[ "${count}" -ne 1 ]]; then
+    echo "FAIL: evidence_class bullet listed ${count} times in Page contract"; echo "${contract}"; teardown; exit 1
+  fi
+  printf '%s\n' "${contract}" | grep -q '^- evidence_class:' \
+    || { echo "FAIL: annotated evidence_class bullet lost"; echo "${contract}"; teardown; exit 1; }
+  if printf '%s\n' "${contract}" | grep -qx -- '- evidence_class'; then
+    echo "FAIL: bare evidence_class duplicate appended"; echo "${contract}"; teardown; exit 1
+  fi
+  echo "PASS: test_annotated_contract_key_is_not_duplicated"
+  teardown
+}
+
 test_six_homepage_pages_add_object_and_tags
 test_five_pages_do_not_add_object
 test_categories_refresh_from_directories
 test_brand_leading_title_still_learns_homepage
 test_tag_only_cluster_learns_object
 test_extra_frontmatter_key_enters_page_contract
+test_junk_and_spray_tags_are_not_objects
+test_stale_object_is_pruned
+test_annotated_contract_key_is_not_duplicated
 echo "ALL PASS"

@@ -23,7 +23,11 @@ Learned object tokens, one per line after the heading. Init seeds:
 ```
 
 A token belongs here when the walked index has 6 or more hits on it (title,
-one-liner, or tag list). Brand and source-owner names are not objects.
+one-liner, or tag list) and it is a knowledge-object name. Drop function
+words, pointer-stub language (`merged`, `pointer`), brand and source-owner
+names, and tags that sit on more than half of that index unless the token
+also has 6+ title or one-liner hits. Tokens that fall back under 6 hits are
+pruned; the list is the current qualifying set, not a historical union.
 
 ## Tag Taxonomy (bounded)
 Tags the wiki has accepted. One spelling per idea. Init starts empty of
