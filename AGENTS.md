@@ -18,6 +18,9 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Naturbiss proof restored `9fb75e3a`, ran doctor 0.8.1
+  plus shop-surface rewrites; queue stayed paused. Report in
+  `docs/proof/2026-08-28-naturbiss-doctor-rewriter.md`.
 - 2026-08-28: Entity rewrite jobs turn a catalog entity into a map.
   Identity sources stay; claim sources move onto playbooks that cite
   them. Unique source paths are not dropped except duplicates.
