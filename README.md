@@ -25,7 +25,7 @@ No global `wiki` command is required.
 - `wiki tick` — run one short, bounded dispatcher pass (also usable from an external scheduler).
 - `wiki init-main` — bootstrap `~/.wiki-pointer` (interactive).
 - `wiki doctor` — detached census: tests, schema/tags/frontmatter/related, rewrite jobs. Does not rewrite page bodies.
-- `wiki rewrite` — detached drain of one cluster rewrite job in the shared ingest pool. Compacts siblings onto a playbook; pointer files stay off the index.
+- `wiki rewrite` — detached drain of one rewrite job in the shared ingest pool. Cluster jobs compact onto a playbook; entity jobs become maps and move claim sources onto playbooks.
 
 The plugin handles both a main knowledge base and per-project wikis via the
 `wiki-resolve.sh` resolver. The default main-wiki location is `~/wiki/`, but

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Complete one cluster rewrite job: compact, archive job, commit.
+# Complete one rewrite job: cluster compact or entity map, archive, commit.
 #
 # Required environment: WIKI_ROOT, WIKI_RUN_ID, WIKI_REWRITE_JOB
 
@@ -22,9 +22,18 @@ wiki="$(cd "${wiki}" 2>/dev/null && pwd -P)" || {
 }
 [[ -f "${job}" ]] || { echo >&2 "wiki complete-rewrite: job missing: ${job}"; exit 1; }
 
-token="$(
-  python3 "${SCRIPT_DIR}/wiki-compact-cluster.py" --wiki-root "${wiki}" --job-file "${job}"
+kind="$(
+  python3 "${SCRIPT_DIR}/wiki-compact-cluster.py" --wiki-root "${wiki}" --job-file "${job}" --job-kind
 )" || exit 1
+if [[ "${kind}" == "entity" ]]; then
+  token="$(
+    python3 "${SCRIPT_DIR}/wiki-rewrite-entity.py" --wiki-root "${wiki}" --job-file "${job}"
+  )" || exit 1
+else
+  token="$(
+    python3 "${SCRIPT_DIR}/wiki-compact-cluster.py" --wiki-root "${wiki}" --job-file "${job}"
+  )" || exit 1
+fi
 
 archive_dir="${wiki}/.wiki-pending/archive/rewrite-jobs"
 mkdir -p "${archive_dir}" "${wiki}/.locks"

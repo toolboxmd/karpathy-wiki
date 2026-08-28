@@ -18,6 +18,9 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Entity rewrite jobs turn a catalog entity into a map.
+  Identity sources stay; claim sources move onto playbooks that cite
+  them. Unique source paths are not dropped except duplicates.
 - 2026-08-28: Detached `wiki rewrite` drains one cluster job in the
   shared ingest pool. Two siblings compact onto a playbook; pointer
   files stay off the index. Doctor still does not rewrite bodies.

@@ -50,7 +50,11 @@ def is_cluster_job(job: dict, wiki: Path) -> bool:
     return True
 
 
-def next_cluster_job(wiki: Path) -> Path | None:
+def classify_job(job: dict, wiki: Path) -> str:
+    return "cluster" if is_cluster_job(job, wiki) else "entity"
+
+
+def next_rewrite_job(wiki: Path) -> Path | None:
     folder = wiki / ".wiki-pending" / "rewrite-jobs"
     if not folder.is_dir():
         return None
@@ -59,8 +63,7 @@ def next_cluster_job(wiki: Path) -> Path | None:
             job = _job(path)
         except (ValueError, OSError):
             continue
-        if is_cluster_job(job, wiki):
-            return path
+        return path
     return None
 
 
@@ -187,19 +190,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wiki-root", required=True)
     parser.add_argument("--job-file")
     parser.add_argument("--next-job", action="store_true")
+    parser.add_argument("--job-kind", action="store_true")
     args = parser.parse_args(argv)
     wiki = Path(args.wiki_root)
     if not wiki.is_dir():
         print("wiki-compact-cluster: wiki missing", file=sys.stderr)
         return 2
     if args.next_job:
-        nxt = next_cluster_job(wiki)
+        nxt = next_rewrite_job(wiki)
         if nxt is not None:
             print(nxt)
         return 0
     if not args.job_file:
         print("wiki-compact-cluster: --job-file is required", file=sys.stderr)
         return 2
+    if args.job_kind:
+        try:
+            print(classify_job(_job(Path(args.job_file)), wiki))
+        except (ValueError, OSError) as exc:
+            print(f"wiki-compact-cluster: {exc}", file=sys.stderr)
+            return 1
+        return 0
     job = Path(args.job_file)
     if not job.is_file():
         print("wiki-compact-cluster: wiki or job missing", file=sys.stderr)
