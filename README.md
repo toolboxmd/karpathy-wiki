@@ -25,6 +25,7 @@ No global `wiki` command is required.
 - `wiki tick` — run one short, bounded dispatcher pass (also usable from an external scheduler).
 - `wiki init-main` — bootstrap `~/.wiki-pointer` (interactive).
 - `wiki doctor` — detached census: tests, schema/tags/frontmatter/related, rewrite jobs. Does not rewrite page bodies.
+- `wiki rewrite` — detached drain of one cluster rewrite job in the shared ingest pool. Compacts siblings onto a playbook; pointer files stay off the index.
 
 The plugin handles both a main knowledge base and per-project wikis via the
 `wiki-resolve.sh` resolver. The default main-wiki location is `~/wiki/`, but
@@ -358,7 +359,7 @@ best-effort.
   provider authentication, and macOS-specific containment tests.
 - `bin/wiki orient` CLI shortcut for the read protocol's Step A (deferred — observe whether prose-only fix produces reliable behavior first).
 - `allowed-tools` scoping on the four skills (deferred — orthogonal to read-protocol restoration).
-- Doctor quality re-rate and playbook rewriter (census ships; body compact is later).
+- Doctor quality re-rate after playbook compact (census and cluster rewriter ship; quality re-rate is later).
 - `.ingest.log` → `.ingest.jsonl` migration (dual-artifact pattern, scheduled for v2.5).
 - Test coverage for non-Claude-Code platforms other than the qualified Codex
   plugin host (Cursor / Copilot CLI / OpenCode / Gemini).

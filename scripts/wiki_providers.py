@@ -104,7 +104,8 @@ def _safe_run_id(run_id: str) -> str:
 
 
 def _prompt(root: Path, capture: Path, plugin_root: Path) -> str:
-    if os.environ.get("WIKI_JOB") == "doctor":
+    job = os.environ.get("WIKI_JOB")
+    if job == "doctor":
         skill = plugin_root / "skills" / "karpathy-wiki-doctor" / "SKILL.md"
         helper = plugin_root / "scripts" / "wiki-complete-doctor.sh"
         return (
@@ -115,6 +116,21 @@ def _prompt(root: Path, capture: Path, plugin_root: Path) -> str:
             "Perform the census yourself. Do not launch or delegate to another model "
             "or agentic CLI, and do not rewrite page bodies.\n"
             f"After the census succeeds, close it only with: bash {shlex.quote(str(helper))}\n"
+            "Exit non-zero if deterministic completion fails.\n"
+        )
+    if job == "rewrite":
+        skill = plugin_root / "skills" / "karpathy-wiki-rewrite" / "SKILL.md"
+        helper = plugin_root / "scripts" / "wiki-complete-rewrite.sh"
+        rewrite_job = os.environ.get("WIKI_REWRITE_JOB", str(capture))
+        return (
+            "You are the selected detached wiki rewriter for one rewrite job.\n"
+            f"Wiki root: {root}\n"
+            f"Rewrite job: {rewrite_job}\n"
+            f"Plugin root: {plugin_root}\n"
+            f"Load and follow this rewrite skill exactly: {skill}\n"
+            "Perform the rewrite yourself. Do not launch or delegate to another model "
+            "or agentic CLI, and do not substitute the configured model or effort.\n"
+            f"After the rewrite succeeds, close it only with: bash {shlex.quote(str(helper))}\n"
             "Exit non-zero if deterministic completion fails.\n"
         )
     skill = plugin_root / "skills" / "karpathy-wiki-ingest" / "SKILL.md"

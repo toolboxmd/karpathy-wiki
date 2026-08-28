@@ -18,6 +18,9 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Detached `wiki rewrite` drains one cluster job in the
+  shared ingest pool. Two siblings compact onto a playbook; pointer
+  files stay off the index. Doctor still does not rewrite bodies.
 - 2026-08-28: Doctor complete fails closed unless every 6+ cluster and
   catalog entity has a rewrite job.
 - 2026-08-28: Doctor topical-keep helper strips provenance and spray
@@ -28,8 +31,6 @@ replacement, and not a work-package manifest.
   drops function words, pointer-stub language, and corpus-wide tags, and
   prunes tokens that fall under 6 hits. Annotated Page-contract keys are
   not duplicated.
-- 2026-08-27: Schema-proposals retired. Ingest logs schema-drift; doctor
-  archives leftover files. Init no longer creates that inbox.
 
 
 ## If you are an AI agent

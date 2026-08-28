@@ -9,15 +9,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CAPTURE="${REPO_ROOT}/skills/karpathy-wiki-capture/SKILL.md"
 INGEST="${REPO_ROOT}/skills/karpathy-wiki-ingest/SKILL.md"
 DOCTOR="${REPO_ROOT}/skills/karpathy-wiki-doctor/SKILL.md"
+REWRITE="${REPO_ROOT}/skills/karpathy-wiki-rewrite/SKILL.md"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ -f "${CAPTURE}" ]] || fail "capture skill missing"
 [[ -f "${INGEST}" ]] || fail "ingest skill missing"
 [[ -f "${DOCTOR}" ]] || fail "doctor skill missing"
+[[ -f "${REWRITE}" ]] || fail "rewrite skill missing"
 
 # Use python to find any contiguous 80-word substring that appears in both files.
-python3 - "${CAPTURE}" "${INGEST}" "${DOCTOR}" <<'PYEOF'
+python3 - "${CAPTURE}" "${INGEST}" "${DOCTOR}" "${REWRITE}" <<'PYEOF'
 import sys, re
 
 def words(path):
@@ -42,6 +44,9 @@ pairs = (
     ("capture", sys.argv[1], "ingest", sys.argv[2]),
     ("capture", sys.argv[1], "doctor", sys.argv[3]),
     ("ingest", sys.argv[2], "doctor", sys.argv[3]),
+    ("capture", sys.argv[1], "rewrite", sys.argv[4]),
+    ("ingest", sys.argv[2], "rewrite", sys.argv[4]),
+    ("doctor", sys.argv[3], "rewrite", sys.argv[4]),
 )
 for label_a, path_a, label_b, path_b in pairs:
     found = overlap(path_a, path_b)

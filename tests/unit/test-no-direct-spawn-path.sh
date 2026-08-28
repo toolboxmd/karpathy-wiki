@@ -24,6 +24,8 @@ grep -Fq '"karpathy-wiki-ingest"' "${REPO_ROOT}/scripts/wiki_providers.py" \
   || fail "provider adapters do not point workers at the current ingest skill"
 grep -Fq '"karpathy-wiki-doctor"' "${REPO_ROOT}/scripts/wiki_providers.py" \
   || fail "provider adapters do not point doctor workers at the doctor skill"
+grep -Fq '"karpathy-wiki-rewrite"' "${REPO_ROOT}/scripts/wiki_providers.py" \
+  || fail "provider adapters do not point rewrite workers at the rewrite skill"
 grep -Fq '"SKILL.md"' "${REPO_ROOT}/scripts/wiki_providers.py" \
   || fail "provider adapters do not load the ingest skill entrypoint"
 

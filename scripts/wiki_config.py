@@ -48,6 +48,16 @@ RECOMMENDED_DOCTOR_FALLBACK = {
     "model": "gpt-5.6-codex",
     "reasoning_effort": "max",
 }
+RECOMMENDED_REWRITE_DEFAULT = {
+    "provider": "grok",
+    "model": RECOMMENDED_GROK_MODEL,
+    "reasoning_effort": "high",
+}
+RECOMMENDED_REWRITE_FALLBACK = {
+    "provider": "codex",
+    "model": "gpt-5.6-codex",
+    "reasoning_effort": "xhigh",
+}
 
 INGEST_DEFAULTS: dict[str, Any] = {
     "schedule_interval_seconds": 60,
@@ -936,6 +946,7 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
     )
 
     doctor_normalized = _normalize_doctor(local.get("doctor"), normalized_profiles)
+    rewrite_normalized = _normalize_rewrite(local.get("rewrite"), normalized_profiles)
 
     normalized_trust = local.get("trust", {})
     return {
@@ -963,6 +974,7 @@ def validate_runtime_config(wiki: str | Path) -> dict[str, Any]:
             "profiles": normalized_profiles,
         },
         "doctor": doctor_normalized,
+        "rewrite": rewrite_normalized,
         "routing": {
             "fork_to_main": _bool_value(
                 routing, "fork_to_main", "routing.fork_to_main", default=False
@@ -1028,6 +1040,44 @@ def _normalize_doctor(
     }
 
 
+def _normalize_rewrite(
+    rewrite: Any, profiles: dict[str, dict[str, Any]]
+) -> dict[str, str | None]:
+    if rewrite is None:
+        return {"default_profile": None, "fallback_profile": None}
+    if not isinstance(rewrite, dict):
+        raise _invalid("rewrite", "must be a TOML table")
+    default_profile = rewrite.get("default_profile")
+    fallback_profile = rewrite.get("fallback_profile")
+    if default_profile is None and fallback_profile is None:
+        return {"default_profile": None, "fallback_profile": None}
+    if default_profile is not None:
+        if not isinstance(default_profile, str) or not default_profile.strip():
+            raise _invalid("rewrite.default_profile", "must be a non-empty string")
+        if default_profile not in profiles:
+            raise _invalid(
+                "rewrite.default_profile",
+                f"references undeclared profile {default_profile!r}",
+            )
+    if fallback_profile is not None:
+        if not isinstance(fallback_profile, str) or not fallback_profile.strip():
+            raise _invalid("rewrite.fallback_profile", "must be a non-empty string")
+        if fallback_profile not in profiles:
+            raise _invalid(
+                "rewrite.fallback_profile",
+                f"references undeclared profile {fallback_profile!r}",
+            )
+        if fallback_profile == default_profile:
+            raise _invalid(
+                "rewrite.fallback_profile",
+                "must differ from rewrite.default_profile",
+            )
+    return {
+        "default_profile": default_profile,
+        "fallback_profile": fallback_profile,
+    }
+
+
 def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1059,11 +1109,12 @@ def _add_or_reuse_profile(
     effort: str,
     executable: str,
     max_processes: int,
+    suffix: str = "doctor",
 ) -> str:
     candidates = [
         _profile_name(provider, effort),
         _profile_name(provider, effort, model),
-        f"{_profile_name(provider, effort, model)}_doctor",
+        f"{_profile_name(provider, effort, model)}_{suffix}",
     ]
     for name in candidates:
         existing = profiles.get(name)
@@ -1083,7 +1134,7 @@ def _add_or_reuse_profile(
             and existing.get("reasoning_effort") == effort
         ):
             return name
-    raise ConfigError("unable to allocate a unique doctor profile name")
+    raise ConfigError(f"unable to allocate a unique {suffix} profile name")
 
 
 def _ensure_doctor_profiles(
@@ -1115,6 +1166,42 @@ def _ensure_doctor_profiles(
             effort=RECOMMENDED_DOCTOR_FALLBACK["reasoning_effort"],
             executable=codex_executable,
             max_processes=max_processes,
+        )
+    return {"default_profile": default_name, "fallback_profile": fallback_name}
+
+
+def _ensure_rewrite_profiles(
+    profiles: dict[str, dict[str, Any]], max_processes: int
+) -> dict[str, str]:
+    grok_executable = _executable_for_provider(profiles, "grok")
+    codex_executable = _executable_for_provider(profiles, "codex")
+    default_name = _add_or_reuse_profile(
+        profiles,
+        provider=RECOMMENDED_REWRITE_DEFAULT["provider"],
+        model=RECOMMENDED_REWRITE_DEFAULT["model"],
+        effort=RECOMMENDED_REWRITE_DEFAULT["reasoning_effort"],
+        executable=grok_executable,
+        max_processes=max_processes,
+        suffix="rewrite",
+    )
+    fallback_name = _add_or_reuse_profile(
+        profiles,
+        provider=RECOMMENDED_REWRITE_FALLBACK["provider"],
+        model=RECOMMENDED_REWRITE_FALLBACK["model"],
+        effort=RECOMMENDED_REWRITE_FALLBACK["reasoning_effort"],
+        executable=codex_executable,
+        max_processes=max_processes,
+        suffix="rewrite",
+    )
+    if fallback_name == default_name:
+        fallback_name = _add_or_reuse_profile(
+            profiles,
+            provider=RECOMMENDED_REWRITE_FALLBACK["provider"],
+            model=RECOMMENDED_REWRITE_FALLBACK["model"],
+            effort=RECOMMENDED_REWRITE_FALLBACK["reasoning_effort"],
+            executable=codex_executable,
+            max_processes=max_processes,
+            suffix="rewrite",
         )
     return {"default_profile": default_name, "fallback_profile": fallback_name}
 
@@ -1189,6 +1276,20 @@ def _render_runtime_config(
         if doctor.get("fallback_profile"):
             lines.append(
                 f"fallback_profile = {_toml_string(doctor['fallback_profile'])}"
+            )
+
+    rewrite = config.get("rewrite") or {}
+    if rewrite.get("default_profile"):
+        lines.extend(
+            [
+                "",
+                "[rewrite]",
+                f"default_profile = {_toml_string(rewrite['default_profile'])}",
+            ]
+        )
+        if rewrite.get("fallback_profile"):
+            lines.append(
+                f"fallback_profile = {_toml_string(rewrite['fallback_profile'])}"
             )
 
     lines.extend(
@@ -1480,6 +1581,7 @@ def _build_runtime_for_write(
         }
 
     doctor_profiles = _ensure_doctor_profiles(profiles, args.max_processes)
+    rewrite_profiles = _ensure_rewrite_profiles(profiles, args.max_processes)
 
     legacy_settings = structural.get("settings", {})
     legacy_auto_commit = (
@@ -1508,6 +1610,7 @@ def _build_runtime_for_write(
             "profiles": profiles,
         },
         "doctor": doctor_profiles,
+        "rewrite": rewrite_profiles,
         # Retained only as inert compatibility data in the ingest runtime.
         # Workspace routing is selected exclusively through route-set.
         "routing": {"fork_to_main": legacy_fork},

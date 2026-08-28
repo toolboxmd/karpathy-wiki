@@ -4,6 +4,7 @@
 # Subcommands:
 #   wiki status         — health report
 #   wiki doctor         — detached census (schema/tags/frontmatter/related)
+#   wiki rewrite        — detached rewrite-job drain (one playbook compact)
 #
 # All other interactions are via natural language to the agent.
 
@@ -47,6 +48,9 @@ case "${sub}" in
     ;;
   doctor)
     bash "${REPO_ROOT}/scripts/wiki-doctor.sh" "$@"
+    ;;
+  rewrite)
+    bash "${REPO_ROOT}/scripts/wiki-rewrite.sh" "$@"
     ;;
   capture)
     # bin/wiki capture — single entry point for chat-driven captures.
@@ -423,6 +427,7 @@ subcommands:
   init-main      Bootstrap ~/.wiki-pointer (interactive)
   status         Read-only health report
   doctor         Detached census; patches schema/tags/frontmatter/related
+  rewrite        Detached rewrite-job drain (one playbook compact)
   help           This message
 EOF
     ;;

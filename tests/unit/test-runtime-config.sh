@@ -697,7 +697,16 @@ assert d["ingest"]["profiles"]["codex_max"]["model"] == "gpt-5.6-codex"
 assert d["ingest"]["profiles"]["codex_max"]["reasoning_effort"] == "max"
 assert d["ingest"]["default_profile"] == "grok_medium"
 assert d["ingest"]["profiles"]["grok_medium"]["reasoning_effort"] == "medium"
-' <<< "${output}" || fail "new runtime did not include doctor grok xhigh + codex max"
+assert d["rewrite"]["default_profile"] == "grok_high"
+assert d["rewrite"]["fallback_profile"] == "codex_xhigh"
+assert d["ingest"]["profiles"]["grok_high"]["provider"] == "grok"
+assert d["ingest"]["profiles"]["grok_high"]["model"] == "grok-4.6"
+assert d["ingest"]["profiles"]["grok_high"]["reasoning_effort"] == "high"
+assert d["ingest"]["profiles"]["codex_xhigh"]["provider"] == "codex"
+assert d["ingest"]["profiles"]["codex_xhigh"]["model"] == "gpt-5.6-codex"
+assert d["ingest"]["profiles"]["codex_xhigh"]["reasoning_effort"] == "xhigh"
+assert d.get("ingest", {}).get("fallback_profile") in (None, "sonnet_low")
+' <<< "${output}" || fail "new runtime did not include doctor grok xhigh + rewrite grok high"
 
   local existing="${TESTDIR}/doctor-existing"
   make_wiki "${existing}"
@@ -709,8 +718,12 @@ import json, sys
 d = json.load(sys.stdin)
 assert d["doctor"]["default_profile"] is None
 assert d["doctor"]["fallback_profile"] is None
+assert d["rewrite"]["default_profile"] is None
+assert d["rewrite"]["fallback_profile"] is None
 assert "grok_xhigh" not in d["ingest"]["profiles"]
-' <<< "${output}" || fail "existing runtime was rewritten with doctor profiles"
+assert "grok_high" not in d["ingest"]["profiles"]
+assert d["ingest"]["fallback_profile"] == "sonnet_low"
+' <<< "${output}" || fail "existing runtime was rewritten with doctor or rewrite profiles"
 
   cat > "${existing}/.wiki-config.local" <<'EOF'
 [ingest]
@@ -734,6 +747,28 @@ EOF
   [[ "${rc}" -ne 0 ]] || fail "unknown doctor.default_profile should fail"
   grep -Fq "doctor.default_profile" <<< "${error}" \
     || fail "unknown doctor profile was not actionable: ${error}"
+
+  cat > "${existing}/.wiki-config.local" <<'EOF'
+[ingest]
+dispatch_mode = "scheduled"
+max_processes = 1
+default_profile = "p"
+[ingest.profiles.p]
+provider = "codex"
+model = "test"
+reasoning_effort = "low"
+[rewrite]
+default_profile = "missing"
+[settings]
+auto_commit = false
+EOF
+  set +e
+  error="$(python3 "${CONFIG}" validate --wiki "${existing}" 2>&1)"
+  rc=$?
+  set -e
+  [[ "${rc}" -ne 0 ]] || fail "unknown rewrite.default_profile should fail"
+  grep -Fq "rewrite.default_profile" <<< "${error}" \
+    || fail "unknown rewrite profile was not actionable: ${error}"
   echo "PASS: test_new_runtime_includes_doctor_profiles_without_rewriting_existing"
 }
 

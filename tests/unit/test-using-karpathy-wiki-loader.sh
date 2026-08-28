@@ -23,6 +23,7 @@ awk '/^---/ {n++; if (n==2) {flag=1; next}} flag && n==2 {print}' "${LOADER}" | 
 grep -q 'karpathy-wiki-capture' "${LOADER}" || fail "no pointer to karpathy-wiki-capture"
 grep -q 'karpathy-wiki-ingest' "${LOADER}" || fail "no pointer to karpathy-wiki-ingest"
 grep -q 'karpathy-wiki-doctor' "${LOADER}" || fail "no pointer to karpathy-wiki-doctor"
+grep -q 'karpathy-wiki-rewrite' "${LOADER}" || fail "no pointer to karpathy-wiki-rewrite"
 if grep -qi 'wiki is broken\|broken wiki' "${LOADER}"; then
   fail "loader must not announce a broken wiki"
 fi

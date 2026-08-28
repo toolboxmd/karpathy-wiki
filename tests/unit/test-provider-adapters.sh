@@ -260,6 +260,29 @@ assert invocation.environment.get("WIKI_JOB") == "doctor"
 PY
 unset WIKI_JOB
 
+REWRITE_CAPTURE="${WIKI}/.wiki-pending/rewrite-jobs/cart.md"
+mkdir -p "${WIKI}/.wiki-pending/rewrite-jobs"
+printf 'job\n' > "${REWRITE_CAPTURE}"
+python3 - "${WIKI}" "${PLUGIN}" "${REWRITE_CAPTURE}" <<'PY' || fail "rewrite prompt must load the rewrite skill"
+import os
+import pathlib
+import sys
+from wiki_providers import build_provider_invocation
+
+wiki, plugin, capture = (pathlib.Path(value).resolve() for value in sys.argv[1:])
+os.environ["WIKI_JOB"] = "rewrite"
+invocation = build_provider_invocation(
+    {"provider": "grok", "executable": "/Applications/Grok Build/grok", "model": "grok-4.6", "reasoning_effort": "high"},
+    wiki, capture, "rew-test", plugin,
+)
+assert "karpathy-wiki-rewrite" in invocation.prompt
+assert "wiki-complete-rewrite.sh" in invocation.prompt
+assert "karpathy-wiki-ingest" not in invocation.prompt
+assert "karpathy-wiki-doctor" not in invocation.prompt
+assert invocation.environment.get("WIKI_JOB") == "rewrite"
+PY
+unset WIKI_JOB
+
 python3 - <<'PY' || fail "unknown provider should fail"
 from pathlib import Path
 from wiki_providers import ProviderError, build_provider_invocation
