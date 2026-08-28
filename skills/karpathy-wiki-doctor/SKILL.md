@@ -45,9 +45,11 @@ Exit non-zero if that helper fails.
 8. You may fix frontmatter, tags, and related lists. Do not remove `sources:`
    entries. Related-list repair of broken links is allowed. Leave page
    synthesis unchanged.
-9. If a cluster needs a playbook body, write one rewrite job under
-   `<wiki>/.wiki-pending/rewrite-jobs/` naming the object token and pages.
-   Do not execute the rewrite.
+9. Run `wiki-required-rewrite-jobs.py --wiki-root "${WIKI_ROOT}"`. Write one
+   rewrite job under `<wiki>/.wiki-pending/rewrite-jobs/<token>.md` for every
+   listed token (6+ object clusters and catalog entities). Name the object
+   token and pages. Do not execute the rewrite. Complete fails if any required
+   job file is missing.
 10. Complete through the helper.
 
 ## Done

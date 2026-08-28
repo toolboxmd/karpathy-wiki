@@ -118,6 +118,7 @@ group_for_test() {
     unit/test-reserved-set-update.sh|\
     unit/test-schema-patch.sh|\
     unit/test-topical-keep-tags.sh|\
+    unit/test-required-rewrite-jobs.sh|\
     unit/test-validate-code-block-skip.sh|\
     unit/test-validate-deleted-categories.sh|\
     unit/test-validate-page.sh|\
