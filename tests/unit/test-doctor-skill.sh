@@ -20,6 +20,10 @@ grep -q 'wiki-schema-patch.py' "${SKILL}" || fail "skill must patch schema.md"
 grep -q 'wiki-validate-page.py' "${SKILL}" || fail "skill must name page validation script"
 grep -q 'wiki-lint-tags.py' "${SKILL}" || fail "skill must name tag lint script"
 grep -q 'wiki-collapse-tag.py' "${SKILL}" || fail "skill must collapse tags via helper"
+grep -q 'wiki-topical-keep-tags.py' "${SKILL}" \
+  || fail "skill must run topical-keep helper"
+grep -q 'Do not remove `sources:`' "${SKILL}" \
+  || fail "skill must forbid removing sources"
 grep -q 'same-idea' "${SKILL}" || fail "skill must use same-idea collapse"
 grep -q 'not the same idea' "${SKILL}" \
   || fail "skill must skip false synonym pairs"

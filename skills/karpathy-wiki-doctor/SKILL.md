@@ -36,14 +36,19 @@ Exit non-zero if that helper fails.
    One spelling remains on pages, indexes, and Tag Taxonomy. Do not write
    `==` synonym pairs. Do not treat historical `==` schema lines as the
    collapse plan.
-6. Patch schema.md via `wiki-schema-patch.py` (objects, tags, categories,
+6. Run `wiki-topical-keep-tags.py --wiki-root "${WIKI_ROOT}"`. It strips
+   provenance tags (`external-opinion`, `external-expert`) and untopical
+   spray tags. It does not edit `sources:` or page bodies. Keep an owner
+   tag when `evidence_class` is `external_expert_claim`.
+7. Patch schema.md via `wiki-schema-patch.py` (objects, tags, categories,
    extra Page contract keys).
-7. You may fix frontmatter, tags, and related lists. Leave page synthesis
-   unchanged.
-8. If a cluster needs a playbook body, write one rewrite job under
+8. You may fix frontmatter, tags, and related lists. Do not remove `sources:`
+   entries. Related-list repair of broken links is allowed. Leave page
+   synthesis unchanged.
+9. If a cluster needs a playbook body, write one rewrite job under
    `<wiki>/.wiki-pending/rewrite-jobs/` naming the object token and pages.
    Do not execute the rewrite.
-9. Complete through the helper.
+10. Complete through the helper.
 
 ## Done
 
