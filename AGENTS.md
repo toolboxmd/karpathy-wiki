@@ -18,6 +18,8 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Doctor topical-keep helper strips provenance and spray
+  tags and must not remove `sources:`.
 - 2026-08-28: Category indexes and discovery counts omit pages tagged
   `pointer`; the files stay on disk.
 - 2026-08-28: Schema Objects are knowledge-object names only. Schema-patch
@@ -28,9 +30,6 @@ replacement, and not a work-package manifest.
   archives leftover files. Init no longer creates that inbox.
 - 2026-08-27: karpathy-wiki is a three-host plugin in marketplace
   toolboxmd (Codex, Claude Code, Grok Build). It is not the marketplace.
-- 2026-08-27: Ingest must-augment clustered objects, silently patches
-  schema.md, and a detached `wiki doctor` census runs on schema cadence
-  (Grok xhigh, Codex max fallback). Doctor does not rewrite page bodies.
 
 
 ## If you are an AI agent
