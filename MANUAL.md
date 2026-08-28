@@ -347,6 +347,7 @@ wiki scheduler ... # install, enable, disable, inspect, or tick the global Launc
 wiki tick ...      # one bounded dispatcher pass
 wiki init-main     # bootstrap ~/.wiki-pointer (interactive)
 wiki doctor        # detached census: schema/tags/frontmatter/related; rewrite jobs only
+wiki rewrite       # detached cluster compact: one rewrite job, pointers stay off the index
 wiki help          # show usage
 ```
 
@@ -354,7 +355,7 @@ wiki help          # show usage
 
 Technical failures consume a bounded attempt. A provider rate limit does not. When `max_attempts` is exhausted, the capture moves to `<wiki>/.wiki-pending/failed/` for explicit inspection instead of hot-looping forever. Fix the source/configuration, move the capture back to `.wiki-pending/`, then run `wiki tick <wiki> --source manual`.
 
-## Skill architecture (5 skills)
+## Skill architecture (6 skills)
 
 | Skill | Loaded by | Purpose |
 |---|---|---|
@@ -363,6 +364,7 @@ Technical failures consume a bounded attempt. A provider rate limit does not. Wh
 | `karpathy-wiki-read` | Main agent on-demand (when ANY user question fires per Iron Rule 4) | Read protocol: 6-step ladder, cite contract |
 | `karpathy-wiki-ingest` | Detached provider-neutral runtime ingester only | Page writing: 9-step deep orientation, role guardrail, validator, manifest, deterministic completion |
 | `karpathy-wiki-doctor` | Detached census worker (`wiki doctor` or cadence enqueue) | Tests, schema/tags/frontmatter/related, rewrite jobs; no body rewrite |
+| `karpathy-wiki-rewrite` | Detached rewriter (`wiki rewrite` or scheduler tick) | One cluster job: compact siblings onto a playbook, leave pointer files |
 
 ## What's deferred
 
@@ -370,6 +372,6 @@ See [TODO.md](TODO.md), [ISSUES.md](ISSUES.md), and [IDEAS.md](IDEAS.md).
 Highlights:
 
 - **Read-protocol follow-ups**: `wiki orient` CLI shortcut for Step A; `allowed-tools` scoping on the four skills.
-- **Doctor quality re-rate / playbook rewriter**: census ships; body compact is later.
+- **Doctor quality re-rate**: census and cluster compact ship; quality re-rate is later.
 - **`.ingest.log` → `.ingest.jsonl` migration** (dual-artifact pattern, scheduled for v2.5).
 - **Loader-hook coverage outside Claude Code**: Cursor, Copilot CLI, OpenCode, and Gemini. Detached Codex/Grok/Claude provider adapters have deterministic coverage.

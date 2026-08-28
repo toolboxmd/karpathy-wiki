@@ -28,6 +28,8 @@ from wiki_config import (
     ConfigError,
     RECOMMENDED_DOCTOR_DEFAULT,
     RECOMMENDED_DOCTOR_FALLBACK,
+    RECOMMENDED_REWRITE_DEFAULT,
+    RECOMMENDED_REWRITE_FALLBACK,
     ensure_scheduler_runtime_config,
     scheduler_slot_root,
     validate_runtime_config,
@@ -41,6 +43,7 @@ from wiki_providers import (
     resolve_executable,
 )
 from wiki_usage import check_codexbar_usage
+from wiki_yaml import extract_frontmatter, parse_yaml
 
 
 AUTOMATIC_SOURCE_MODES = {
@@ -629,6 +632,10 @@ def _spawn_worker(
     env = os.environ.copy()
     if job == "doctor":
         env["WIKI_JOB"] = "doctor"
+    elif job == "rewrite":
+        env["WIKI_JOB"] = "rewrite"
+        if processing is not None:
+            env["WIKI_REWRITE_JOB"] = str(processing)
     log_path = root / ".ingest.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("ab", buffering=0) as log:
@@ -869,6 +876,10 @@ def dispatch_tick(
 
     if spawn_error is not None:
         raise DispatchError(f"wiki dispatch: worker spawn failed: {spawn_error}")
+    try:
+        enqueue_rewrite(root, config, quiet=True)
+    except (DispatchError, OSError, ConfigError):
+        pass
     return 0
 
 
@@ -961,11 +972,13 @@ def _test_provider_command(root: Path) -> tuple[list[str], str]:
     if mode == "success_no_complete":
         return [sys.executable, "-c", "raise SystemExit(0)"], mode
     if mode == "complete_success":
-        helper_name = (
-            "wiki-complete-doctor.sh"
-            if os.environ.get("WIKI_JOB") == "doctor"
-            else "wiki-complete-ingest.sh"
-        )
+        job = os.environ.get("WIKI_JOB")
+        if job == "doctor":
+            helper_name = "wiki-complete-doctor.sh"
+        elif job == "rewrite":
+            helper_name = "wiki-complete-rewrite.sh"
+        else:
+            helper_name = "wiki-complete-ingest.sh"
         helper = Path(__file__).resolve().parent / helper_name
         return ["/bin/bash", str(helper)], mode
     if mode == "needs_more_detail":
@@ -998,6 +1011,9 @@ def _provider_environment(root: Path, processing: Path, run_id: str) -> dict[str
     job = os.environ.get("WIKI_JOB")
     if job:
         environment["WIKI_JOB"] = job
+    rewrite_job = os.environ.get("WIKI_REWRITE_JOB")
+    if rewrite_job:
+        environment["WIKI_REWRITE_JOB"] = rewrite_job
     return environment
 
 
@@ -1680,6 +1696,253 @@ def enqueue_doctor(
     return outcome
 
 
+def _rewrite_job_payload(path: Path) -> dict[str, Any] | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+        raw = extract_frontmatter(text) or text
+        parsed = parse_yaml(raw)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _is_cluster_rewrite_job(root: Path, path: Path) -> bool:
+    job = _rewrite_job_payload(path)
+    if job is None:
+        return False
+    kind = str(job.get("kind") or "").strip().lower()
+    if kind == "entity":
+        return False
+    if kind == "cluster":
+        return True
+    pages = job.get("pages") or []
+    if isinstance(pages, list):
+        for rel in pages:
+            if str(rel).lstrip("/").startswith("entities/"):
+                return False
+    token = str(job.get("object") or path.stem).strip()
+    if token and (root / "entities" / f"{token}.md").is_file():
+        return False
+    return True
+
+
+def _rewrite_jobs(root: Path) -> list[Path]:
+    folder = root / ".wiki-pending" / "rewrite-jobs"
+    if not folder.is_dir():
+        return []
+    return sorted(
+        path
+        for path in folder.glob("*.md")
+        if path.is_file() and _is_cluster_rewrite_job(root, path)
+    )
+
+
+def _rewrite_profile_name(provider: str, effort: str) -> str:
+    raw = f"{provider}_{effort}_rewrite".lower()
+    return re.sub(r"[^a-z0-9_-]+", "_", raw).strip("_")
+
+
+def _rewrite_profile_chain(
+    config: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    ingest = config["ingest"]
+    rewrite = config.get("rewrite") or {}
+    chain: list[tuple[str, dict[str, Any]]] = []
+    default_name = rewrite.get("default_profile")
+    if default_name and default_name in ingest["profiles"]:
+        chain.append((default_name, ingest["profiles"][default_name]))
+    else:
+        rec = RECOMMENDED_REWRITE_DEFAULT
+        chain.append(
+            (
+                _rewrite_profile_name(rec["provider"], rec["reasoning_effort"]),
+                _synthesize_doctor_profile(config, rec),
+            )
+        )
+    fallback_name = rewrite.get("fallback_profile")
+    if fallback_name and fallback_name in ingest["profiles"]:
+        if not chain or chain[0][0] != fallback_name:
+            chain.append((fallback_name, ingest["profiles"][fallback_name]))
+    else:
+        rec = RECOMMENDED_REWRITE_FALLBACK
+        name = _rewrite_profile_name(rec["provider"], rec["reasoning_effort"])
+        if not chain or chain[0][0] != name:
+            chain.append((name, _synthesize_doctor_profile(config, rec)))
+    return chain
+
+
+def _select_rewrite_profile(
+    config: dict[str, Any], unavailable: set[str] | None = None
+) -> tuple[str, dict[str, Any]] | tuple[None, None]:
+    unavailable = unavailable or set()
+    for name, profile in _rewrite_profile_chain(config):
+        if name in unavailable:
+            continue
+        return name, profile
+    return None, None
+
+
+def enqueue_rewrite(
+    root: Path,
+    config: dict[str, Any],
+    run_id: str | None = None,
+    *,
+    quiet: bool = False,
+) -> str:
+    def note(message: str) -> None:
+        if not quiet:
+            print(message)
+
+    jobs = _rewrite_jobs(root)
+    if not jobs:
+        note("skipped")
+        return "skipped"
+    job_file = jobs[0]
+    ingest = config["ingest"]
+    if not run_id:
+        run_id = f"rew-{int(time.time() * 1_000_000)}-{os.getpid()}"
+    unavailable: set[str] = set()
+    if not _test_mode():
+        for name, profile in _rewrite_profile_chain(config):
+            try:
+                resolve_executable(
+                    profile["executable"],
+                    forbidden_roots=(Path(config["trusted_workspace"]),),
+                )
+            except ProviderError:
+                unavailable.add(name)
+    selected = _select_rewrite_profile(config, unavailable)
+    profile_name, profile = selected
+    if profile_name is None or profile is None:
+        note("skipped")
+        return "skipped"
+
+    scheduler = ensure_scheduler_runtime_config()["scheduler"]
+    global_lock_path, global_slot_root = _global_dispatch_paths()
+    lock_path, slot_root, _pending_root = _dispatch_paths(root)
+    global_lock = _try_dispatch_lock(global_lock_path)
+    if global_lock is None:
+        note("skipped")
+        return "skipped"
+
+    dispatch_lock: TextIO | None = None
+    spawn_error: OSError | None = None
+    outcome = "skipped"
+    try:
+        global_slot_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(global_slot_root, 0o700)
+        _reconcile_dead_global_leases(global_slot_root)
+        global_leases = _valid_global_leases(global_slot_root)
+        if (
+            len(global_leases) >= scheduler["max_total_processes"]
+            or _wiki_has_global_lease(global_leases, root)
+        ):
+            note("skipped")
+            return "skipped"
+
+        dispatch_lock = _try_dispatch_lock(lock_path)
+        if dispatch_lock is None:
+            note("skipped")
+            return "skipped"
+
+        slot_root.mkdir(parents=True, exist_ok=True)
+        _reconcile_dead_leases(root, slot_root, ingest["stale_after_seconds"])
+        leases = _valid_leases(slot_root)
+        if leases:
+            note("skipped")
+            return "skipped"
+        local_limit = min(ingest["max_processes"], scheduler["max_processes_per_wiki"])
+        slot = _free_slot(leases, local_limit)
+        global_slot = _free_global_slot(global_leases, scheduler["max_total_processes"])
+        if slot is None or global_slot is None:
+            note("skipped")
+            return "skipped"
+
+        lease_path = slot_root / f"{slot}.lock"
+        global_lease_path = global_slot_root / f"{global_slot}.lock"
+        global_lease = {
+            "run_id": run_id,
+            "global_slot": global_slot,
+            "wiki_root": str(root),
+            "per_wiki_run_id": run_id,
+            "per_wiki_lease": str(lease_path),
+            "capture": job_file.name,
+            "job": "rewrite",
+            "profile": profile_name,
+            "provider": profile["provider"],
+            "wrapper_pid": 0,
+            "provider_pid": None,
+            "created_at": _utc_now(),
+            "heartbeat_at": _utc_now(),
+        }
+        lease = {
+            "run_id": run_id,
+            "slot": slot,
+            "job": "rewrite",
+            "global_slot": global_slot,
+            "global_lease": str(global_lease_path),
+            "capture": job_file.name,
+            "profile": profile_name,
+            "provider": profile["provider"],
+            "attempt": 1,
+            "wrapper_pid": 0,
+            "provider_pid": None,
+            "started_at": _utc_now(),
+        }
+        try:
+            fd = os.open(
+                global_lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(global_lease, handle, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            note("skipped")
+            return "skipped"
+
+        try:
+            fd = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(lease, handle, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            global_lease_path.unlink(missing_ok=True)
+            note("skipped")
+            return "skipped"
+
+        try:
+            worker = _spawn_worker(
+                root, lease_path, job_file, run_id, profile_name, job="rewrite"
+            )
+        except OSError as exc:
+            lease_path.unlink(missing_ok=True)
+            global_lease_path.unlink(missing_ok=True)
+            spawn_error = exc
+        else:
+            lease["wrapper_pid"] = worker.pid
+            lease["heartbeat_at"] = _utc_now()
+            _write_json_atomic(lease_path, lease)
+            global_lease["wrapper_pid"] = worker.pid
+            global_lease["heartbeat_at"] = lease["heartbeat_at"]
+            _write_global_lease(global_lease_path, global_lease)
+            outcome = "launched"
+    finally:
+        if dispatch_lock is not None:
+            fcntl.flock(dispatch_lock.fileno(), fcntl.LOCK_UN)
+            dispatch_lock.close()
+        fcntl.flock(global_lock.fileno(), fcntl.LOCK_UN)
+        global_lock.close()
+
+    if spawn_error is not None:
+        raise DispatchError(f"wiki dispatch: rewrite worker spawn failed: {spawn_error}")
+    note(outcome)
+    return outcome
+
+
 def maybe_enqueue_doctor(root: Path, config: dict[str, Any]) -> str:
     """Best-effort doctor enqueue after ingest complete."""
 
@@ -1857,6 +2120,243 @@ def run_doctor_worker(
         raise
 
 
+def read_rewrite_events(wiki: str | Path) -> list[dict[str, Any]]:
+    path = Path(wiki) / ".rewrite-runs.jsonl"
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise DispatchError(f"wiki dispatch: cannot read rewrite history: {exc}") from exc
+    events: list[dict[str, Any]] = []
+    for chunk in raw.split(b"\n"):
+        if not chunk.strip():
+            continue
+        try:
+            event = json.loads(chunk.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def append_rewrite_event(
+    wiki: str | Path,
+    event: dict[str, Any],
+    *,
+    idempotent: bool = False,
+) -> bool:
+    root = Path(wiki)
+    lock_path = root / ".locks" / "rewrite-runs.lock"
+    log_path = root / ".rewrite-runs.jsonl"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(event, sort_keys=True, separators=(",", ":"))
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if idempotent:
+            events = read_rewrite_events(root)
+            if any(
+                previous.get("run_id") == event.get("run_id")
+                and previous.get("status") == event.get("status")
+                for previous in events
+            ):
+                return False
+        with log_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() > 0:
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    handle.seek(0, os.SEEK_END)
+                    handle.write(b"\n")
+            handle.seek(0, os.SEEK_END)
+            handle.write(encoded.encode("utf-8") + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    return True
+
+
+def _rewrite_completed(root: Path, run_id: str) -> bool:
+    return any(
+        event.get("run_id") == run_id and event.get("status") == "completed"
+        for event in read_rewrite_events(root)
+    )
+
+
+def run_rewrite_worker(
+    root: Path,
+    lease_path: Path,
+    run_id: str,
+    profile_name: str,
+    capture: str | None,
+) -> int:
+    os.environ["WIKI_JOB"] = "rewrite"
+    child: subprocess.Popen[bytes] | None = None
+    job_path = Path(capture).expanduser().resolve() if capture else None
+    if job_path is None:
+        raise DispatchError("wiki dispatch worker: rewrite job path is required")
+    jobs_dir = (root / ".wiki-pending" / "rewrite-jobs").resolve()
+    if job_path.parent != jobs_dir:
+        raise DispatchError("wiki dispatch worker: rewrite job is outside rewrite-jobs")
+    os.environ["WIKI_REWRITE_JOB"] = str(job_path)
+
+    def interrupted(_signum: int, _frame: Any) -> None:
+        raise WorkerInterrupted()
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
+
+    config = validate_runtime_config(root)
+    ingest = config["ingest"]
+    profile = ingest["profiles"].get(profile_name)
+    if profile is None:
+        for name, candidate in _rewrite_profile_chain(config):
+            if name == profile_name:
+                profile = candidate
+                break
+    if profile is None:
+        raise DispatchError(f"wiki dispatch worker: unknown rewrite profile {profile_name!r}")
+    _await_parent_lease(lease_path, run_id)
+    append_rewrite_event(
+        root,
+        {
+            "run_id": run_id,
+            "status": "started",
+            "profile": profile_name,
+            "provider": profile["provider"],
+            "at": _utc_now(),
+        },
+        idempotent=True,
+    )
+
+    try:
+        invocation: ProviderInvocation | None = None
+        if _test_mode():
+            command, _test_provider_mode = _test_provider_command(root)
+            provider_env = _provider_environment(root, job_path, run_id)
+            provider_env["WIKI_JOB"] = "rewrite"
+            provider_env["WIKI_REWRITE_JOB"] = str(job_path)
+            log_path = root / ".ingest.log"
+            stdout_handle = log_path.open("ab", buffering=0)
+            stderr_handle = stdout_handle
+            stdin_bytes = None
+        else:
+            runtime_profile = dict(profile)
+            runtime_profile["executable"] = resolve_executable(
+                profile["executable"],
+                forbidden_roots=(Path(config["trusted_workspace"]),),
+            )
+            invocation = build_provider_invocation(
+                runtime_profile,
+                root,
+                job_path,
+                run_id,
+                Path(__file__).resolve().parent.parent,
+            )
+            command = invocation.argv
+            provider_env = os.environ.copy()
+            provider_env.update(invocation.environment)
+            provider_env["WIKI_JOB"] = "rewrite"
+            provider_env["WIKI_REWRITE_JOB"] = str(job_path)
+            stdin_bytes = invocation.stdin_bytes
+            stdout_handle = invocation.stdout_path.open("wb", buffering=0)
+            stderr_handle = invocation.stderr_path.open("wb", buffering=0)
+
+        try:
+            try:
+                child = subprocess.Popen(
+                    command,
+                    cwd=root,
+                    env=provider_env,
+                    stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    close_fds=True,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                raise DispatchError(f"wiki dispatch worker: provider spawn failed: {exc}") from exc
+            _update_worker_lease(
+                lease_path,
+                run_id,
+                provider_pid=child.pid,
+                heartbeat_at=_utc_now(),
+            )
+            if stdin_bytes is not None:
+                if child.stdin is None:
+                    raise DispatchError("wiki dispatch worker: provider stdin pipe missing")
+                try:
+                    child.stdin.write(stdin_bytes)
+                    child.stdin.flush()
+                except BrokenPipeError:
+                    pass
+                finally:
+                    child.stdin.close()
+
+            heartbeat = float(ingest["heartbeat_seconds"])
+            if _test_mode() and "WIKI_DISPATCH_TEST_HEARTBEAT_SECONDS" in os.environ:
+                heartbeat = float(os.environ["WIKI_DISPATCH_TEST_HEARTBEAT_SECONDS"])
+            while True:
+                try:
+                    exit_code = child.wait(timeout=heartbeat)
+                    break
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.utime(job_path, None)
+                    except FileNotFoundError:
+                        pass
+                    _update_worker_lease(
+                        lease_path,
+                        run_id,
+                        provider_pid=child.pid,
+                        heartbeat_at=_utc_now(),
+                    )
+        finally:
+            stdout_handle.close()
+            if stderr_handle is not stdout_handle:
+                stderr_handle.close()
+
+        if exit_code == 0 and _rewrite_completed(root, run_id):
+            _worker_cleanup(root, lease_path, job_path, run_id, requeue=False)
+            if invocation is not None and os.environ.get(
+                "WIKI_DISPATCH_ACCEPTANCE_RETAIN_ARTIFACTS"
+            ) != "1":
+                shutil.rmtree(invocation.run_dir, ignore_errors=True)
+            return 0
+
+        if not _rewrite_completed(root, run_id):
+            append_rewrite_event(
+                root,
+                {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "exit_code": exit_code,
+                    "at": _utc_now(),
+                },
+                idempotent=True,
+            )
+        _worker_cleanup(root, lease_path, job_path, run_id, requeue=False)
+        return 1
+    except WorkerInterrupted:
+        _terminate_provider_group(child)
+        _worker_cleanup(root, lease_path, job_path, run_id, requeue=False)
+        return 0
+    except (DispatchError, ProviderError, OSError):
+        _terminate_provider_group(child)
+        if not _rewrite_completed(root, run_id):
+            append_rewrite_event(
+                root,
+                {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "at": _utc_now(),
+                },
+                idempotent=True,
+            )
+        _worker_cleanup(root, lease_path, job_path, run_id, requeue=False)
+        raise
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="wiki_dispatch.py")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1872,11 +2372,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     worker.add_argument("--capture")
     worker.add_argument("--run-id", required=True)
     worker.add_argument("--profile", required=True)
-    worker.add_argument("--job", default="ingest", choices=("ingest", "doctor"))
+    worker.add_argument("--job", default="ingest", choices=("ingest", "doctor", "rewrite"))
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--wiki", required=True)
     doctor.add_argument("--run-id", required=True)
+
+    rewrite = subparsers.add_parser("rewrite")
+    rewrite.add_argument("--wiki", required=True)
+    rewrite.add_argument("--run-id", required=True)
     return parser.parse_args(argv)
 
 
@@ -1895,6 +2399,11 @@ def main(argv: list[str] | None = None) -> int:
             root = Path(config["wiki_root"])
             enqueue_doctor(root, config, run_id=args.run_id)
             return 0
+        if args.command == "rewrite":
+            config = validate_runtime_config(args.wiki)
+            root = Path(config["wiki_root"])
+            enqueue_rewrite(root, config, run_id=args.run_id)
+            return 0
 
         root = Path(args.wiki).expanduser().resolve()
         lease_path = Path(args.lease).expanduser().resolve()
@@ -1902,10 +2411,19 @@ def main(argv: list[str] | None = None) -> int:
             raise DispatchError("wiki dispatch worker: lease is outside the wiki slot directory")
         if args.job == "doctor":
             return run_doctor_worker(root, lease_path, args.run_id, args.profile)
+        if args.job == "rewrite":
+            if not args.capture:
+                raise DispatchError("wiki dispatch worker: --capture is required for rewrite")
+            processing = Path(args.capture).expanduser().resolve()
+            return run_rewrite_worker(
+                root, lease_path, args.run_id, args.profile, str(processing)
+            )
         if not args.capture:
             raise DispatchError("wiki dispatch worker: --capture is required for ingest")
         processing = Path(args.capture).expanduser().resolve()
-        if processing.parent != root / ".wiki-pending":
+        pending_dir = root / ".wiki-pending"
+        jobs_dir = pending_dir / "rewrite-jobs"
+        if processing.parent not in {pending_dir, jobs_dir}:
             raise DispatchError("wiki dispatch worker: capture is outside the pending directory")
         return run_worker(root, lease_path, processing, args.run_id, args.profile)
     except WorkerInterrupted:
@@ -1916,7 +2434,7 @@ def main(argv: list[str] | None = None) -> int:
                     lease_path,
                     processing or root / ".wiki-pending" / f".doctor-{args.run_id}",
                     args.run_id,
-                    requeue=args.job != "doctor",
+                    requeue=args.job not in {"doctor", "rewrite"},
                 )
             except Exception:
                 pass
@@ -1929,7 +2447,7 @@ def main(argv: list[str] | None = None) -> int:
                     lease_path,
                     processing or root / ".wiki-pending" / f".doctor-{args.run_id}",
                     args.run_id,
-                    requeue=args.job != "doctor",
+                    requeue=args.job not in {"doctor", "rewrite"},
                 )
             except Exception:
                 pass

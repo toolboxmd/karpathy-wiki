@@ -174,8 +174,8 @@ refs:
   - skills/karpathy-wiki-ingest/SKILL.md "Quality ratings" section
 ```
 
-`wiki doctor` now runs a detached census. It still does not rewrite page
-bodies or re-rate quality blocks; those remain a later rewriter.
+`wiki doctor` now runs a detached census. Cluster compact is a detached
+rewriter. Quality re-rate remains a later pass.
 
 ---
 ## Real test coverage for SKILL.md prose rules

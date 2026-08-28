@@ -124,5 +124,6 @@ The full operational details — capture format, body-size floors, dispatch mech
 - `skills/karpathy-wiki-read/SKILL.md` — load when you are about to answer a user question (Iron Rule 4).
 - `skills/karpathy-wiki-ingest/SKILL.md` — loaded by the detached ingester via its provider prompt; the main agent never reads this.
 - `skills/karpathy-wiki-doctor/SKILL.md` — detached census; `wiki doctor` launches it. The main agent never reads this.
+- `skills/karpathy-wiki-rewrite/SKILL.md` — detached rewriter; `wiki rewrite` or the scheduler launches it. The main agent never reads this.
 
 If you do not know what to do at a particular step, load the on-demand skill — do not invent.

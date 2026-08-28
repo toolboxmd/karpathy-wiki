@@ -67,7 +67,7 @@ Items deferred from v2.3:
 - **Automated retroactive global link migration** — v2.3 only rewrote inbound links to the 4 moved pages; ~50+ other relative links throughout the wiki stayed in their existing form. A bulk migration script that converts every `../foo.md` to `/category/foo.md` would polish the wiki but is non-urgent.
 - **`wiki create-category <name>` CLI** — v2.3 contract is `mkdir`. If friction surfaces from heavy use, a small CLI wrapper that does `mkdir + name validation + initial _index.md skeleton` is straightforward.
 - **Complete the reorg of remaining historical migration scripts into `scripts/historical/`** — `wiki-migrate-v2-hardening.sh` and `wiki-migrate-v2.3.sh` still sit beside active runtime scripts. Moving them would complete the cleanup started with the historical v2.2 migration.
-- **Doctor quality re-rate, synonym merge, and orphan repair** — census doctor ships; body re-rate and playbook compact stay a later rewriter.
+- **Doctor quality re-rate, synonym merge, and orphan repair** — census and cluster compact ship; body re-rate stays a later pass.
 - **Per-`_index.md` schema-proposal firing** — the SKILL.md ingester step 7.6 has prose for this but it's not exercised by an actual ingester run yet (would happen during an organic ingest after v2.3 ships).
 - **Singular `type:` orphan recovery** — if anyone hand-writes a page with singular `type:` post-v2.3, the validator hard-rejects. A friendlier `wiki fix-type` CLI that runs `wiki-fix-frontmatter.py` on the offending page would smooth this.
 
