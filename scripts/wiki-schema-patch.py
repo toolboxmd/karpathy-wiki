@@ -62,8 +62,64 @@ STOPWORDS = frozenset(
         "summary",
         "page",
         "pages",
+        "not",
+        "first",
+        "under",
+        "unit",
+        "than",
+        "but",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "did",
+        "does",
+        "will",
+        "would",
+        "can",
+        "could",
+        "may",
+        "might",
+        "should",
+        "your",
+        "our",
+        "their",
+        "they",
+        "them",
+        "who",
+        "what",
+        "when",
+        "where",
+        "how",
+        "all",
+        "any",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "nor",
+        "only",
+        "own",
+        "same",
+        "too",
+        "very",
+        "just",
+        "also",
+        "still",
+        "even",
+        "new",
+        "old",
     }
 )
+POINTER_LANGUAGE = frozenset({"merged", "pointer"})
+SPRAY_MIN_ENTRIES = OBJECT_HIT_THRESHOLD * 2
 PLUGIN_FRONTMATTER_KEYS = frozenset(
     {
         "title",
@@ -124,19 +180,42 @@ def _one_liner(rest: str) -> str:
     return TAG_SUFFIX_RE.sub("", rest).strip()
 
 
-def _tokens_in_line(title: str, rest: str) -> set[str]:
+def _denied_object_token(token: str) -> bool:
+    return len(token) < 3 or token in STOPWORDS or token in POINTER_LANGUAGE
+
+
+def _tokens_in_text(text: str) -> set[str]:
     tokens: set[str] = set()
-    blob = f"{title} {_one_liner(rest)}".lower()
-    for raw in WORD_HIT_RE.findall(blob):
+    for raw in WORD_HIT_RE.findall(text.lower()):
         token = raw.lower()
-        if len(token) < 3 or token in STOPWORDS:
+        if _denied_object_token(token):
             continue
         tokens.add(token)
-    for tag in _tags_from_rest(rest):
-        token = tag.lower().strip()
-        if token:
-            tokens.add(token)
     return tokens
+
+
+def _is_spray_tag(
+    token: str,
+    n_entries: int,
+    title_hits: dict[str, int],
+    tag_hits: dict[str, int],
+) -> bool:
+    if n_entries < SPRAY_MIN_ENTRIES:
+        return False
+    if tag_hits.get(token, 0) * 2 < n_entries:
+        return False
+    if title_hits.get(token, 0) >= OBJECT_HIT_THRESHOLD:
+        return False
+    return True
+
+
+def _bullet_key(line: str) -> str:
+    rest = line[2:].strip()
+    if not rest:
+        return ""
+    if ":" in rest:
+        return rest.split(":", 1)[0].strip().lower()
+    return rest.split()[0].lower()
 
 
 def _section(text: str, heading: str) -> str | None:
@@ -186,16 +265,18 @@ def _categories_body(names: list[str]) -> str:
 
 def _contract_body(existing: str, extra_keys: list[str]) -> str:
     lines = [line.rstrip() for line in existing.splitlines()]
-    present = {line[2:].strip() for line in lines if line.startswith("- ")}
+    present = {
+        _bullet_key(line) for line in lines if line.startswith("- ") and _bullet_key(line)
+    }
     out = [line for line in lines if line.strip()]
     if not out:
         out = [
             "Plugin defaults live in the ingest page-conventions. This file may name extra frontmatter keys and extra body sections. If it names none, write only the plugin defaults."
         ]
     for key in extra_keys:
-        if key not in present:
+        if key.lower() not in present:
             out.append(f"- {key}")
-            present.add(key)
+            present.add(key.lower())
     return "\n".join(out) + "\n"
 
 
@@ -237,27 +318,38 @@ def patch_schema(wiki: Path) -> bool:
         return False
     text = schema_path.read_text()
     entries = _index_entries(wiki)
-    token_hits: dict[str, int] = {}
+    line_hits: dict[str, int] = {}
+    title_hits: dict[str, int] = {}
+    tag_hits: dict[str, int] = {}
     tags: set[str] = set()
     for title, rest in entries:
-        line_tokens = _tokens_in_line(title, rest)
+        line_tags = [
+            part.lower().strip() for part in _tags_from_rest(rest) if part.strip()
+        ]
+        tags.update(line_tags)
+        title_tokens = _tokens_in_text(f"{title} {_one_liner(rest)}")
+        line_tokens = {
+            token
+            for token in (title_tokens | set(line_tags))
+            if not _denied_object_token(token)
+        }
         for token in line_tokens:
-            token_hits[token] = token_hits.get(token, 0) + 1
-        tags.update(_tags_from_rest(rest))
+            line_hits[token] = line_hits.get(token, 0) + 1
+            if token in title_tokens:
+                title_hits[token] = title_hits.get(token, 0) + 1
+            if token in line_tags:
+                tag_hits[token] = tag_hits.get(token, 0) + 1
+    n_entries = len(entries)
     objects = sorted(
-        token for token, hits in token_hits.items() if hits >= OBJECT_HIT_THRESHOLD
+        token
+        for token, hits in line_hits.items()
+        if hits >= OBJECT_HIT_THRESHOLD
+        and not _is_spray_tag(token, n_entries, title_hits, tag_hits)
     )
-    existing_objects = _section(text, "## Objects") or ""
-    already = [
-        line[2:].strip()
-        for line in existing_objects.splitlines()
-        if line.startswith("- ")
-    ]
-    merged_objects = sorted(set(already) | set(objects))
     discovered = discover(wiki).get("categories") or []
     extra_keys = _overlay_keys(wiki)
     new_text = text
-    new_text = _replace_section(new_text, "## Objects", _objects_body(merged_objects))
+    new_text = _replace_section(new_text, "## Objects", _objects_body(objects))
     taxonomy = _section(new_text, "## Tag Taxonomy (bounded)") or ""
     new_text = _replace_section(
         new_text,

@@ -18,6 +18,10 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Schema Objects are knowledge-object names only. Schema-patch
+  drops function words, pointer-stub language, and corpus-wide tags, and
+  prunes tokens that fall under 6 hits. Annotated Page-contract keys are
+  not duplicated.
 - 2026-08-27: Schema-proposals retired. Ingest logs schema-drift; doctor
   archives leftover files. Init no longer creates that inbox.
 - 2026-08-27: karpathy-wiki is a three-host plugin in marketplace
@@ -29,8 +33,6 @@ replacement, and not a work-package manifest.
   select, common terms (6+ hits, including tags on the index line)
   AND-filter unless that would empty the set. Related-only ingest does
   not append `sources:`.
-- 2026-08-21: Split the old combined backlog into `CHANGELOG.md`, `TODO.md`,
-  `ISSUES.md`, and `IDEAS.md`.
 
 
 ## If you are an AI agent
