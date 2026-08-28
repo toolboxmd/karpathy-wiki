@@ -24,6 +24,8 @@ grep -q 'wiki-topical-keep-tags.py' "${SKILL}" \
   || fail "skill must run topical-keep helper"
 grep -q 'Do not remove `sources:`' "${SKILL}" \
   || fail "skill must forbid removing sources"
+grep -q 'wiki-required-rewrite-jobs.py' "${SKILL}" \
+  || fail "skill must name required-jobs helper"
 grep -q 'same-idea' "${SKILL}" || fail "skill must use same-idea collapse"
 grep -q 'not the same idea' "${SKILL}" \
   || fail "skill must skip false synonym pairs"

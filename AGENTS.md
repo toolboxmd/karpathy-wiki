@@ -18,6 +18,8 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Doctor complete fails closed unless every 6+ cluster and
+  catalog entity has a rewrite job.
 - 2026-08-28: Doctor topical-keep helper strips provenance and spray
   tags and must not remove `sources:`.
 - 2026-08-28: Category indexes and discovery counts omit pages tagged
@@ -28,8 +30,6 @@ replacement, and not a work-package manifest.
   not duplicated.
 - 2026-08-27: Schema-proposals retired. Ingest logs schema-drift; doctor
   archives leftover files. Init no longer creates that inbox.
-- 2026-08-27: karpathy-wiki is a three-host plugin in marketplace
-  toolboxmd (Codex, Claude Code, Grok Build). It is not the marketplace.
 
 
 ## If you are an AI agent
