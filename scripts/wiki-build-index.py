@@ -89,6 +89,13 @@ def _truncate_description(text: str) -> str:
     return compact
 
 
+def _is_pointer_page(fm: dict) -> bool:
+    tags = fm.get("tags") or []
+    if not isinstance(tags, list):
+        return False
+    return any(str(t).strip().lower() == "pointer" for t in tags)
+
+
 def _tags_suffix(fm: dict) -> str:
     """Append [tag, ...] so read Step B can count tag hits from the index."""
     tags = fm.get("tags") or []
@@ -161,6 +168,7 @@ def _build_directory_index(directory: Path, wiki_root: Path, reserved: set[str])
     pages = sorted([
         p for p in directory.iterdir()
         if p.is_file() and p.name.endswith(".md") and p.name != "_index.md"
+        and not _is_pointer_page(_read_frontmatter(p))
     ])
     lines.append("## Pages (in this directory)")
     if not pages:
@@ -193,6 +201,7 @@ def _build_directory_index(directory: Path, wiki_root: Path, reserved: set[str])
                     part in reserved or part.startswith(".")
                     for part in p.relative_to(d).parts[:-1]
                 )
+                and not _is_pointer_page(_read_frontmatter(p))
             ]
             count = len(child_pages)
             titles_brief = []
