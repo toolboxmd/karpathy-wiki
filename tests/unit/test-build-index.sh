@@ -277,7 +277,107 @@ EOF
   teardown
 }
 
+test_index_omits_pointer_tagged_pages() {
+  setup
+  cat > "${WIKI}/concepts/cart-playbook.md" <<'EOF'
+---
+title: "Cart drawer playbook"
+type: concepts
+tags: [cart]
+sources: []
+summary: "Nudge, proof, shipping bar."
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 4
+  completeness: 4
+  signal: 4
+  interlinking: 4
+  overall: 4.50
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+Playbook body.
+EOF
+  cat > "${WIKI}/concepts/cart-checkout-button.md" <<'EOF'
+---
+title: "Pointer: merged cart checkout button"
+type: concepts
+tags: [pointer]
+sources: []
+summary: "Pointer. Content is on the playbook."
+related:
+  - /concepts/cart-playbook.md
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 2
+  signal: 3
+  interlinking: 4
+  overall: 3.50
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+This file is a pointer.
+EOF
+  cat > "${WIKI}/concepts/cart-gift-threshold.md" <<'EOF'
+---
+title: "Pointer: merged cart gift threshold"
+type: concepts
+tags: [pointer]
+sources: []
+summary: "Pointer. Content is on the playbook."
+related:
+  - /concepts/cart-playbook.md
+created: "2026-04-26T12:00:00Z"
+updated: "2026-04-26T12:00:00Z"
+quality:
+  accuracy: 5
+  completeness: 2
+  signal: 3
+  interlinking: 4
+  overall: 3.50
+  rated_at: "2026-04-26T12:00:00Z"
+  rated_by: ingester
+---
+This file is a pointer.
+EOF
+  python3 "${BUILD}" --wiki-root "${WIKI}" --rebuild-all
+  [[ -f "${WIKI}/concepts/cart-checkout-button.md" ]] \
+    || { echo "FAIL: pointer file deleted"; teardown; exit 1; }
+  [[ -f "${WIKI}/concepts/cart-gift-threshold.md" ]] \
+    || { echo "FAIL: second pointer file deleted"; teardown; exit 1; }
+  grep -q "Cart drawer playbook" "${WIKI}/concepts/_index.md" \
+    || { echo "FAIL: playbook missing from index"; cat "${WIKI}/concepts/_index.md"; teardown; exit 1; }
+  if grep -q "Pointer:" "${WIKI}/concepts/_index.md"; then
+    echo "FAIL: pointer row leaked into category index"
+    cat "${WIKI}/concepts/_index.md"
+    teardown
+    exit 1
+  fi
+  if grep -q "cart-checkout-button.md\|cart-gift-threshold.md" "${WIKI}/concepts/_index.md"; then
+    echo "FAIL: pointer filename leaked into category index"
+    cat "${WIKI}/concepts/_index.md"
+    teardown
+    exit 1
+  fi
+  grep -q "concepts/_index.md" "${WIKI}/index.md" \
+    || { echo "FAIL: root MOC missing concepts"; cat "${WIKI}/index.md"; teardown; exit 1; }
+  if grep -q "Pointer:" "${WIKI}/index.md"; then
+    echo "FAIL: pointer row leaked into root MOC"
+    cat "${WIKI}/index.md"
+    teardown
+    exit 1
+  fi
+  grep -q "1 pages" "${WIKI}/index.md" \
+    || { echo "FAIL: root MOC should count 1 playbook page, not pointers"; cat "${WIKI}/index.md"; teardown; exit 1; }
+  echo "PASS: test_index_omits_pointer_tagged_pages"
+  teardown
+}
+
 test_index_skips_leading_heading_without_summary
 test_index_prefers_summary_over_body
 test_index_appends_tags
+test_index_omits_pointer_tagged_pages
 echo "all tests passed"

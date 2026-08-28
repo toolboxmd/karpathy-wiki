@@ -18,6 +18,8 @@ replacement, and not a work-package manifest.
 
 ## Recent Changes
 
+- 2026-08-28: Category indexes and discovery counts omit pages tagged
+  `pointer`; the files stay on disk.
 - 2026-08-28: Schema Objects are knowledge-object names only. Schema-patch
   drops function words, pointer-stub language, and corpus-wide tags, and
   prunes tokens that fall under 6 hits. Annotated Page-contract keys are
@@ -29,10 +31,6 @@ replacement, and not a work-package manifest.
 - 2026-08-27: Ingest must-augment clustered objects, silently patches
   schema.md, and a detached `wiki doctor` census runs on schema cadence
   (Grok xhigh, Codex max fallback). Doctor does not rewrite page bodies.
-- 2026-08-26: Read Step B uses per-index document frequency: rare terms
-  select, common terms (6+ hits, including tags on the index line)
-  AND-filter unless that would empty the set. Related-only ingest does
-  not append `sources:`.
 
 
 ## If you are an AI agent

@@ -24,7 +24,27 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from wiki_yaml import RESERVED
+from wiki_yaml import RESERVED, extract_frontmatter, parse_yaml
+
+
+def _is_pointer_page(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    raw = extract_frontmatter(text)
+    if not raw:
+        return False
+    try:
+        parsed = parse_yaml(raw)
+    except ValueError:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    tags = parsed.get("tags") or []
+    if not isinstance(tags, list):
+        return False
+    return any(str(t).strip().lower() == "pointer" for t in tags)
 
 
 def _is_category(name: str) -> bool:
@@ -51,6 +71,8 @@ def _walk_category(root: Path) -> tuple[int, int]:
             continue
         # Skip auto-generated category indexes.
         if path.name == "_index.md":
+            continue
+        if _is_pointer_page(path):
             continue
         count += 1
         depth = len(rel_parts)  # filename is the last part
