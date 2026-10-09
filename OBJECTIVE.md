@@ -1,11 +1,7 @@
 # Objective
 
-The write path keeps one page per knowledge object and resolves contradictions on its own, proven on all of my wikis in daily use.
+Retire karpathy-wiki in favor of contextmd (toolboxmd/contextmd), which now owns capturing and serving what agents learn.
 
-The Objective is complete when:
+The Objective is complete when nothing in daily use depends on karpathy-wiki and its README points to contextmd.
 
-- New captures update the matching page instead of creating a duplicate, measured on a labeled test set and in daily use across every wiki.
-- Replaced and contradicted facts are removed or marked disputed automatically, with history kept in git.
-- Paused queues, including Naturbiss's, have been drained through the new write path with no cleanup pass needed.
-
-Non-goal: making it cheaper or faster before it works.
+Non-goal: new features or write-path fixes in karpathy-wiki.
