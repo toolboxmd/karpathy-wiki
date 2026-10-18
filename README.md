@@ -1,8 +1,8 @@
 # Karpathy Wiki
 
-> **Retired.** karpathy-wiki is no longer maintained, and this repository is
-> archived. [ContextMD](https://github.com/toolboxmd/contextmd) now captures and
-> serves what agents learn. The plugin is no longer offered in the toolboxmd
+> **Retired.** karpathy-wiki is no longer maintained.
+> [ContextMD](https://github.com/toolboxmd/contextmd) now captures and serves
+> what agents learn. The plugin is no longer offered in the toolboxmd
 > marketplace. Existing wikis are plain git-versioned markdown and stay readable
 > without the plugin.
 
