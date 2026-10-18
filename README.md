@@ -1,5 +1,11 @@
 # Karpathy Wiki
 
+> **Retired.** karpathy-wiki is no longer maintained, and this repository is
+> archived. [ContextMD](https://github.com/toolboxmd/contextmd) now captures and
+> serves what agents learn. The plugin is no longer offered in the toolboxmd
+> marketplace. Existing wikis are plain git-versioned markdown and stay readable
+> without the plugin.
+
 A provider-aware plugin for auto-maintained LLM wikis — based on [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 Instead of re-deriving answers from raw documents every time (RAG), the LLM incrementally builds and maintains a wiki — a structured, interlinked collection of markdown files. The wiki compounds with every source you add and every question you ask.
